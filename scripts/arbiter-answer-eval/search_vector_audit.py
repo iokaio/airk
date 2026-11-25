@@ -105,6 +105,34 @@ def union_overlap(spans, lines):
     return total
 
 
+def first_covering_rank(ranked_spans, note, *, union_only=False):
+    """Find the first covering prefix in one native ranked list.
+
+    Each row is a one-based native rank and its verified line citation. The
+    list may be sparse if the producer omitted unrelated paths after ranking.
+    Use prefix union only for notes the committed-unit audit marks union-only.
+    """
+    locations = [(note_path(location), location["lines"]) for location in note_locations(note)]
+    seen_by_location = [[] for _ in locations]
+    previous_rank = 0
+    for rank, span in ranked_spans:
+        common.require(type(rank) is int and rank > previous_rank, "native ranks must be strictly increasing")
+        previous_rank = rank
+        if span is None or span.kind != "text":
+            continue
+        for index, (path, lines) in enumerate(locations):
+            if span.path != path or not evidence.overlaps(span, lines):
+                continue
+            required = evidence.required_overlap(lines, rule=2)
+            if evidence.overlap_lines(span, lines) >= required:
+                return rank
+            if union_only:
+                seen_by_location[index].append(span)
+                if union_overlap(seen_by_location[index], lines) >= required:
+                    return rank
+    return None
+
+
 def classify(repository, note, paths):
     records = {note_path(location): paths[(repository, note_path(location))]
                for location in note_locations(note)}
@@ -188,6 +216,16 @@ def occurrence_ranks(ranked, units):
     return result
 
 
+def retained_prefix_ranks(ranked, units, note, *, union_only=False):
+    citations = {(unit["citation"]["path"], search.digest(unit["members"])): unit_span(unit["citation"])
+                 for unit in units}
+    return [first_covering_rank(
+        ((rank, citations.get((item["path"], search.digest(item["members"]))))
+         for rank, item in enumerate(branch, 1)),
+        note, union_only=union_only,
+    ) for branch in ranked]
+
+
 def summarize(cohort, snapshots, inputs, pins):
     audit_input = json.loads(inputs["input"])
     common.require(audit_input == prepare(cohort, snapshots), "native input and authenticated roster differ")
@@ -201,8 +239,15 @@ def summarize(cohort, snapshots, inputs, pins):
         retained = traces.get((repo, slot))
         for note in request["essential"]:
             key = (repo, slot, note["id"])
-            status, units = classify(REPOSITORIES[repo], note, paths)
+            repository = REPOSITORIES[repo]
+            status, units = classify(repository, note, paths)
+            prefix_ranks = None
+            if retained is not None:
+                eligible = [unit for path in {note_path(location) for location in note_locations(note)}
+                            for unit in paths[(repository, path)]["units"]]
+                prefix_ranks = retained_prefix_ranks(retained, eligible, note, union_only=status == "union_only")
             notes.append({"repo": repo, "slot": slot, "id": note["id"], "coverage": status,
+                          "retained_semantic_prefix_ranks": prefix_ranks,
                           "qualifying_units": len(units), "original": original[key], "current": current[key],
                           "retained_semantic_ranks": None if retained is None else occurrence_ranks(retained, units)})
     groups = {"all": notes, **{repo: [n for n in notes if n["repo"] == repo] for repo in REPOSITORIES}}

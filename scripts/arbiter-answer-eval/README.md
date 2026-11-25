@@ -748,6 +748,11 @@ can show where the same qualifying occurrence ranked inside a recorded
 candidate list. Its rank does not establish position in the full vector
 matrix. Keep inputs, logs and reports under the private campaign root.
 
+The summary also reports the first covering rank in each retained semantic
+branch. A note classified as union-only uses the earliest prefix with enough
+distinct lines at a single accepted location. A null element means coverage
+was absent in that bounded branch. A null list means the query was untraced.
+
 ### Wider Search shortlist coverage
 
 Run the paired Search collector with a fixture launched under the private

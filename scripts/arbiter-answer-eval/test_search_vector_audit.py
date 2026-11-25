@@ -65,6 +65,30 @@ class Coverage(unittest.TestCase):
                          [{"query": 1, "rank": 2, "occurrence": "qualified", "source": {
                              "path": self.path, "start_line": 10, "end_line": 20}}])
 
+    def test_rank_keeps_sparse_global_position_and_requires_single_unit(self):
+        note = {"path": self.path, "lines": [10, 20]}
+        ranked = [(2, audit.unit_span(unit(self.path, 8, 12)["citation"])),
+                  (8, audit.unit_span(unit(self.path, 13, 15)["citation"])),
+                  (21, audit.unit_span(unit(self.path, 16, 20)["citation"]))]
+        self.assertEqual(audit.first_covering_rank(ranked, note), 21)
+        self.assertEqual(audit.first_covering_rank(ranked, note, union_only=True), 8)
+
+    def test_rank_union_does_not_mix_alternatives_or_recount_lines(self):
+        note = {"path": self.path, "lines": [10, 20],
+                "alternatives": [{"path": self.alternative, "lines": [10, 20]}]}
+        ranked = [(2, audit.unit_span(unit(self.path, 9, 12)["citation"])),
+                  (4, audit.unit_span(unit(self.alternative, 13, 15)["citation"])),
+                  (6, audit.unit_span(unit(self.path, 11, 13)["citation"])),
+                  (12, audit.unit_span(unit(self.path, 19, 19)["citation"]))]
+        self.assertIsNone(audit.first_covering_rank(ranked[:-1], note, union_only=True))
+        self.assertEqual(audit.first_covering_rank(ranked, note, union_only=True), 12)
+
+    def test_rank_rejects_repeated_positions_without_a_cover(self):
+        note = {"path": self.path, "lines": [10, 20]}
+        with self.assertRaisesRegex(common.HarnessError, "strictly increasing"):
+            audit.first_covering_rank([(2, None), (2, None)], note)
+
+
     def test_native_log_must_cover_each_requested_path(self):
         input_record = {"collections": [{"repository": self.repo, "committed_rows": 1, "paths": [self.path]}]}
         with self.assertRaisesRegex(common.HarnessError, "every requested path"):

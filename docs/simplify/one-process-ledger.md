@@ -19800,3 +19800,37 @@ TYAI\tdotn, SID S-1-5-21-3678370870-3858642417-826968105-1002.
 The documentation check passed for 10,740 public files. All eight added
 links resolved, the repair requirements were present and the whitespace
 check passed. These checks exercised the plan only.
+
+### 25 November 2026 — Windows CUDA completion starts with the rank census
+
+The user authorized the completion plan through the Windows results review
+on feat/arbiter-final. The assignment and matching standing rules record
+the scope and the complete-evidence review trigger. Linux, macOS and
+WebGPU await the Windows review.
+
+The checked Windows guard matched TYAI\tdotn, SID
+S-1-5-21-3678370870-3858642417-826968105-1002, to interactive Explorer
+and the token default owner. D: had 348,367,364,096 free bytes and the
+RTX A6000 reported 49,140 MiB total and 1,304 MiB in use at reconnaissance.
+No large-write reservation or new fixture lifetime was opened.
+
+The vector audit now records the first covering prefix of each retained
+semantic branch, including distinct-line union for notes with no qualifying
+single unit. Eight focused Python unittest cases passed using
+`python -I -B -m unittest discover -s scripts/arbiter-answer-eval -p test_search_vector_audit.py -v`.
+A rerun of `search_vector_audit.py summarize` took 0.366 seconds with the
+seven SHA-256-pinned inputs from the original Step 6 report. The output
+is `answer-loop/L5C/search-step6-vector-audit-r1/coverage-prefix-replay-r1.json`
+under the retained campaign root, SHA-256
+`52348ab6f68ba01d2edb23660a2242229ce07fc25999a0046f780fe6aa07b645`.
+It preserved all historical counts for the 113 notes. Five queries
+covered 27 notes in the retained trace roster, with 11 notes reaching
+coverage in at least one bounded branch. This replay read receipts from the
+previous CUDA run. No new GPU work or judge session ran.
+
+The census remains open. The next action is to capture exact target
+occurrence ranks from the authenticated native vector scan, ranked lexical
+lists and fusion for the instruction, focused and fact-derived query
+forms. Existing service traces are capped, and the stored corpus audit
+does not by itself provide exact ranks. After the census, finish the label
+and fidelity audits and query-time checks before choosing any pilot.

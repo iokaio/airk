@@ -4,13 +4,22 @@ These instructions are mandatory for the active assignment. Standing rules remai
 
 All unlinked filesystem paths below are repository-relative unless absolute or prefixed with `~/`.
 
-**25 November 2026 — OpenAI-only implementation and testing.** The user
-will hand implementation to GPT-6.2 Sol after approving the completion
-plan. All model-assisted work for it uses OpenAI Codex and OpenAI models,
-including delegated agents, harness tests and judges. Earlier provider
-directions below describe prior work. The proposed role matrix and runner
-requirements are in the [completion plan](arbiter/completion-plan.md#agent-and-judge-models).
-The plan is under review.
+**25 November 2026 — Windows and CUDA completion authorized.** The user
+approved implementation of the [completion plan](arbiter/completion-plan.md)
+on feat/arbiter-final up to the Windows results review. Start with section 1,
+then the index research and autonomous repair milestones. Complete Windows
+CUDA shakedown and L6, the Sol complete-evidence experiment, and, if its
+threshold is met, the baseline and three judged Windows change sets. If the
+complete-evidence threshold is missed, bring that evidence to the user before
+starting the baseline. Bring the resulting Windows disposition to the user
+before moving into Linux, macOS or WebGPU. Use OpenAI Codex and OpenAI models
+for all model-assisted implementation, delegated work, evaluation and judging.
+The role matrix and runner requirements are in the
+[completion plan](arbiter/completion-plan.md#agent-and-judge-models).
+The existing authorization for signed commits and origin pushes on this branch
+still applies. The plan's other reserved decisions and evidence gates remain
+in force.
+
 
 **25 November 2026. Replace the unjudged Windows L7 attempt and run the baseline (earlier direction).**
 The same-install Windows CUDA shakedown passed all four switches and

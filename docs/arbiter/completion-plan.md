@@ -1,23 +1,15 @@
 # Answer loop and FP16 completion plan
 
-**Review draft, OpenAI revision of 25 November 2026.** This plan sequences
-the remaining work on `feat/arbiter-final`. It records the latest
-Windows-first staging decision. Use the [current assignment](../agent-current-work.md)
-for execution authority and the [Answer plan](final-plan-fp16.md#128-work-order)
-for the underlying contracts and acceptance criteria. Where older
-instructions describe Large, one-turn Answer, or a different platform order,
-use the current model selection and the sequence below. Review of this
-document does not start execution.
-
-**Reconcile the authority documents before execution.** An earlier entry in
-the current assignment directs the Windows baseline and three judged
-changes with no stop. The standing rules still name
-`feat/index-plain-store` and the indexing performance plan as the active
-work, and that branch is merged into this one. When the user approves this
-plan for execution, update the current assignment and both rule files to
-name this plan, its first milestone and its stop points. The user's
-OpenAI-only direction already applies to implementation and testing.
+**Windows and CUDA execution approved on 25 November 2026.** This plan
+sequences the remaining work on feat/arbiter-final. The authorized scope
+extends through the Windows results review. Apply the earlier review trigger
+if Sol misses the complete-evidence threshold. Linux, macOS and WebGPU start
+after the user reviews the Windows disposition and authorizes the next scope.
+Use the current assignment for execution authority and the Answer plan for the
+underlying contracts and acceptance criteria.
 [Current assignment](../agent-current-work.md) · [Standing rules](../../AGENTS.md)
+· [Answer work order](final-plan-fp16.md#128-work-order)
+
 
 Complete section 1, the index research and the [autonomous repair milestone](#autonomous-index-repair)
 in that order, then continue with sections 2 to 5. The
