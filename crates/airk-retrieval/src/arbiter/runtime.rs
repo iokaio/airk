@@ -1654,6 +1654,13 @@ impl Scorer {
             .map(|s| s.device_settled())
             .unwrap_or(false)
     }
+    /// Checks device health for delivery of this scorer's synchronous return.
+    /// Callers must still use `device_settled` to prove device-wide quiescence.
+    pub fn score_device_healthy(&self) -> bool {
+        self.session
+            .lock()
+            .is_ok_and(|session| session.score_device_healthy())
+    }
     pub fn synchronize(&self, deadline: std::time::Instant) -> Result<()> {
         self.session
             .lock()

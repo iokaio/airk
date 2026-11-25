@@ -1445,13 +1445,13 @@ impl Lane {
                                     #[cfg(feature = "test-support")]
                                     { job.observation=prepared_observation.map(|prepared|prepared.admitted()); }
                                     let scored=observed_score_call(&receipt, started, Instant::now, || scorer.score_with_deadline(&input,job.deadline));
-                                    let scored=if scorer.device_settled() {scored} else {Err(anyhow::anyhow!("native GPU work settlement unknown; original reservation held"))};
+                                    let scored=if scorer.score_device_healthy() {scored} else {Err(anyhow::anyhow!("native GPU work settlement unknown; original reservation held"))};
                                     #[cfg(feature = "test-support")]
                                     if let Some(observation)=&mut job.observation {observation.returned(&scored);}
                                     scored
                                 })
                             });
-                            if !scorer.device_settled() {
+                            if !scorer.score_device_healthy() {
                                 shared.unsettled.store(true,Ordering::Release);
                                 let _=job.reply.send(Err(anyhow::anyhow!("native GPU work settlement unknown; no retry or fallback")));
                                 #[cfg(feature="test-support")]

@@ -26,6 +26,15 @@ impl SessionOwner {
         }
         true
     }
+    /// The synchronous score owns and settles its transfer claim before
+    /// returning. Another session's claim is not evidence of unknown work here.
+    pub(super) fn score_device_healthy(&self) -> bool {
+        #[cfg(feature = "gpu-cuda")]
+        if let Some(g) = &self.gpu {
+            return !g.device.poisoned();
+        }
+        true
+    }
     pub fn synchronize(&self, deadline: Instant) -> Result<()> {
         #[cfg(feature = "gpu-cuda")]
         if let Some(g) = &self.gpu {

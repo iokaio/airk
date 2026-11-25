@@ -27,8 +27,16 @@ does not replace the retrieval encoder or change existing document vectors.
 
 The MCP `answer` tool gathers a bounded packet of cited evidence for its caller.
 The calling assistant uses that evidence to write the final natural-language
-answer. Both Context sizes stay within the caller's original read, token, byte
-and deadline limits.
+answer. Arbiter works within the caller's original read, token, byte and
+deadline limits.
+
+## Focus in Search
+
+When Focus is enabled and the index is enrolled for it, an eligible hybrid or
+vector Search can use the active Focus profile to rerank a bounded set of
+retrieved hits. This works with Arbiter off. The remaining hits keep their native
+order, and lexical-only Search keeps its native ranking. Check the live service's
+stage status and Search response for the active profile and reranking receipt.
 
 Focus can reorder only the candidates AIRK retrieved. It cannot recover an
 important passage that candidate retrieval omitted. MiniLM recall and the native

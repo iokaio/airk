@@ -18184,3 +18184,56 @@ fresh lifetime from the pinned source inputs, and verify its live
 catalog and leak checks. Also run the matching normal Windows
 service-client preflight before scoring. The baseline and three
 judged iterations retain their one-commit-per-series requirement.
+
+### 25 November 2026 — Windows L7 replaced after control and CUDA custody findings
+
+Attempt R1 used the exact CUDA service at `7eba5dc1`. Bookbuilder
+published 156,255 vectors across 8,116 files and Munarium published
+40,536 across 1,023. Both served hybrid at the initial check, the 60-tool
+catalog was captured, all 30 leak probes passed, and the two native
+both-model probes completed in 13.449 and 4.621 seconds. The subsequent
+40 agent sessions completed. The evaluation stopped before judging
+when the controls were found to inherit the enabled Focus stage. Ten Munarium Parse
+canonical calls also refused connection before submission. Fresh
+queries reproduced the refusal for both Munarium Search and Parse
+while both Bookbuilder queries worked. The worker snapshot bore SHA-256
+`f76a6569d222c03dee049fa43e162b72c9c47eb48ce1bd23614327d777d40125`.
+The exact cause of the brokerage refusal was not established.
+
+The final Focus dispatch was admitted with 119.285 seconds left.
+The recorder retained 39 admissions, 38 synchronous returns and 38
+settlements, then failed on the missing work observation. Its close
+receipt is `6b12846f99cff55bea8a23e3052cb951094cdfd5ca502fedd378700bb78d2b7a`.
+Source review established that MiniLM and Focus share the adapter
+claim ledger. The per-score delivery check was using the adapter-wide
+zero-claim predicate. A healthy concurrent MiniLM claim can therefore
+trigger the same fail-closed path as an unverified Focus settlement.
+The failed receipt cannot distinguish the pending-claim race from
+device poison. The original request budgets were unchanged. The
+owned process exited after guarded shutdown and forced Job cleanup.
+The terminal receipt `fd756e7da11fe58bf6516dbb148e323b56b41a092649815d5e12df22d816f055`
+shows zero surviving processes. Retain the incomplete custody evidence
+and both index trees. R1 supplied no baseline grades.
+
+The correction checks exact synchronous reservation removal and current
+device health for per-score delivery. A missing reservation or a
+poisoned owner still preserves custody. Device-wide zero claims are
+still required for teardown and fault reporting. The operator guide
+documents eligible ordinary Search reranking with Focus and the
+availability requirement on enrolled indexes. Search selection and
+ranking policy are unchanged.
+
+Verified Windows identity and default output owner were `TYAI\tdotn`,
+SID ending `-1002`. Scoped all-feature Clippy passed in 59.844 seconds.
+Nextest CI passed all five selected CUDA claim and inference settlement
+regressions, with 646 skipped, in a 93.303-second command. The paired
+private service and CLI built in 49.465 and 11.004 seconds. Cargo used
+the warm `answer-loop/target-cuda`, incremental `1`, with one owner.
+The owner, exact commands, source diff, input encoding, timings and
+3,811 checked outputs are retained at
+`L5C/CARGO-OWNER-CUDA.windows-l7-settlement-r2.at-release.json`,
+SHA-256 `859ea92ca967bdaf37507883cc1d663bdb7feb7a9090fbd4897d80fc00345b82`.
+D: had 413,682,135,040 free bytes after this batch. A fresh exact
+Windows CUDA fixture and real cross-scope smoke will exercise this
+correction before judging. The development controls will run with
+Focus and Arbiter off. MiniLM retrieval stays enabled.

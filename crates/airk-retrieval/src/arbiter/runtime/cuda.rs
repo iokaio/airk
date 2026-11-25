@@ -356,6 +356,14 @@ impl Claims {
         self.unspent.insert(self.next, (bytes, headroom));
         Ok(self.next)
     }
+
+    fn settle_exact(&mut self, id: u64) -> Result<()> {
+        ensure!(
+            self.unspent.remove(&id).is_some(),
+            "exact GPU work claim is missing"
+        );
+        Ok(())
+    }
 }
 /// No Deserialize, no public field constructor. Host retains the actual service lease.
 #[cfg(all(
@@ -646,13 +654,6 @@ impl CudaDevice {
             }
         }
     }
-    #[cfg(any(
-        feature = "test-support",
-        all(
-            target_arch = "x86_64",
-            any(windows, all(target_os = "linux", target_env = "gnu"))
-        )
-    ))]
     fn poison(&self) {
         self.poisoned.store(true, Ordering::Release);
         self.epoch.fetch_add(1, Ordering::AcqRel);
@@ -982,14 +983,22 @@ impl DeviceReservation {
         self.attempted = true;
         let result = self.device.synchronize(self.deadline);
         if !self.device.poisoned()
-            && let Some(id) = self.id.take()
+            && let Some(id) = self.id
         {
-            self.device
+            let settled = self
+                .device
                 .claims
                 .lock()
-                .map_err(|_| anyhow::anyhow!("GPU capacity owner poisoned"))?
-                .unspent
-                .remove(&id);
+                .map_err(|_| anyhow::anyhow!("GPU capacity owner poisoned"))
+                .and_then(|mut claims| claims.settle_exact(id));
+            if let Err(error) = settled {
+                self.device.poison();
+                return match result {
+                    Err(primary) => Err(preserve_primary(primary, format_args!("{error:#}"))),
+                    Ok(()) => Err(error),
+                };
+            }
+            self.id = None;
         }
         result
     }

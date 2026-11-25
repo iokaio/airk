@@ -4,7 +4,7 @@ These instructions are mandatory for the active assignment. Standing rules remai
 
 All unlinked filesystem paths below are repository-relative unless absolute or prefixed with `~/`.
 
-**24 November 2026. Windows L6 Answer checks accounted for. Prepare the judged Windows baseline.**
+**25 November 2026. Replace the unjudged Windows L7 attempt and run the baseline.**
 The same-install Windows CUDA shakedown passed all four switches and
 the leak check, captured Answer progress while Arbiter warmed, and
 settled its lease. Bookbuilder and Munarium both used Focus and
@@ -13,6 +13,15 @@ workspace sweep still records known failures.
 [Shakedown measurements](simplify/one-process-ledger.md#24-november-2026--windows-cuda-switches-and-leak-check)
 and [corrected workspace evidence](simplify/one-process-ledger.md#24-november-2026--corrected-windows-workspace-sweep).
 
+The first Windows L7 attempt ended before judging. Search inherited
+the enabled Focus stage and an optional-score custody check confused
+adapter-wide claims with a single score's work. Two-repository
+brokerage degraded in one scope. The native correction passed scoped
+Clippy and five tests. Stage its exact CUDA pair and exercise both
+repositories with fresh scopes, deadlines, settlement observations
+and audits. Search and Parse run with both optional stages off in
+the evaluation. Ordinary Search can use Focus when enabled on an
+enrolled index. Retain the first attempt and its incomplete receipts.
 The focused Windows corrections covered the bundled FP16 verifier,
 ordinary Plain Verify, the plain split funding checkpoint, real
 Answer transport parity, native checkpoint dispatch and two-worker

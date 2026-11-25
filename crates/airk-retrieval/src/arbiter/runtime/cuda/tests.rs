@@ -25,6 +25,23 @@ fn concurrent_claims_preserve_largest_headroom_and_refuse_overflow() -> Result<(
     assert!(DeviceCapacityPlan::new(1, 1, 0).is_err());
     Ok(())
 }
+#[test]
+fn settling_one_score_keeps_the_other_device_claim_charged() -> Result<()> {
+    let mut claims = Claims::default();
+    let scoring = claims.reserve(100, 20, 10)?;
+    let embedding = claims.reserve(100, 30, 10)?;
+
+    claims.settle_exact(scoring)?;
+    assert_eq!(claims.unspent.len(), 1);
+    assert_eq!(claims.unspent[&embedding], (30, 10));
+    assert!(claims.settle_exact(scoring).is_err());
+    assert!(claims.reserve(100, 61, 10).is_err());
+
+    claims.settle_exact(embedding)?;
+    assert!(claims.unspent.is_empty());
+    Ok(())
+}
+
 fn manifest() -> manifest::RuntimeManifest {
     let f = |name: &str| manifest::RuntimeFile {
         name: name.into(),

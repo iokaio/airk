@@ -73,7 +73,12 @@ CPU fallback. Deadline expiry never creates a new budget. A failed wait poisons
 and retains the outstanding claim; the owning actor must retain the resident,
 host charge and service lease until actual teardown settles or the process ends.
 A late successful wait may prove settlement while still returning a timeout.
-No new release capability or G4 qualification is claimed by this module.
+A synchronous score settles its own reservation ID after that wait. A missing
+claim or inaccessible claim ledger poisons the device and preserves custody.
+Another live session's claim still counts against adapter capacity and blocks
+device-wide quiescence. It does not prevent delivery of this scorer's
+synchronous return on a healthy device. No new release capability or G4
+qualification is claimed by this module.
 
 The first compiled compatibility policy is Windows x64 SM86, driver API>=12080.
 A later driver image/API or adapter UUID requires fresh exact variant evidence;
