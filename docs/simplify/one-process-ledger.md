@@ -19688,3 +19688,96 @@ The documentation check (`pwsh -NoProfile -File scripts/check-repo.ps1`)
 passed for 10,740 public files. `git diff --check` passed. The standing
 rule files have identical hashes. The model IDs and medium effort match
 the local catalog. No evaluation session or product build ran.
+
+### 25 November 2026 — Public Answer call for the Windows baseline
+
+The user chose option A in the interactive review. The public tool will
+advertise one required argument, `task`. The service supplies the schema
+and default budget, honors a caller's explicit valid budget and accepts
+the existing full `question` request through the 1.9 release line. The
+baseline will compare the canonical question and effective budget through
+the real public tool and benchmark, including a non-default budget and the
+legacy form. The public tool name remains a separate decision.
+[Decision and acceptance check](../arbiter/completion-plan.md#agent-facing-tool-surface)
+
+This is a plan decision. The verified Windows user and default owner were
+TYAI\tdotn, SID S-1-5-21-3678370870-3858642417-826968105-1002. The next
+review question concerns the Windows series' retrieval reads and budgets.
+
+### 25 November 2026 — Windows Answer retrieval experiments selected
+
+The user chose option A for the second interactive decision. In change set 1,
+compare the four additional indexed readers with the current loop using the
+existing allowances. Then hold the readers fixed and measure one versus two
+follow-up reads per open need per later round and fixed versus need-based
+excerpt sizes. Total calls, bytes, three rounds and deadline stay fixed.
+Report facts gained and displaced for both repositories. Handle-only delivery
+waits until after the Windows review and a decision on lost responses and
+second-client recovery.
+[Stage A comparisons](../arbiter/completion-plan.md#stage-a--run-the-windows-cuda-baseline-and-three-change-sets)
+
+The plan and this ledger were edited by the verified interactive Windows
+user and default owner TYAI\tdotn (SID S-1-5-21-3678370870-3858642417-826968105-1002).
+The next review question is what retrieval gain and resource cost would
+justify proposing a full index rebuild.
+
+### 25 November 2026 — Quality and cost requirements for an index rebuild proposal
+
+The user selected option A for the third interactive decision. At most two
+small pilots may use the existing MiniLM. Select a finalist on development
+data: at least six net additional essentials in the top 40 out of 113 and
+every previous top-ten fact preserved per repository. Against a fresh
+matched control in each repository, final index bytes, full build time,
+incremental build time and p95 query latency each have a 10% growth limit.
+
+Confirm one frozen finalist once on 30 untouched probes per repository.
+Successful probes must hold or increase in each repository and increase
+in at least one. No no-match probe may gain a false match. A passing
+finalist goes to the user for a full rebuild decision. The next review
+question concerns the scope of the complete-evidence experiment.
+[Selection and confirmation](../arbiter/completion-plan.md#how-to-test-indexing-for-agent-tasks)
+
+The plan and ledger were edited under the verified Windows interactive
+account and default owner TYAI\tdotn, SID S-1-5-21-3678370870-3858642417-826968105-1002.
+
+### 25 November 2026 — Sol first in the complete-evidence experiment
+
+The user chose option A for the fourth interactive decision. Give Sol the
+complete cited evidence once on each of the 20 development scenarios.
+Allow up to 40 Astra scoring sessions and 20 Sol diagnostic judge sessions.
+Only the two Astra verdicts per brief enter adjudication. Proceed to the
+matched baseline at 12 or more correct finishes overall and five or more
+in each repository. If either count is lower, review the failed briefs,
+actual passages and disagreements with the user first. An optional later
+Astra or Terra agent comparison has its own decision.
+[Complete-evidence procedure](../arbiter/completion-plan.md#what-the-gate-needs-and-how-to-steer-toward-it)
+
+This records a planning decision. The verified Windows user and default
+owner were TYAI\tdotn, SID S-1-5-21-3678370870-3858642417-826968105-1002.
+The next decision is whether debugging and patch review need judged evidence.
+
+### 25 November 2026 — Debugging and patch review remain diagnostic
+
+The user chose option A for the fifth interactive decision. Sol will examine
+one known failure and one pinned patch on synthetic or development inputs.
+Compare the returned evidence with the known cause or the changed hunk,
+caller and counterevidence. Report a reproduction or confirmed finding only
+when independently checked. These examples stay outside the 20-scenario
+gate and its four scored task kinds.
+[Diagnostic procedure](../arbiter/completion-plan.md#what-an-agent-must-be-able-to-do-with-the-reply)
+
+The planning review now covers the public Answer call, Windows retrieval
+experiments, index rebuild criteria, Sol's complete-evidence experiment
+and diagnostic scope. The final consistency review aligned change set 3
+with the two-pilot limit and the one-time held-out confirmation, and
+kept live working-tree reads outside the matched Windows series.
+The next action is the user's plan approval before handing implementation
+to GPT-6.2 Sol. The Codex harness port and mixed-model grader fix are pending.
+The verified interactive Windows user and default owner were TYAI\tdotn,
+SID S-1-5-21-3678370870-3858642417-826968105-1002.
+
+Documentation validation passed. `pwsh -NoProfile -File scripts/check-repo.ps1`
+checked 10,740 public files and enforced matching standing rule files.
+The read-only content check verified the five choices and 136 local
+references, including anchors into the completion plan. `git diff --check`
+passed. No product build, model session or campaign evaluation ran.

@@ -71,15 +71,26 @@ no judge. Report these for every replay and every judged arm:
 
 They steer the change sets. They do not replace the gate.
 
-**Evidence-ceiling arm (proposed).** Give each agent the cited source spans
-for every essential in the first Answer reply. Use the ordinary brief,
-follow-up tools, turn cap and rubric. Verify that the delivered bytes cover
-all essentials before interpreting the grades. Run each of the three OpenAI
-models below once per scenario, for 60 agent sessions. Report how often
-each model writes a correct brief under these conditions, by repository.
-If Sol struggles even with this evidence, inspect the delivered spans,
-briefs and judge disagreements with the user before spending three change
-sets on retrieval. Keep these cases out of tuning.
+**Complete-evidence experiment (decided 25 November 2026).** Before the
+Windows baseline, give GPT-6.2 Sol the cited source spans for every
+essential in the first Answer reply. Verify that the delivered bytes cover
+all essentials. Use the ordinary brief, follow-up tools, turn cap and
+rubric. Run one fresh session on each of the 20 development scenarios.
+Two independent Astra sessions score each brief, and one separate Sol judge
+provides a diagnostic verdict. Budget up to 40 scoring and 20 diagnostic
+judge sessions. Only the Astra verdicts enter adjudication.
+
+Report Sol's correct finishes overall and separately for the ten tasks in
+each repository. Proceed to the normal baseline if Sol finishes at least
+12 of 20 correctly and at least five in each repository. If either count
+falls short, bring the failed briefs, the delivered passages and the judge
+disagreements to the user for review before proceeding. The matched Search
+and Parse comparisons in the normal baseline establish turn savings.
+
+Astra and Terra can serve as agents in an optional later extension on the
+same frozen inputs. That extension requires a separate decision. Retain
+the Sol results under their original freeze and keep these cases out of
+tuning.
 
 ### Agent and judge models
 
@@ -94,7 +105,7 @@ its local MiniLM, Focus and Arbiter models inside the service under test.
 | --- | --- | --- |
 | Gate agent | `gpt-6.2-sol` | All 20 scenarios on Search, Parse, Focus-only Answer, Arbiter-only Answer and Answer with both. Apply the substantial-win rule within this model at the baseline and each of the three change sets. |
 | Capable-agent panel | `gpt-6.2-astra` | All 20 scenarios on Search, Parse and Answer with both local models at the baseline and the last change set. Compare Answer with Astra's own controls. |
-| Evidence-ceiling agents, if approved | `gpt-6.1-terra`, `gpt-6.2-sol`, `gpt-6.2-astra` | Each gets the same 20 complete-evidence replies. Terra supplies the third, lighter comparison. |
+| Complete-evidence agent | `gpt-6.2-sol` | All 20 development scenarios before the baseline. Optional later comparison agents are `gpt-6.2-astra` and `gpt-6.1-terra`. |
 | Scoring judges | `gpt-6.2-astra` | Two fresh, tool-free sessions per judged brief. Give each the same blinded packet and apply the existing adjudication rule. |
 | Diagnostic judge, ceiling only | `gpt-6.2-sol` | One extra tool-free verdict per ceiling brief. Report agreement with each Astra judge by agent model. Only the two Astra verdicts enter adjudication. |
 
@@ -138,54 +149,68 @@ outcome in either processing order. A mixed pass must fail explicitly.
 
 ### Task kinds the gate judges
 
-The frozen scenarios cover coding, writing, testing and architecture. They
-contain no patch review and no debugging task, and a judged session grades a
-work brief, not an applied change. Review and debugging stay in this plan as
-unjudged diagnostics. A claim about them needs frozen scenarios of that kind.
+The judged gate uses the 20 frozen coding, writing, testing and architecture
+scenarios. Judges assess the agent's work brief. On 25 November 2026 the
+user chose separate, unjudged diagnostics for debugging and patch review:
+give Sol a known failure and a specific patch and record the evidence Answer
+surfaced or missed. Report those examples outside the gate totals.
 [Scenario inventory](answer-evaluation/scenarios.md) · [Agent task reviews](#what-an-agent-must-be-able-to-do-with-the-reply)
 
 ### The index goal and its cost envelope
 
 Show that the settled indexes do not cap Answer. Change an index only for a
 measured class of misses that query-time work on the settled publications
-cannot recover. A change must stay inside what the plain store and the
-delivery priorities already fixed: build time and index size near the
-current figures, one bundled FP16 MiniLM file for both routes, every
-platform, and a working processor route. A candidate that needs another
-embedding model or a late-interaction index is a new model to ship and
-qualify on every route. It needs the user's decision before any pilot.
+cannot recover. For this round, keep the existing bundled FP16 MiniLM, its
+CPU route and platform support. Compare each pilot with a fresh control
+using the same representative inputs, host, indexing scope, query workload
+and settings for each repository. Final index bytes, full build time,
+incremental build time and 95th-percentile query latency must **each** be
+at most 1.10 times that repository's control value. Use the same changed
+files for the incremental build. The historical lexical-only measurements
+provide context. The matched runs determine whether a pilot fits.
 [Plain-store results](../indexing/performance-plan.md#10-status-report-and-handoff-24-november-2026) · [Delivery priorities](../agent-current-work.md)
 
 ### Decisions for the user at this review
 
-The proposed values are the primary agent's. Each is the user's to set.
+Dated entries record the user's choices. The remaining proposals are open.
 
-1. **Selection bar for an index change.** Proposed: a candidate recovers at
-   least six more essentials than the control in the top 40 for task-derived
-   queries, loses none in either repository's top ten, and moves the
-   held-out probes the same way.
-2. **Held-out retrieval probes.** Proposed: 30 per repository, each a query
-   and its accepted locations, written from the pinned source by a session
-   that has seen neither the development notes nor any tuning result, and
-   frozen with hashes before the first pilot.
-3. **Bound on the first milestone.** Proposed: the census and audits, then
-   at most two representation pilots, then the selection comes to the user.
-   The default is to reuse the settled publications.
+1. **Development quality and cost (decided 25 November 2026).** For
+   task-derived queries, require a net gain of at least six of the 113
+   essential facts within the top 40. Every fact the control covers within
+   the top ten must still be covered there in its own repository. Apply the
+   [10% cost limits](#the-index-goal-and-its-cost-envelope) separately to
+   all four measures in each repository.
+2. **Held-out confirmation (decided 25 November 2026).** Freeze 30 probes
+   per repository before piloting. Compare the control and one finalist
+   once. Require at least as many successful probes in each repository,
+   more in at least one, and no new false match on any no-match probe.
+3. **Index pilots and rebuild authority (decided 25 November 2026).** Test
+   at most two small changes with the existing MiniLM. A passing finalist
+   earns a rebuild proposal for the user's decision. Otherwise reuse the
+   settled indexes.
 4. **Implementation and evaluation models.** The user requires OpenAI
    throughout and named GPT-6.2 Sol for implementation after approval.
    The proposed evaluation roles and model IDs are in the table above.
-5. **The evidence-ceiling arm.** Approve or decline the 60 agent sessions
-   and their judge calls before the baseline.
-6. **Stage A contract decisions:** the added loop reads, the follow-up read
-   allowance, need-based read budgets and handle-only continuations.
-7. **Index candidates that change the model:** allowed as pilots or excluded.
+5. **Complete-evidence scope (decided 25 November 2026).** Run Sol first
+   on all 20 scenarios with up to 60 judge sessions. Apply the overall and
+   per-repository review trigger above. Additional agent models are optional.
+6. **Windows retrieval scope (decided 25 November 2026).** Test Code Facts,
+   Document Facts, Relationships and a scoped literal scan of retained
+   indexed text under today's limits first. Then compare one versus two
+   follow-up reads per open need per later round and test need-based excerpt
+   sizes. Hold total calls, bytes, three rounds and deadline fixed. Defer
+   handle-only delivery until after the Windows review.
+7. **Index model scope (decided 25 November 2026).** This round uses the
+   existing MiniLM. A different embedding model falls outside these pilots.
 8. **A third outcome at the Windows review:** ship the retrieval gains
    without the turn-saving claim.
-9. **Review and debugging:** unjudged diagnostics as written, or new frozen
-   scenarios.
-10. **Answer's public call shape:** a question alone with service defaults,
-    or the full request, and whether its argument is named `task`. Needed
-    before the Stage A baseline.
+9. **Debugging and patch review (decided 25 November 2026).** Use a known
+   failure and a pinned patch as unjudged Sol diagnostics. The judged gate
+   keeps its original 20 scenarios, four task kinds and scoring rule.
+10. **Answer's public call shape (decided 25 November 2026).** Advertise
+    `task` as the only required argument. The service supplies the schema
+    and default budget and honors an explicit valid budget. Accept the
+    existing full `question` request throughout the 1.9 release line.
 11. **Default MCP tool profile and leaner default schemas:** decided on the
     free-choice comparison, after the Windows review. The CLI stays full
     featured either way.
@@ -198,7 +223,7 @@ The proposed values are the primary agent's. Each is the user's to set.
 | Milestone | Exit evidence or decision |
 | --- | --- |
 | Index and Search quality | Complete the rank census, the label and corpus audit, the source-fidelity checks and the two query-time checks. Run at most two matched representation pilots chosen from the census. Select and freeze the configuration for both repositories against the agreed bar. [Research and selection](#how-to-test-indexing-for-agent-tasks) |
-| Windows CUDA | Account for shakedown and L6 evidence on the admitted stack. Run the evidence-ceiling arm if approved. Judge a current-stack baseline and three cumulative retrieval changes, then stop for your review. |
+| Windows CUDA | Account for shakedown and L6 evidence on the admitted stack. Run the Sol complete-evidence experiment and apply its review trigger. Judge a current-stack baseline and three cumulative retrieval changes, then stop for your review. |
 | Windows review | You choose another Windows round, Linux, or shipping the retrieval gains without the turn-saving claim. Each additional Windows round returns to the same review. |
 | Linux CUDA | LX, Linux L6, and the agreed L7 comparisons against the Windows-reviewed candidate. Bring both hosts' results to review. |
 | Agent-facing tool surface | Starts when the Windows review accepts the retrieval and Answer behavior, and can run alongside Linux CUDA. Record the candidate's catalog, run the free-choice arm, test the description rewrite, the proposed names and the narrowed default profile against it, and freeze the surface. [Stage and rules](#agent-facing-tool-surface) |
@@ -273,9 +298,12 @@ Their effect on ranking is not yet measured.
 [Lexical terms](../../crates/airk-core/src/lexical.rs) · [Chunk rows](../../crates/airk-store/src/current/lexical.rs) · [Index schema](../../crates/airk-store/src/index/schema.rs) · [Vector units](../../crates/airk-retrieval/src/vector_units.rs)
 
 **Step 1. Rank census.** For all 113 development notes on the two settled
-publications, record the exact rank of the best qualifying unit:
+publications, record the exact rank of the best qualifying unit where one
+exists. For the two notes that require multiple passages, record the first
+rank at which the retrieved prefix covers the note under the existing
+same-path overlap rule. Count each fact once at each cutoff. Measure ranks
 
-- in the full vector scan, in the ranked lexical list, and after fusion;
+- in the full vector scan, in the ranked lexical list, and after fusion,
 - for three query forms: the instruction as sent, a focused query derived
   from the task text alone with the Step 2 subquery derivation, and a query
   built from the note's own fact sentence.
@@ -362,7 +390,8 @@ comparison.
 the audit results, the fidelity findings and the two query-time checks. Show
 denominators, the first failing stage, a reproducer, confidence and
 unexplained cases. The primary measure is essentials whose qualifying span
-is in the top ten and in the top 40 for task-derived queries. Hold Answer
+is in the top ten and in the top 40 for task-derived queries, including
+facts covered jointly by multiple passages. Hold Answer
 changes for any demonstrated upstream defect that prevents a required fact
 from being recovered, or for an unexplained material source-fidelity
 mismatch. Repair and recheck the affected layer on a small fixture first.
@@ -383,7 +412,10 @@ a full build. Carry this disposition into the experiments below.
    the held-out retrieval probes agreed at this review. Include
    natural-language probes that omit the exact identifier, negative and
    ambiguous lookups, and known successes as well as misses. Establish
-   expected facts and source locations independently. Keep labels and known
+   expected facts, accepted locations or a no-match outcome independently,
+   using a session with no access to development notes or tuning results.
+   Freeze each probe, its scoring rule and its hash before the first pilot.
+   Keep labels and known
    target paths out of queries, indexed metadata and training. Keep the
    sealed set closed.
 2. **Measure each reader alone.** Extend the census to the structural
@@ -403,14 +435,17 @@ a full build. Carry this disposition into the experiments below.
    Hold query policy, model and budgets fixed. If a change needs a new
    reader, report a writer and reader result until their contributions can
    be separated.
-4. **Select on deterministic measures.** For control and candidate, report
-   the primary measure on the development notes and on the held-out probes,
-   gains and displaced notes per repository, wrong citations, storage, full
-   and incremental build time and query latency. Select with Focus off.
-   Confirm the selected configuration once with Focus on. Adopt a candidate
-   only if it meets the agreed bar on the development notes, loses nothing
-   in either repository's top ten and moves the held-out probes the same
-   way. A single-run change of one or two notes is not evidence.
+4. **Select on development data, then confirm once.** With Focus off,
+   compare eligible pilots on the development facts and matched costs.
+   Report gains, displaced notes, wrong citations and each cost ratio per
+   repository. Select one finalist that meets decision 1. If none qualifies,
+   keep the control and leave the held-out set closed.
+
+   Freeze the finalist and evaluate it and the control once on the 30
+   untouched probes per repository using the prespecified success criteria.
+   Apply decision 2 and report the paired counts and any new false matches.
+   If it misses, keep the control. Do not tune or try the other pilot on
+   those probes. Use development cases for the separate Focus-on check.
 5. **Confirm with agents once, then choose.** Give a fresh agent the control
    and the selected configuration on the same bounded task and compare
    correct work briefs, remaining direct-file reads, turns and bytes. Skip
@@ -436,15 +471,15 @@ on the settled publications or needs a pilot build.
 | Ranked lexical order is flat, or favors the wrong chunks of the right file | Lexical rows that keep term frequency, with path, heading, declared symbol and body as separately weighted columns | Pilot build |
 | Scoped scans recover exact strings or identifier fragments that lexical lookup misses | The retained-text scan of change set 1 is the control. Add positional literal or trigram postings, with final retained-byte verification, only if the scan is too slow at corpus size. | Settled publications for the scan. A pilot build for postings. |
 | The correct file ranks but useful context crosses a unit boundary | Query-time parent expansion first. Then unit overlap, or file and section links to passages. Keep the corpus-wide passage route for isolated facts. | Settled publications first |
-| A qualifying unit ranks poorly even for the query built from its own fact | Add path or enclosing-symbol text to the context a unit already carries, with the same MiniLM. Another embedding model or late interaction only on the user's decision. Verify citations against original source spans. | Pilot build |
+| A qualifying unit ranks poorly even for the query built from its own fact | Add path or enclosing-symbol text to the context a unit already carries, with the same MiniLM. Verify citations against original source spans. | Pilot build |
 | Impact work stalls on aliases, implementations, config consumers or test discovery | A provider-backed definitions and references index with typed edges and coverage, and explicit document links, heading IDs and supersession metadata for governance questions. Keep inferred associations distinguishable from verified edges. Neither publication has provider data today, and none of the 83 symbol-annotated essentials names its symbol in the query, so this pays only on follow-up hops. Last in order. | Pilot build and a provider |
 
 Pin identical source revisions, selection and query policy in control and
 treatment. Change one representation at a time and compare its own searchable
-publication with the control. Measure gains and losses in candidate rank on
-the development notes and the held-out probes, with full and incremental
-build time, query latency, index bytes, memory, peak temporary disk and
-migration or rollback needs. Reserve a matched Answer replay for L7 after
+publication with the control. Measure rank gains and losses on the
+development notes and the four matched costs for each pilot. Record memory,
+peak temporary disk and migration or rollback needs. Only the frozen
+finalist and control enter held-out confirmation. Reserve a matched Answer replay for L7 after
 selection. Propose a full build only with repeatable recoveries on distinct
 tasks, a measured cost inside the envelope above and a plan for affected
 existing publications. Discuss the specific representation and evidence with
@@ -543,17 +578,16 @@ any persisted format or digest change.
 
 ### Stage A — Run the Windows CUDA baseline and three change sets
 
-**Before the run starts.** Stage A runs back to back only if its contract
-decisions are already recorded. The change sets below propose new loop
-reads (Code Facts, Document Facts, Relationships and the retained-text
-scan), a higher follow-up read allowance, need-based read budgets and
-handle-only continuations. Each changes a wire shape or a Core limit.
-Record the user's decision on each in the loop change log and the owning
-contract first, or leave that item out of the series. Settle
-[Answer's public call shape](#agent-facing-tool-surface) as well, so the
-judged call is the call that ships. If approved, run the
-[evidence-ceiling arm](#what-the-gate-needs-and-how-to-steer-toward-it)
-before the baseline and report it alongside the baseline.
+**Before the run starts.** The user approved the Windows retrieval
+experiments in decision 6. Record the new read types, the experimental
+follow-up allowance and the shared budget limits in the loop change log and
+owning contract before implementing them. Measure the baseline on the
+existing retrieval behavior and delivery protocol. Verify the approved
+[public Answer call](#agent-facing-tool-surface) through the actual tool and
+benchmark before freezing the baseline. Run the
+[Sol complete-evidence experiment](#what-the-gate-needs-and-how-to-steer-toward-it)
+first and apply its review trigger before starting the matched baseline.
+Report the two experiments separately.
 [Decisions for this review](#decisions-for-the-user-at-this-review) · [Core loop limits](../../crates/airk-core/src/arbiter/answer_loop.rs)
 
 1. **Measure the current stack before changing Answer.** The earlier Windows
@@ -600,21 +634,26 @@ before the baseline and report it alongside the baseline.
    scenarios whose first delivery covers every essential, scenarios one
    essential short, and the turn at which each note is first covered.
    [L7 work order](final-plan-fp16.md#128-work-order) · [Rubrics](answer-evaluation/rubrics.md) · [Report layout](answer-evaluation/README.md)
-2. **Change set 1 — let Answer gather the evidence.** Compare the current
-   Search-led loop with evidence needs routed to native readers, then add
-   targeted range expansion and the bounded retained-text scan. Use both
-   models off for attribution. This is where reader sequences are measured.
-   Run one fixed recipe per task kind from the table below, starting from
-   the task alone and following only anchors found in earlier reads. Vary
-   the follow-up reads allowed per sub-need in each round before the round
-   ceiling. Today that allowance is one, which leaves a sub-need two reads
-   after its first round. A chain from discovery to symbol to caller to
-   source needs three. Replay fixed and need-based read allocations
-   on the same routes. Determine where each essential first becomes available
-   and where it is lost. Carry the best supported combination into the judged
-   arms. Saved working-tree reads are deferred until after the Windows
-   review, as described below. The pinned comparison always sees the same
-   bytes.
+2. **Change set 1 — let Answer gather the evidence.** Replay the same 20
+   development tasks on the frozen publications with Focus and Arbiter off.
+   Use one fixed recipe per task kind. Start from the task and follow only
+   anchors found in earlier reads.
+
+   First compare the existing loop with one that can use Code Facts,
+   Document Facts, Relationships and a scoped literal scan of retained
+   indexed text. Keep the present follow-up allowance and per-read byte
+   allocations for this comparison. Then hold the reader roster fixed.
+   Compare one versus two follow-up reads per open need in each later round.
+   At the same follow-up allowance, compare fixed excerpt sizes with
+   need-based sizes that use short discovery reads and longer decisive
+   passages. Keep the same total call and byte limits, three-round ceiling
+   and deadline in every replay.
+
+   Report the first read that recovered each essential and any essential
+   lost when another need consumed its share. Show gains and losses per task
+   and repository, together with external reads still needed. Carry the
+   best-supported combination into the judged arms. Use the existing
+   delivery protocol throughout the Windows series.
    [Retrieval rounds](#retrieval-rounds-inside-one-answer) · [Evidence budgets](#read-and-delivery-budgets)
 3. **Change set 2 — let the models choose consequential work.** Hold gathering
    and allocation fixed. Compare deterministic choices with Arbiter choices
@@ -634,9 +673,11 @@ before the baseline and report it alongside the baseline.
    the preceding traces. A failure to reach a passage, an incomplete function
    in the reply, and a confidently wrong claim about a caller need different
    fixes. Test the smallest change that closes the observed gap. Where the
-   gap survives direct indexed reads and retrieval tuning, run the matching
-   index pilot below. Show gains, displaced essentials and external reads
-   still necessary for each repository and task. Discuss any proposed full
+   gap survives direct indexed reads and retrieval tuning, use an available
+   slot within the two-pilot limit or bring the finding to the Windows review.
+   Once the held-out probes have been opened, they cannot confirm another
+   finalist. Show gains, displaced essentials and external reads still
+   necessary for each repository and task. Discuss any proposed full
    rebuild before starting one. Keep a viable query-time improvement
    available for the judged series while an index decision is outstanding.
    [Index experiments](#when-to-change-an-index)
@@ -681,9 +722,10 @@ sees the reference notes.
 
 Build on the existing kernel gathering and canonical readers. Current Answer
 starts each need with Search and has a narrower typed `LoopRead` roster.
-Prove proposed Code Facts, Document Facts and Relationships routes through
-the existing readers on missed cases, then record the Core contract decision,
-source bindings and transport fixtures before adding them to that roster.
+Prove the approved routes on missed cases. Bind Code Facts, Document Facts
+and Relationships to their canonical readers and the literal scan to the
+authorized retained text. Record the Core contract and exercise its source
+bindings and transport fixtures when extending the roster.
 Distinguish identifier occurrences, provider-resolved edges and source-verified
 call sites. Keep collection, root and publication identity on every hop,
 including when two indexes contain the same path.
@@ -700,19 +742,19 @@ and uses the result in the next round. Keep deterministic selection for
 disabled, abstaining or unavailable models. Cache by source identity and
 range. Skip a repeated action that adds no evidence. Stop on sufficient
 cited coverage, exhausted admissible actions, cancellation, budget or
-deadline. Two limits bound a chain today: three rounds, and one follow-up
-read per sub-need in each later round. The second is the tighter one. If
-either regularly stops a productive chain, replay those cases with more
-funded reads or rounds and compare external work saved. Increase a limit
-only on that evidence and through its contract.
+deadline. The Windows comparison keeps three rounds. When today's single
+follow-up per open need cuts a productive chain short, trace whether a
+second follow-up finds the missing evidence and which other needs still
+receive their share of the same budget.
 [Loop model roles](final-plan-fp16.md#122-how-the-models-take-part) · [Native limits](../../crates/airk-core/src/arbiter/answer_loop.rs)
 
 **Use current files when the question requires current files.** This
 capability is deferred until after the Windows review. It needs a new
 source-authority contract and its security review, the pinned comparison
 cannot use it, and no measured class of misses yet depends on current
-bytes. Start it earlier only if Stage A traces show such a class. For a task
-about a saved change, use a caller-supplied or otherwise explicitly authorized
+bytes. If Stage A traces reveal such a class, bring the evidence to the
+Windows review. The matched Windows comparisons use the pinned indexed
+sources. For a task about a saved change, use a caller-supplied or otherwise explicitly authorized
 base/head or changed-path selection. Verify its identity before following
 the diff into surrounding definitions, callers and tests. A read-only,
 in-process live matcher is a proposed capability beyond today's saved-source
@@ -738,17 +780,16 @@ up to **8,192 input tokens per call**. Record which limit actually cut each
 source or stopped an action.
 [Read recipes](../../crates/airk-kernel/src/arbiter/answer/retrieve.rs) · [Evidence budget analysis](search-improvement-plan.md#context-inference-and-evidence-budgets)
 
-Replace fixed per-read allocations inside Answer with small discovery reads
-and larger reads for decisive functions, tests and document sections.
-Redistribute unused budget across open needs. Score compact, cited choices
+In the need-based allocation comparison, use small discovery reads and
+larger reads for decisive functions, tests and document sections.
+Redistribute unused bytes across open needs within the same total budget. Score compact, cited choices
 while retaining the longer source spans. Reserve delivery space for the
 decision-bearing excerpt from each essential need and any conflict or gap.
 Merge overlapping text while keeping its distinct provenance and locations.
 Show the agent exact paths and line or original document ranges it can open
-directly. Mark a clipped exception, branch or assertion as incomplete. If
-useful evidence remains, a handle-only continuation should return new
-evidence under rechecked authority without requiring the agent to replay its
-request or previous results. Count it as an external round trip.
+directly. Mark a clipped exception, branch or assertion as incomplete. In
+Windows, record the external round trips the existing delivery requires.
+Use those observations in the later handle-only delivery design.
 [Delivery and client checks](#4-close-the-parallel-section-12-work) · [Job authority and lifetime](../../crates/airk-service/src/service_runtime/answer_jobs/CONTRACT.md)
 
 #### What an agent must be able to do with the reply
@@ -762,16 +803,20 @@ request or previous results. Count it as an external round trip.
 | Design or select a test | Can it trace the real entry point through fixture setup to an assertion with an independent expected outcome, locate the command, selector and platform flags, and tell whether that test ran on this revision? Only a matching execution receipt establishes a pass. |
 | Make an architecture or impact decision | Can it trace a complete path across an interface, including a boundary, variant or failure path that could change the decision? For “all callers” or “no remaining uses,” identify traversed roots, exclusions and completeness. A bounded or text-only search leaves that claim open. |
 
-The frozen scenarios cover coding, writing, testing and architecture. They
-contain no patch review and no debugging task, so those two rows are
-unjudged diagnostics on synthetic or development cases. A claim about review
-or debugging needs frozen scenarios of that kind first.
+For the debugging diagnostic, give Sol the symptom of a known failure on a
+pinned fixture. Check which returned passages identify the cause and which
+facts Sol still needs. Record a reproduction only if the fixture actually
+exhibits the failure. For patch review, give Sol a specific pinned diff
+and check its finding against the changed hunk, affected caller and any
+counterevidence. Report what Answer surfaced or missed in each example.
+These two diagnostics contribute no scores, wins or turns to the judged
+gate and support observations only about the cases exercised.
 
 Preselect a small development sample spanning the task kinds above and both
 repositories. Give a fresh agent only the task and the initial Answer delivery,
 including a partial if that is what arrived. Block follow-up reads in this
-diagnostic and independently grade the brief or proposed action against the
-frozen facts. This tests whether the first reply stands on its own. In a
+diagnostic and independently check the brief or proposed action against the
+reference facts for that case. This tests whether the first reply stands on its own. In a
 separate fresh session allow external tools and record which gaps a scoped
 file inventory, literal scan or source read had to close. Give neither agent
 the notes or target paths.
@@ -799,9 +844,9 @@ fewer round trips and less repeated context.
 
 ### Stage B — Stop for manual review of Windows results
 
-Present the Windows baseline and series comparisons, the evidence-ceiling
-result if collected, the steering measures and the Astra panel alongside the
-Sol gate. Report what Focus and Arbiter each added, which acceptance criteria
+Present the Windows baseline and series comparisons, Sol's complete-evidence
+correct finishes by repository, the steering measures and the Astra panel
+alongside the Sol gate. Report what Focus and Arbiter each added, which acceptance criteria
 were missed, and which candidate and receipts support the comparison. Include both index-quality dispositions, unresolved retrieval
 failures, and examples of external work displaced or still required.
 Wait for the user's decision before starting Linux LX or L7.
@@ -861,8 +906,8 @@ applies under each of the three outcomes above.
 Start this stage when the Windows review accepts the retrieval and Answer
 behavior. It can run alongside Stage C, because it changes what an agent is
 shown and not how a route computes. Freeze its result before the sealed
-run, so that E8 confirms the surface that ships. One decision comes
-earlier, before the Stage A baseline.
+run, so that E8 confirms the surface that ships. The approved `task` call
+must already be in place for the Stage A baseline.
 
 **What the evaluation tests and what the product advertises.** The harness
 wrapper offers an agent six tools on the Answer and Search paths and one on
@@ -889,13 +934,20 @@ chooses Answer, or can call it. The installed service may be older than
 the candidate, so the first step below records the candidate's own catalog.
 [Wrapper tool lists](../../scripts/arbiter-answer-eval/README.md) · [Server guidance](../../crates/airk-mcp/src/unified.rs) · [Public catalog](../../crates/airk-mcp/src/combined.rs) · [Answer request](../../crates/airk-core/src/arbiter/answer_loop.rs)
 
-**Before the Stage A baseline: one call shape.** Decide whether the public
-Answer tool accepts a question alone, with the service applying the request
-schema and the whole default budget. That is the call the wrapper already
-makes. It changes a wire shape, so it needs the user's recorded decision
-and the owning contract's update. If the decision is no, the judged agent
-builds the full request itself and the wrapper stops supplying it. Either
-way the judged call and the shipped call are the same.
+**Approved public Answer call for the Stage A baseline.** The user selected
+option A on 25 November 2026. Advertise `task` as the only required argument.
+The service maps its text to the canonical Answer question and supplies the
+request schema. An omitted budget uses the service's complete default. An
+explicit valid budget passes through with the caller's values. Existing
+clients can send the full `schema`, `question` and `budget` request throughout
+the 1.9 release line.
+
+During implementation, record this public input contract in the owning
+contract and remove the wrapper's injected schema and budget. Send the same
+`task` through the real public tool and the benchmark. Compare the canonical
+question, schema and every effective budget field at the service. Exercise
+an omitted budget and an explicit non-default valid budget, then check the
+existing full request against its equivalent `task` call.
 [Answer contract](../../crates/airk-core/src/arbiter/CONTRACT.md)
 
 **Step 1. Record the candidate's catalog.** From the accepted build, save
@@ -924,7 +976,7 @@ This arm is the control for each change below.
 | Change | What it is | Needs |
 | --- | --- | --- |
 | Guidance and descriptions | Rewrite the server guidance and each description to say when to use the tool, what it returns and what to call next. State when Answer is the first call and when a direct lookup is. Remove statements the accepted behavior made untrue. | Regenerated catalog fixtures and help text |
-| Tool and parameter names | Rename the public names that mislead or that collide with an agent's own tools, as proposed below. | The user's recorded decision, a ruling on old names, and an update to everything that names a public operation |
+| Tool names | Rename the public tool names that mislead or that collide with an agent's own tools, as proposed below. | The user's recorded decision, a ruling on old names, and an update to everything that names a public operation |
 | Default tool profile | Advertise a small evidence set by default. Proposed start: Answer, Search, Symbols, References, Read File, Context, Outline, List Files, File Info and Status. The drafting, template, proposal, handoff and diagnostic tools move to a full profile that a user or client opts into. | The user's recorded decision and a contract for the profile setting |
 | Leaner default schemas | Leave shared verification, response and scope parameters out of the default schemas where their defaults serve an agent. The handler and its defaults do not change. | The user's recorded decision |
 
@@ -952,9 +1004,9 @@ current name misleads or collides.
 | `file_info` | unchanged | Clear enough. |
 | `status` | `index_status` | "Status" alone could mean Git or the service. |
 
-- Answer's argument is named `question`, which invites a short question.
-  The evaluation sends the whole task. Naming it `task` belongs with the
-  call-shape decision.
+- The baseline already uses the approved `task` argument. Hold it fixed
+  while comparing proposed tool names. The 1.9 compatibility decision for
+  the existing full request applies independently of any tool rename.
 - The catalog already separates public names from native ones, `answer`
   from `airk_answer`. The rename changes the public layer only. Native names
   and CLI commands stay.
@@ -995,15 +1047,18 @@ the sealed confirmation on it.
 ## 4. Close the parallel Section 12 work
 
 - **L2c–L2e, job delivery and clients.** Reuse the merged L2c work and its
-  receipts. Finish evidence-first replies and handle-only continuations
-  that deliver new evidence once. Prove one worker execution across
+  receipts. Finish evidence-first replies. After the Windows review, settle
+  how an authorized client recovers a lost reply and how a second authorized
+  client retrieves earlier evidence. Record those semantics before adding
+  handle-only continuations. Prove one worker execution across
   disconnect and reattach, separate executions for `fresh`, and correct
   selection authority, retention, and per-delivery records. Count a
   continuation as another agent turn. Implement and verify distinct
   “Stop waiting” and “Cancel job” behavior and full recovered-result parity
   across the applicable clients. Apply the planned independent and
-  security reviews. Run this work alongside L7 where resources allow.
-  Keep the policy fixed within each series. If a later series takes a
+  security reviews. Independent job and client checks may run alongside L7
+  with the evaluated Windows delivery protocol held fixed. Keep the policy
+  fixed within each series. If a later series takes a
   changed job policy, record it as an evaluated change. Report open
   items at inspection with their next executable action.
   [Job contract](../../crates/airk-service/src/service_runtime/answer_jobs/CONTRACT.md)
