@@ -22,6 +22,13 @@ pub(crate) fn authenticated_decode_error(error: anyhow::Error) -> anyhow::Error 
 }
 
 pub const MAX_RESOURCE_BYTES: usize = 256 << 20;
+/// Bound of bodies staged for the next plain publication, per process.
+const MAX_STAGED_BYTES: usize = 512 << 20;
+/// Resource bodies staged by producers, by reference digest. Keyed by the
+/// content digest, so concurrent collections cannot observe another body.
+static STAGED: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<Sha256Digest, Vec<u8>>>,
+> = std::sync::LazyLock::new(Default::default);
 pub const KEYS: [&str; 8] = [
     "legacy-adoption",
     "analysis",
@@ -208,16 +215,57 @@ impl FileStore {
         }
         Ok(())
     }
-    /// Writer-owned producer seam; legacy callers remain unqualified for census promotion.
+    /// Writer-owned producer seam. The plain index stores resource bodies in
+    /// its batch: the body is staged in memory under its reference (no file)
+    /// until the writer's next publication takes it.
     pub fn retain_current_resource_owned(
         &self,
         writer: &crate::WriterLock,
         bytes: &[u8],
-        reservation: &Reservation,
+        _reservation: &Reservation,
     ) -> Result<ResourceReference> {
         super::gate::check_writer(self, writer)?;
-        writer.invalidate_census_before_mutation()?;
-        self.retain_current_resource(bytes, reservation)
+        ensure!(
+            bytes.len() <= MAX_RESOURCE_BYTES,
+            "current resource exceeds byte budget"
+        );
+        let reference = ResourceReference {
+            digest: framed_digest(b"current-resource/1", &[bytes]),
+            bytes: bytes.len(),
+            encoding: None,
+            projection: None,
+        };
+        let mut staged = STAGED
+            .lock()
+            .map_err(|_| anyhow::anyhow!("staged resources poisoned"))?;
+        let total: usize = staged.values().map(Vec::len).sum();
+        if total.saturating_add(bytes.len()) > MAX_STAGED_BYTES {
+            // Bodies prepared but never published; a publication that needs
+            // one of them fails visibly instead of reading a stale body.
+            staged.clear();
+        }
+        staged.insert(reference.digest, bytes.to_vec());
+        Ok(reference)
+    }
+
+    /// The body of a resource reference for a publication: a staged body if
+    /// the producer staged it (taken once), else the retained resource file.
+    pub fn take_current_resource(&self, reference: &ResourceReference) -> Result<Vec<u8>> {
+        let staged = STAGED
+            .lock()
+            .map_err(|_| anyhow::anyhow!("staged resources poisoned"))?
+            .remove(&reference.digest);
+        match staged {
+            Some(bytes) => {
+                ensure!(
+                    bytes.len() == reference.bytes
+                        && framed_digest(b"current-resource/1", &[&bytes]) == reference.digest,
+                    "staged current resource differs from its reference"
+                );
+                Ok(bytes)
+            }
+            None => self.read_current_resource(reference),
+        }
     }
 
     pub fn retain_current_resource(
@@ -326,18 +374,36 @@ impl FileStore {
 }
 
 impl CurrentRead {
+    /// The identity and size of a stored resource body. The plain index has
+    /// no analysis projection, so that key is always absent. The reference
+    /// names no file: read the body with [`Self::resource`].
     pub fn resource_reference(&self, key: &str) -> Result<Option<ResourceReference>> {
         ensure!(KEYS.contains(&key), "unknown current resource");
-        self.map_get(MapDomain::Metadata, key.as_bytes())?
-            .as_deref()
-            .map(decode)
-            .transpose()
+        if key == "analysis-projection" {
+            self.live()?;
+            return Ok(None);
+        }
+        Ok(self.resource_body(key)?.map(|bytes| ResourceReference {
+            digest: framed_digest(b"current-resource/1", &[&bytes]),
+            bytes: bytes.len(),
+            encoding: None,
+            projection: None,
+        }))
     }
-    pub fn resource(&self, store: &FileStore, key: &str) -> Result<Option<Vec<u8>>> {
-        self.resource_reference(key)?
-            .as_ref()
-            .map(|r| store.read_current_resource(r))
-            .transpose()
+    /// The stored body of a resource. `store` is unused: bodies live in the index.
+    pub fn resource(&self, _store: &FileStore, key: &str) -> Result<Option<Vec<u8>>> {
+        ensure!(KEYS.contains(&key), "unknown current resource");
+        if key == "analysis-projection" {
+            self.live()?;
+            return Ok(None);
+        }
+        let body = self.resource_body(key)?;
+        ensure!(
+            body.as_ref()
+                .is_none_or(|body| body.len() <= MAX_RESOURCE_BYTES),
+            "current resource exceeds byte budget"
+        );
+        Ok(body)
     }
 }
 

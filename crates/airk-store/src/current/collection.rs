@@ -176,7 +176,8 @@ pub struct CollectionState {
     pub counts: CollectionCounts,
 }
 impl CollectionState {
-    fn bytes(&self) -> Result<Vec<u8>> {
+    /// The canonical bytes stored as meta `collection_state`.
+    pub(crate) fn bytes(&self) -> Result<Vec<u8>> {
         ensure!(self.version == 1, "unsupported current collection state");
         self.configuration.validate()?;
         let bytes = serde_json::to_vec(self)?;
@@ -217,11 +218,10 @@ impl CollectionState {
 }
 
 impl CurrentRead {
+    /// The meta `collection_state` of this snapshot, decoded when it opened.
     pub fn collection_state(&self) -> Result<Option<CollectionState>> {
-        self.map_get(map::MapDomain::Metadata, KEY)?
-            .as_deref()
-            .map(CollectionState::decode)
-            .transpose()
+        self.live()?;
+        Ok(self.state.clone())
     }
 }
 

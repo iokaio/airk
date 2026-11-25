@@ -544,45 +544,24 @@ impl FileStore {
 }
 
 impl CurrentRead {
+    /// The stored `files.metadata` bytes (the `InventoryFile` JSON) of a path.
+    fn stored_metadata(&self, path: &str) -> Result<Option<Vec<u8>>> {
+        self.require_path(path)?;
+        Ok(self.file_row(path)?.map(|row| row.metadata))
+    }
     pub fn file_metadata_bytes(&self, path: &str) -> Result<usize> {
-        let Some(bytes) = self.map_get(MapDomain::FileMetadata, path.as_bytes())? else {
-            return Ok(0);
-        };
-        let reference: FileMetadataRef = serde_json::from_slice(&bytes)?;
-        reference.validate_projection_declaration()?;
+        let bytes = self.stored_metadata(path)?.map_or(0, |bytes| bytes.len());
         ensure!(
-            reference.path == path
-                && reference.bytes <= MAX_METADATA_BYTES
-                && serde_json::to_vec(&reference)? == bytes,
+            bytes <= MAX_METADATA_BYTES,
             "invalid current metadata reference"
         );
-        Ok(reference.bytes)
+        Ok(bytes)
     }
-    /// Selected authenticated scalar bytes only. This does not authorize relaxing
-    /// private-root/physical integrity checks or certify legacy absent projections.
+    /// The plain index keeps no scalar projection.
     pub fn file_scalars(&self, path: &str) -> Result<Option<FileScalars>> {
-        if self.query_projection_version()?.is_none() {
-            return Ok(None);
-        }
-        let Some(bytes) = self.map_get(MapDomain::FileMetadata, path.as_bytes())? else {
-            return Ok(None);
-        };
-        let reference: FileMetadataRef = serde_json::from_slice(&bytes)?;
-        reference.validate_projection_declaration()?;
-        ensure!(
-            reference.path == path
-                && reference.bytes <= MAX_METADATA_BYTES
-                && serde_json::to_vec(&reference)? == bytes,
-            "invalid current scalar metadata reference"
-        );
-        let Some(scalars) = reference.scalars else {
-            return Ok(None);
-        };
-        let artifact = self
-            .artifact(path)?
-            .context("current scalar artifact missing")?;
-        scalars.verify(&artifact, self.head().sequence)?;
-        Ok(Some(scalars))
+        self.require_path(path)?;
+        self.live()?;
+        Ok(None)
     }
     pub(super) fn audit_scalars_from_verified(
         &self,
@@ -619,33 +598,14 @@ impl CurrentRead {
         }
         Ok(scalars.is_some())
     }
+    /// The plain index keeps no native fact projection.
     pub(super) fn native_fact_reference(
         &self,
         path: &str,
     ) -> Result<Option<(super::resources::ResourceReference, Sha256Digest)>> {
-        if self.query_projection_version()?.is_none() {
-            return Ok(None);
-        }
-        let Some(bytes) = self.map_get(MapDomain::FileMetadata, path.as_bytes())? else {
-            return Ok(None);
-        };
-        let reference: FileMetadataRef = serde_json::from_slice(&bytes)?;
-        reference.validate_projection_declaration()?;
-        ensure!(
-            reference.path == path
-                && reference.bytes <= MAX_METADATA_BYTES
-                && serde_json::to_vec(&reference)? == bytes,
-            "native projection metadata reference mismatch"
-        );
-        if let Some(native) = &reference.native_facts {
-            ensure!(
-                native.bytes <= super::native_projection::MAX_MANIFEST_BYTES,
-                "native projection manifest reference exceeds bound"
-            );
-        }
-        Ok(reference
-            .native_facts
-            .map(|native| (native, reference.digest)))
+        self.require_path(path)?;
+        self.live()?;
+        Ok(None)
     }
     pub fn artifact_path(
         &self,
@@ -685,17 +645,17 @@ impl CurrentRead {
         Ok(Some((path, file)))
     }
 
-    pub fn file_metadata(&self, store: &FileStore, path: &str) -> Result<Option<InventoryFile>> {
-        let Some(bytes) = self.map_get(MapDomain::FileMetadata, path.as_bytes())? else {
+    /// The stored `InventoryFile` of a path, checked against its compact record.
+    /// `store` is unused: the metadata lives in the index row.
+    pub fn file_metadata(&self, _store: &FileStore, path: &str) -> Result<Option<InventoryFile>> {
+        let Some(bytes) = self.stored_metadata(path)? else {
             return Ok(None);
         };
-        let reference: FileMetadataRef = serde_json::from_slice(&bytes)?;
-        reference.validate_projection_declaration()?;
         ensure!(
-            reference.path == path && serde_json::to_vec(&reference)? == bytes,
-            "current metadata path mismatch"
+            bytes.len() <= MAX_METADATA_BYTES,
+            "current metadata exceeds byte bound"
         );
-        let file = store.read_current_metadata(&reference)?;
+        let file: InventoryFile = serde_json::from_slice(&bytes)?;
         let artifact = self
             .artifact(path)?
             .context("current metadata artifact missing")?;

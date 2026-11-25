@@ -473,10 +473,9 @@ impl CurrentRead {
             } else {
                 let result = (|| {
                     let artifact =
-                        store.load_retained_bounded(&compact, retained.object_bytes as u64)?;
-                    if retained.legacy_origin.is_none() || retained.raw_source {
-                        store.verify_retained_source(&compact)?;
-                    }
+                        self.load_retained_bounded(&compact, retained.object_bytes as u64)?;
+                    // Checks the record's source hash only; no source is read (Q5).
+                    self.verify_retained_source(&compact)?;
                     Ok(artifact)
                 })();
                 if private {

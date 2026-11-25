@@ -260,6 +260,7 @@ pub(crate) fn progress_extracted() {
 pub(crate) fn progress_prepared(changes: u64) {
     observe(|progress, now| progress.prepared(changes, now));
 }
+#[allow(dead_code)] // Embedding into the plain index (a later step) reports it again.
 pub(crate) fn progress_semantic_prepared() {
     observe(|progress, now| progress.semantic_prepared(now));
 }

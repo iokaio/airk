@@ -44,23 +44,12 @@ impl CurrentRead {
     fn audit_values(&self, keys: &[Sha256Digest]) -> Result<Sha256Digest> {
         let mut digest = Sha256::new();
         digest.update(b"AIRK-AUDIT-INPUTS-1\0");
-        self.with_connection(|connection| {
-            for key in keys {
-                digest.update(key.as_bytes());
-                let value = map::get(
-                    connection,
-                    &self.head().scope,
-                    self.head().artifact_root,
-                    *key,
-                )?;
-                digest.update([u8::from(value.is_some())]);
-                if let Some(value) = value {
-                    digest.update((value.len() as u64).to_be_bytes());
-                    digest.update(value);
-                }
-            }
-            Ok(())
-        })?;
+        // The plain index has no keyed map to hash: the witness binds the
+        // keys to the exact publication, so any later publication expires it.
+        for key in keys {
+            digest.update(key.as_bytes());
+        }
+        digest.update(self.token()?.digest.as_bytes());
         Ok(Sha256Digest::from_bytes(digest.finalize().into()))
     }
     fn make_audit_witness(

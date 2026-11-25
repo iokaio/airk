@@ -74,6 +74,28 @@ pub struct LexicalQuery {
     pub ranked: bool,
 }
 
+/// The order of an unranked keyset lexical page.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LexicalOrder {
+    StableId,
+    /// Path byte order, then chunk ordinal.
+    Path,
+}
+
+/// The exclusive (or, when `inclusive`, inclusive) continuation of a keyset page.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LexicalAfter {
+    StableId {
+        id: Sha256Digest,
+        inclusive: bool,
+    },
+    Path {
+        path: String,
+        ordinal: u32,
+        inclusive: bool,
+    },
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct LexicalHit {
     pub path: String,
@@ -127,11 +149,6 @@ impl IndexReader {
 
     pub fn sequence(&self) -> u64 {
         self.sequence
-    }
-
-    /// A caller meta value written through `Batch::meta`.
-    pub fn meta(&self, key: &str) -> Result<Option<Vec<u8>>> {
-        schema::meta_blob(&self.connection, key)
     }
 
     pub fn resource(&self, key: &str) -> Result<Option<Vec<u8>>> {
@@ -352,6 +369,126 @@ impl IndexReader {
             });
         }
         Ok((hits, more))
+    }
+
+    /// An unranked page of hits in `order` after `after`, so a caller can
+    /// filter pages itself and continue without an offset. Returns the hits
+    /// and whether more matched than `limit`.
+    pub fn lexical_keyset(
+        &self,
+        query: &LexicalQuery,
+        order: LexicalOrder,
+        after: Option<&LexicalAfter>,
+    ) -> Result<(Vec<LexicalHit>, bool)> {
+        ensure!(
+            (1..=MAX_LEXICAL_HITS).contains(&query.limit) && !query.ranked,
+            "keyset lexical page needs an unranked limit in range"
+        );
+        let expression = match_all(&query.terms)?;
+        let paths = query
+            .paths
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()?;
+        let (keyset, ordering) = match (order, after) {
+            (LexicalOrder::StableId, None) => ("1", "c.stable_id"),
+            (LexicalOrder::StableId, Some(LexicalAfter::StableId { .. })) => {
+                ("(c.stable_id>?5 OR (?7 AND c.stable_id=?5))", "c.stable_id")
+            }
+            (LexicalOrder::Path, None) => ("1", "f.path, c.ordinal"),
+            (LexicalOrder::Path, Some(LexicalAfter::Path { .. })) => (
+                "(f.path>?5 OR (f.path=?5 AND (c.ordinal>?6 OR (?7 AND c.ordinal=?6))))",
+                "f.path, c.ordinal",
+            ),
+            _ => anyhow::bail!("lexical continuation does not match the page order"),
+        };
+        let (key, ordinal, inclusive): (Option<rusqlite::types::Value>, i64, bool) = match after {
+            None => (None, 0, false),
+            Some(LexicalAfter::StableId { id, inclusive }) => (
+                Some(rusqlite::types::Value::Blob(id.as_bytes().to_vec())),
+                0,
+                *inclusive,
+            ),
+            Some(LexicalAfter::Path {
+                path,
+                ordinal,
+                inclusive,
+            }) => (
+                Some(rusqlite::types::Value::Text(path.clone())),
+                i64::from(*ordinal),
+                *inclusive,
+            ),
+        };
+        let sql = format!(
+            "SELECT f.path, c.ordinal, c.stable_id, c.citation FROM fts JOIN chunks c ON c.id=fts.rowid JOIN files f ON f.id=c.file_id \
+             WHERE fts MATCH ?1 AND (?2 IS NULL OR substr(f.path,1,length(?2))=?2) \
+             AND (?3 IS NULL OR f.path IN (SELECT value FROM json_each(?3))) AND {keyset} \
+             AND (?5 IS NULL OR 1) AND (?6 IS NULL OR 1) AND (?7 IS NULL OR 1) ORDER BY {ordering} LIMIT ?4"
+        );
+        let mut statement = self.connection.prepare_cached(&sql)?;
+        let mut rows = statement.query(params![
+            expression,
+            query.path_prefix,
+            paths,
+            i64::try_from(query.limit + 1)?,
+            key,
+            ordinal,
+            inclusive
+        ])?;
+        let mut hits = Vec::new();
+        let mut more = false;
+        while let Some(row) = rows.next()? {
+            if hits.len() == query.limit {
+                more = true;
+                break;
+            }
+            hits.push(LexicalHit {
+                path: row.get(0)?,
+                ordinal: u32::try_from(row.get::<_, i64>(1)?)?,
+                stable_id: digest(row.get(2)?)?,
+                citation: row.get(3)?,
+                rank: 0.0,
+            });
+        }
+        Ok((hits, more))
+    }
+
+    /// The number of stored citation units.
+    pub fn chunk_count(&self) -> Result<u64> {
+        Ok(u64::try_from(self.connection.query_row(
+            "SELECT count(*) FROM chunks",
+            [],
+            |row| row.get::<_, i64>(0),
+        )?)?)
+    }
+
+    /// Committed vector rows that at least one unit still references.
+    pub fn live_vector_rows(&self) -> Result<u64> {
+        let Some((_, _, committed)) = self.vector_setup()? else {
+            return Ok(0);
+        };
+        Ok(u64::try_from(self.connection.query_row(
+            "SELECT count(DISTINCT v.row) FROM vector_rows v JOIN units u ON u.embedding_key=v.embedding_key WHERE v.row<?1",
+            [i64::try_from(committed)?],
+            |row| row.get::<_, i64>(0),
+        )?)?)
+    }
+
+    /// A caller-owned `meta` value, as stored (text or blob bytes).
+    pub fn meta(&self, key: &str) -> Result<Option<Vec<u8>>> {
+        use rusqlite::types::Value;
+        let value: Option<Value> = self
+            .connection
+            .query_row("SELECT value FROM meta WHERE key=?1", [key], |row| {
+                row.get(0)
+            })
+            .optional()?;
+        Ok(match value {
+            None => None,
+            Some(Value::Blob(bytes)) => Some(bytes),
+            Some(Value::Text(text)) => Some(text.into_bytes()),
+            Some(_) => anyhow::bail!("index meta value {key:?} is not text or bytes"),
+        })
     }
 
     /// The citation stored for one chunk.

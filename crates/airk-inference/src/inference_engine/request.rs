@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Canonical model request execution for the in-process inference pool.
 use airk_retrieval::{
+    embedding_batch::{MAX_INFERENCE_WORKERS, pooled_model_bytes},
     embedding_worker::{ModelLocation, PROTOCOL, Request, Response},
     model::{EmbeddingCacheContext, EmbeddingCacheStats, EmbeddingModel, MAX_INPUT_BYTES},
 };
@@ -103,8 +104,9 @@ pub(crate) fn handle(
                 !texts.is_empty()
                     && texts.len() <= 32
                     && texts.iter().all(|t| t.len() <= MAX_INPUT_BYTES)
-                    && (1..=8).contains(&workers)
-                    && (8 << 20..=1 << 30).contains(&memory_bytes),
+                    && (1..=MAX_INFERENCE_WORKERS).contains(&workers)
+                    && (8 << 20..=pooled_model_bytes(MAX_INFERENCE_WORKERS) as usize)
+                        .contains(&memory_bytes),
                 "embedding batch exceeds admission bounds"
             );
             let model = model.as_ref().context("embedding session not opened")?;

@@ -17,7 +17,43 @@ use std::{
 // Resident/query headroom estimate, not an OS hard limit. Per-request byte bounds
 // and the configured worker broker allowance remain independently enforced.
 const RESIDENT_BYTES: u64 = 512 << 20;
-const MODEL_BYTES: u64 = 512 << 20;
+/// The shared embedding model's charge: 512 MiB for one session, plus one
+/// session reservation for each further inference thread.
+fn model_bytes(inference_threads: u16) -> u64 {
+    airk_retrieval::embedding_batch::pooled_model_bytes(usize::from(inference_threads))
+}
+fn resident_limit(limit: u64, model_threads: u16, service_bytes: u64) -> usize {
+    ((limit.saturating_sub(model_bytes(model_threads) + service_bytes + WORK_BYTES))
+        / RESIDENT_BYTES)
+        .clamp(1, 32) as usize
+}
+/// Embedding sessions in the shared inference owner. The default is a share of
+/// the processors that grows with the preset; an override is used as given.
+/// Both are clamped to the processors and to what the memory limit admits
+/// beside the service, one job's working space and one resident worker.
+fn inference_threads(
+    configuration: &ResourceConfiguration,
+    cpus: usize,
+    limit: u64,
+    service_bytes: u64,
+) -> u16 {
+    let default = match configuration.preset {
+        ResourcePreset::Responsive => 1,
+        ResourcePreset::Balanced => cpus / 4,
+        ResourcePreset::Throughput => cpus / 2,
+    };
+    let requested = configuration
+        .inference_threads
+        .map_or(default, usize::from)
+        .min(cpus);
+    let mut threads = requested.clamp(1, airk_retrieval::embedding_batch::MAX_INFERENCE_WORKERS);
+    while threads > 1
+        && model_bytes(threads as u16) + service_bytes + WORK_BYTES + RESIDENT_BYTES > limit
+    {
+        threads -= 1;
+    }
+    threads as u16
+}
 // Main service baseline plus the bounded, independently killable source watcher.
 const WORK_BYTES: u64 = 768 << 20;
 const IO_BYTES_PER_SECOND: u64 = 256 << 20;
@@ -40,6 +76,9 @@ pub struct Resources {
     service_bytes: u64,
     source_threads: u16,
     inference_threads: u16,
+    /// The most inference threads granted since start; the model is charged
+    /// for this many sessions.
+    model_threads: u16,
     resident_limit: usize,
     residents: BTreeMap<ProjectBinding, WorkerIdentity>,
     running: BTreeMap<ProjectBinding, WorkAllowance>,
@@ -229,10 +268,6 @@ impl Resources {
             .memory_bytes
             .unwrap_or((memory.unwrap_or(2 << 30) / divisor).clamp(2 << 30, ceiling))
             .min(memory.filter(|bytes| *bytes > 0).unwrap_or(u64::MAX));
-        let inference_threads = configuration
-            .inference_threads
-            .unwrap_or(1)
-            .min(cpus as u16);
         let source_default = match configuration.preset {
             ResourcePreset::Responsive => 1,
             ResourcePreset::Balanced => (cpus / 2).max(1),
@@ -243,9 +278,7 @@ impl Resources {
             .unwrap_or(source_default.min(16) as u16)
             .min(cpus as u16);
         let service_bytes = (32 << 20) + airk_core::service_watch::watcher_memory_bytes(memory);
-        let resident_limit = ((limit.saturating_sub(MODEL_BYTES + service_bytes + WORK_BYTES))
-            / RESIDENT_BYTES)
-            .clamp(1, 32) as usize;
+        let inference_threads = inference_threads(&configuration, cpus, limit, service_bytes);
         Ok(Self {
             configuration,
             cpus,
@@ -254,7 +287,8 @@ impl Resources {
             service_bytes,
             source_threads,
             inference_threads,
-            resident_limit,
+            model_threads: inference_threads,
+            resident_limit: resident_limit(limit, inference_threads, service_bytes),
             residents: BTreeMap::new(),
             running: BTreeMap::new(),
             waiting: BTreeMap::new(),
@@ -280,11 +314,14 @@ impl Resources {
         self.limit = proposed.limit;
         self.source_threads = proposed.source_threads;
         self.inference_threads = proposed.inference_threads;
-        self.resident_limit = proposed.resident_limit;
+        // Sessions already created stay charged: the shared owner releases idle
+        // sessions only at its next batch, which this policy cannot observe.
+        self.model_threads = self.model_threads.max(proposed.inference_threads);
+        self.resident_limit = resident_limit(self.limit, self.model_threads, self.service_bytes);
         Ok(())
     }
     fn reserved(&self) -> u64 {
-        MODEL_BYTES
+        model_bytes(self.model_threads)
             + self
                 .optional
                 .lock()
@@ -734,6 +771,68 @@ mod tests {
         Ok(())
     }
     #[test]
+    fn inference_threads_follow_preset_processors_and_memory() -> Result<()> {
+        let threads = |preset, inference_threads, cpus, memory: u64| -> Result<u16> {
+            let configuration = ResourceConfiguration {
+                preset,
+                inference_threads,
+                ..Default::default()
+            };
+            Ok(Resources::new(configuration, cpus, Some(memory))?
+                .snapshot()
+                .inference_threads_limit)
+        };
+        let gib = 1u64 << 30;
+        use ResourcePreset::{Balanced, Responsive, Throughput};
+        assert_eq!(threads(Responsive, None, 64, 128 * gib)?, 1);
+        assert_eq!(threads(Balanced, None, 64, 128 * gib)?, 16);
+        assert_eq!(threads(Throughput, None, 64, 128 * gib)?, 32);
+        assert_eq!(threads(Throughput, None, 256, 128 * gib)?, 32, "capped");
+        assert_eq!(threads(Balanced, None, 2, 128 * gib)?, 1, "at least one");
+        assert_eq!(threads(Balanced, Some(32), 8, 128 * gib)?, 8, "CPU clamp");
+        assert_eq!(threads(Responsive, Some(12), 64, 128 * gib)?, 12);
+        // Memory: Balanced on 16 GiB has a 4 GiB limit. Beside the service,
+        // one job and one resident (288 + 768 + 512 MiB), the model may take
+        // 2,528 MiB: eleven sessions, not sixteen.
+        assert_eq!(threads(Balanced, None, 64, 16 * gib)?, 11);
+        assert_eq!(threads(Balanced, Some(32), 64, 16 * gib)?, 11);
+        // The 2 GiB floor leaves room for one session only.
+        assert_eq!(threads(Throughput, None, 64, 2 * gib)?, 1);
+        // The model charge grows with the sessions and stays 512 MiB for one.
+        let one = Resources::new(
+            ResourceConfiguration {
+                inference_threads: Some(1),
+                ..Default::default()
+            },
+            64,
+            Some(128 * gib),
+        )?;
+        let model = |resources: &Resources| resources.reserved() - resources.service_bytes;
+        assert_eq!(model(&one), 512 << 20);
+        let sixteen = Resources::new(ResourceConfiguration::default(), 64, Some(128 * gib))?;
+        assert_eq!(model(&sixteen), (512 + 15 * 200) << 20);
+        assert_eq!(
+            sixteen.snapshot().memory_reserved_bytes,
+            sixteen.reserved(),
+            "the snapshot discloses the session charge"
+        );
+        // Lowering the setting grants fewer threads at once but keeps the
+        // charge for sessions that may already exist.
+        let mut lowered = sixteen;
+        lowered.reconfigure(ResourceConfiguration {
+            inference_threads: Some(2),
+            ..Default::default()
+        })?;
+        assert_eq!(lowered.snapshot().inference_threads_limit, 2);
+        assert_eq!(model(&lowered), (512 + 15 * 200) << 20);
+        lowered.reconfigure(ResourceConfiguration {
+            inference_threads: Some(20),
+            ..Default::default()
+        })?;
+        assert_eq!(model(&lowered), (512 + 19 * 200) << 20);
+        Ok(())
+    }
+    #[test]
     fn optional_release_observer_wakes_only_after_last_actual_charge_owner_drops() -> Result<()> {
         use std::{
             future::Future,
@@ -864,7 +963,10 @@ mod tests {
         assert_eq!(snapshot.running_jobs, 4);
         assert_eq!(snapshot.extraction_threads_reserved, 16);
         assert_eq!(snapshot.background_io_reserved_bytes_per_second, 256 << 20);
-        assert!(snapshot.memory_reserved_bytes < 16 << 30);
+        // The 64-processor default grants 16 embedding sessions; apart from
+        // their added model charge the reservation is what it was with one.
+        assert_eq!(snapshot.inference_threads_limit, 16);
+        assert!(snapshot.memory_reserved_bytes - (model_bytes(16) - model_bytes(1)) < 16 << 30);
         // With a smaller override, reduce extraction parallelism before using
         // capacity reserved for the remaining query workers.
         let mut small = Resources::new(

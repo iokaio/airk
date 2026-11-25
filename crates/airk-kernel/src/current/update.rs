@@ -279,8 +279,7 @@ impl CurrentUpdater<'_> {
     }
 
     /// The batch form of an extraction that the caller did not capture: the
-    /// payload stored for this digest, else (for producers that still retain
-    /// objects) the old retained object.
+    /// payload this index stores under the record's digest.
     fn stored_payload(
         &self,
         read: &PlainRead,
@@ -289,19 +288,9 @@ impl CurrentUpdater<'_> {
         let mut compact = artifact.clone();
         compact.chunks.clear();
         compact.facts.clear();
-        match read.captured(&compact) {
-            Ok(captured) => Ok(captured),
-            Err(stored) => {
-                let payload = self
-                    .store
-                    .load_extraction_payload(&compact)
-                    .map_err(|_| stored)
-                    .context("extraction payload unavailable; rebuild the index")?;
-                CapturedPayload::from_stored(&compact, serde_json::to_vec(&payload)?)
-            }
-        }
+        read.captured(&compact)
+            .context("extraction payload unavailable; rebuild the index")
     }
-
     /// Resource bodies for the batch. The source-control witness is bound to
     /// the publication it describes, as before.
     fn plain_resources(
@@ -326,7 +315,7 @@ impl CurrentUpdater<'_> {
             let body = resource
                 .reference
                 .as_ref()
-                .map(|reference| self.store.read_current_resource(reference))
+                .map(|reference| self.store.take_current_resource(reference))
                 .transpose()?;
             let body = if resource.key == control_key {
                 body.map(|bytes| self.bind_control(&bytes, next))

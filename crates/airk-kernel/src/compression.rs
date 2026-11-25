@@ -2,10 +2,7 @@
 //! Explicit bounded physical repacking reuses the current publication journal.
 use crate::Kernel;
 use airk_core::compression::CompressionMode;
-use airk_store::current::{
-    graph::{GraphOverlay, GraphOverlayLimits},
-    postings::Lookup,
-};
+use airk_store::current::postings::Lookup;
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
 use std::collections::BTreeSet;
@@ -108,121 +105,27 @@ impl Kernel {
         self.repack_current_observed(after, max_files, &mut |_| {})
     }
 
-    /// Observe durable journal boundaries; an observer must not reenter the writer.
+    /// The plain index stores every payload compressed in its batch; there is
+    /// nothing to repack. Reports the current publication and no work.
     pub fn repack_current_observed(
         &self,
         after: Option<&str>,
         max_files: usize,
-        observer: &mut dyn FnMut(crate::current::CurrentUpdateStage),
+        _observer: &mut dyn FnMut(crate::current::CurrentUpdateStage),
     ) -> Result<RepackReport> {
         ensure!(
             (1..=32).contains(&max_files) && after.is_none_or(|p| p.len() <= 4096),
             "invalid repack bounds"
         );
-        let _execution = crate::execution::acquire(&self.data_root)?;
         let scope = self.current_scope()?.context("workspace is not indexed")?;
-        let quota = self.collection_quota()?;
-        crate::current::recover_current(&self.store, &quota, &scope)?;
-        let writer = self.store.lock()?;
-        let reservation = quota.reserve_available(&self.collection, 256 << 20)?;
         let read = self.store.current_read(&scope)?;
-        let base = read.token()?;
-        let page = read.lookup_paths(Lookup::Files, "", after, max_files + 1)?;
-        let mode = self.store.compression_mode(&self.root_id())?;
-        let model = read
-            .collection_state()?
-            .context("repack collection missing")?
-            .configuration
-            .model;
-        let mut report = RepackReport {
+        Ok(RepackReport {
             examined: 0,
             changed: 0,
             next_after: None,
-            generation: base.sequence,
+            generation: read.token()?.sequence,
             skipped_large: 0,
             skipped_legacy: 0,
-        };
-        let mut inputs = Vec::new();
-        let mut admitted = 0usize;
-        for path in page.paths.iter().take(max_files) {
-            let mut captured = read
-                .captured_input(path)?
-                .context("repack artifact missing")?;
-            let artifact = &captured.artifact;
-            let reference = artifact
-                .retained
-                .as_ref()
-                .context("repack reference missing")?;
-            let bytes = artifact
-                .bytes
-                .checked_add(reference.object_bytes)
-                .context("repack byte overflow")?;
-            if bytes > 64 << 20 {
-                report.skipped_large += 1;
-                report.examined += 1;
-                report.next_after = Some(path.clone());
-                continue;
-            }
-            if admitted.saturating_add(bytes) > 64 << 20 {
-                break;
-            }
-            admitted += bytes;
-            if reference.legacy_origin.is_some() {
-                self.store.load_legacy_saved_artifact(artifact)?;
-                report.skipped_legacy += 1;
-                report.examined += 1;
-                report.next_after = Some(path.clone());
-                continue;
-            }
-            let retained = self.store.load_retrieval_artifact(artifact)?;
-            let source = self.store.read_retained_source(artifact)?;
-            let updated = self.store.retain_payload_encoded_owned(
-                &writer,
-                &retained.artifact,
-                &retained.payload,
-                &retained.profile,
-                Some(&source),
-                Some(&reservation),
-                mode,
-            )?;
-            if serde_json::to_vec(&updated)? != serde_json::to_vec(artifact)? {
-                captured.artifact = updated;
-                inputs.push(captured);
-            }
-            report.examined += 1;
-            report.next_after = Some(path.clone());
-        }
-        if report.examined == page.paths.len() && page.next_after.is_none() {
-            report.next_after = None;
-        }
-        report.changed = inputs.len();
-        if inputs.is_empty() {
-            return Ok(report);
-        }
-        let overlay = GraphOverlay::new(
-            &reservation,
-            read.clone(),
-            GraphOverlayLimits::for_indexing(&reservation),
-        )?;
-        drop(read);
-        let sealed = overlay.seal()?;
-        let capacity = self.store.current_database_capacity(&scope)?;
-        let mut current = self
-            .store
-            .current_write(&writer, &quota, &scope, capacity)?;
-        let pending = current.prepare_repack(&base, &sealed, &inputs, model)?;
-        observer(crate::current::CurrentUpdateStage::Prepared);
-        current.mark_applying(&pending)?;
-        observer(crate::current::CurrentUpdateStage::Applying);
-        report.generation = current
-            .commit(&pending, pending.target.lexical_commit)?
-            .token
-            .sequence;
-        observer(crate::current::CurrentUpdateStage::Committed);
-        drop(current);
-        drop(writer);
-        drop(reservation);
-        self.maintain_current()?;
-        Ok(report)
+        })
     }
 }

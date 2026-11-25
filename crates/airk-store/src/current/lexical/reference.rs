@@ -44,53 +44,36 @@ impl CurrentRead {
                 "invalid reference candidate continuation"
             );
         }
-        let query_terms = terms(&query.text);
-        ensure!(
-            !query_terms.is_empty(),
-            "query must contain a letter or number"
-        );
-        if !self.private_query_eligible()? {
-            self.verify_lexical()?;
-        }
-        let expression = query_terms
-            .iter()
-            .map(|term| format!("\"{}\"", token(term)))
-            .collect::<Vec<_>>()
-            .join(" AND ");
-        let scope = self.scope_atoms_json()?;
-        let scope_aliases = self.scope_aliases_json()?;
-        let paths = paths.map(serde_json::to_string).transpose()?;
-        ensure!(
-            paths.as_ref().is_none_or(|paths| paths.len() <= 4 << 20),
-            "reference filtered selector exceeds byte budget"
-        );
-        let result = self.with_connection(|connection| {
-            let sql = if path_order {
-                if scope.is_some() { "SELECT d.path,d.local,d.stable_id,d.payload FROM current_fts JOIN current_lexical_docs AS d NOT INDEXED ON d.id=current_fts.rowid WHERE current_fts MATCH ?1 AND (?2 IS NULL OR substr(d.path,1,length(?2))=?2 COLLATE BINARY) AND (?3 IS NULL OR d.path>?3 COLLATE BINARY OR (d.path=?3 COLLATE BINARY AND (d.local>?4 OR (?5 AND d.local=?4)))) AND (?7 IS NULL OR d.path IN (SELECT value FROM json_each(?7))) AND (?8 IS NULL OR EXISTS (SELECT 1 FROM json_each(?8) AS a WHERE NOT EXISTS (SELECT 1 FROM json_each(?9) AS alias WHERE ((d.path='@'||alias.value COLLATE BINARY OR substr(d.path,1,length(alias.value)+2)='@'||alias.value||'/' COLLATE BINARY) != (json_extract(a.value,'$.path')='@'||alias.value COLLATE BINARY OR substr(json_extract(a.value,'$.path'),1,length(alias.value)+2)='@'||alias.value||'/' COLLATE BINARY))) AND (d.path=json_extract(a.value,'$.path') COLLATE BINARY OR (json_extract(a.value,'$.kind')='subtree' AND (json_extract(a.value,'$.path')='' OR substr(d.path,1,length(json_extract(a.value,'$.path'))+1)=json_extract(a.value,'$.path')||'/' COLLATE BINARY))))) ORDER BY d.path COLLATE BINARY,d.local LIMIT ?6" } else { "SELECT d.path,d.local,d.stable_id,d.payload FROM current_fts JOIN current_lexical_docs AS d NOT INDEXED ON d.id=current_fts.rowid WHERE current_fts MATCH ?1 AND (?2 IS NULL OR substr(d.path,1,length(?2))=?2 COLLATE BINARY) AND (?3 IS NULL OR d.path>?3 COLLATE BINARY OR (d.path=?3 COLLATE BINARY AND (d.local>?4 OR (?5 AND d.local=?4)))) AND (?7 IS NULL OR d.path IN (SELECT value FROM json_each(?7))) ORDER BY d.path COLLATE BINARY,d.local LIMIT ?6" }
-            } else {
-                if scope.is_some() { "SELECT d.path,d.local,d.stable_id,d.payload FROM current_fts JOIN current_lexical_docs AS d NOT INDEXED ON d.id=current_fts.rowid WHERE current_fts MATCH ?1 AND (?2 IS NULL OR substr(d.path,1,length(?2))=?2 COLLATE BINARY) AND (?3 IS NULL OR d.stable_id>?3 COLLATE BINARY OR (?5 AND d.stable_id=?3 COLLATE BINARY)) AND (?7 IS NULL OR d.path IN (SELECT value FROM json_each(?7))) AND (?8 IS NULL OR EXISTS (SELECT 1 FROM json_each(?8) AS a WHERE NOT EXISTS (SELECT 1 FROM json_each(?9) AS alias WHERE ((d.path='@'||alias.value COLLATE BINARY OR substr(d.path,1,length(alias.value)+2)='@'||alias.value||'/' COLLATE BINARY) != (json_extract(a.value,'$.path')='@'||alias.value COLLATE BINARY OR substr(json_extract(a.value,'$.path'),1,length(alias.value)+2)='@'||alias.value||'/' COLLATE BINARY))) AND (d.path=json_extract(a.value,'$.path') COLLATE BINARY OR (json_extract(a.value,'$.kind')='subtree' AND (json_extract(a.value,'$.path')='' OR substr(d.path,1,length(json_extract(a.value,'$.path'))+1)=json_extract(a.value,'$.path')||'/' COLLATE BINARY))))) ORDER BY d.stable_id COLLATE BINARY LIMIT ?6" } else { "SELECT d.path,d.local,d.stable_id,d.payload FROM current_fts JOIN current_lexical_docs AS d NOT INDEXED ON d.id=current_fts.rowid WHERE current_fts MATCH ?1 AND (?2 IS NULL OR substr(d.path,1,length(?2))=?2 COLLATE BINARY) AND (?3 IS NULL OR d.stable_id>?3 COLLATE BINARY OR (?5 AND d.stable_id=?3 COLLATE BINARY)) AND (?7 IS NULL OR d.path IN (SELECT value FROM json_each(?7))) ORDER BY d.stable_id COLLATE BINARY LIMIT ?6" }
-            };
-            let after_key = after.map(|p| if path_order {p.path.clone()} else {p.stable_id.to_string()});
-            let after_local = after.map(|p| i64::try_from(p.local)).transpose()?;
-            let mut statement = connection.prepare(sql)?;
-            let mut rows = if scope.is_some() { statement.query(params![expression,query.path_prefix,after_key,after_local,inclusive,(query.limit + 1) as i64,paths,scope,scope_aliases])? } else { statement.query(params![expression,query.path_prefix,after_key,after_local,inclusive,(query.limit + 1) as i64,paths])? };
-            let mut values = Vec::new();
-            let mut incomplete = false;
-            while let Some(row) = rows.next()? {
-                if values.len() == query.limit { incomplete = true; break; }
-                let path: String = row.get(0)?;
-                let local = u64::try_from(row.get::<_, i64>(1)?)?;
-                let stable_id: Sha256Digest = row.get::<_, String>(2)?.parse()?;
-                ensure!(stable_id == self::stable_id(&path,local)?, "FTS5 reference candidate identity mismatch");
-                let payload: String = row.get(3)?;
-                ensure!(payload.len() <= MAX_ROW_BYTES, "FTS5 reference candidate byte bound exceeded");
-                let citation: Citation = serde_json::from_str(&payload)?;
-                ensure!(citation.path == path, "invalid FTS5 reference candidate citation");
-                values.push(CurrentLexicalCandidate {stable_id,local,citation});
-            }
-            Ok(CurrentLexicalCandidates {manifest_digest:self.head().lexical_commit,values,incomplete})
-        });
-        let result = self.observe_private_integrity(result)?;
+        use crate::index::{LexicalAfter, LexicalOrder};
+        let order = if path_order {
+            CandidateOrder::Keyset(
+                LexicalOrder::Path,
+                after
+                    .map(|position| -> Result<LexicalAfter> {
+                        Ok(LexicalAfter::Path {
+                            path: position.path.clone(),
+                            ordinal: u32::try_from(position.local)?,
+                            inclusive,
+                        })
+                    })
+                    .transpose()?,
+            )
+        } else {
+            CandidateOrder::Keyset(
+                LexicalOrder::StableId,
+                after.map(|position| LexicalAfter::StableId {
+                    id: position.stable_id,
+                    inclusive,
+                }),
+            )
+        };
+        let result = self.lexical_candidates(
+            &query.text,
+            query.path_prefix.as_deref(),
+            paths,
+            query.limit,
+            order,
+        )?;
         self.token()?;
         Ok(result)
     }

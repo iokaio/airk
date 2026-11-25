@@ -246,6 +246,12 @@ impl FileStore {
             "invalid current reclamation batch limit"
         );
         super::gate::check_writer(self, writer)?;
+        // The plain index reclaims unreferenced payloads inside each batch;
+        // there are no object files to collect.
+        if self.plain_index_present()? {
+            let _ = scope;
+            return Ok(ReclamationReport::default());
+        }
         if writer.has_object_captures() {
             return Ok(ReclamationReport {
                 pending: true,

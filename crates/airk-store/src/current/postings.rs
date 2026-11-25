@@ -448,13 +448,10 @@ pub struct PathPage {
 }
 
 impl CurrentRead {
+    /// The plain index always stores terminal-call selectors (index CONTRACT.md).
     pub fn terminal_call_postings_complete(&self) -> Result<bool> {
-        let value = self.map_get(map::MapDomain::Metadata, TERMINAL_NAMES)?;
-        ensure!(
-            value.as_deref().is_none_or(|bytes| bytes == b"1"),
-            "invalid terminal call posting marker"
-        );
-        Ok(value.is_some())
+        self.live()?;
+        Ok(true)
     }
     /// Authenticates all fixed shards before deciding absence or pagination.
     /// Only at most limit+1 matching paths are retained in memory. A caller's
@@ -501,50 +498,58 @@ impl CurrentRead {
                 && (1..=100_000).contains(&limit),
             "invalid current path lookup bounds"
         );
-        let selector = lookup.identity();
-        let mut candidates = BTreeSet::new();
+        use crate::index::{MAX_PAGE, PathLookup, Selector, SelectorKind};
+        let engine = match lookup {
+            Lookup::Files => PathLookup::Files,
+            Lookup::Language(value) => PathLookup::Language(value.to_owned()),
+            Lookup::FactName(value) => PathLookup::Selector(Selector {
+                kind: SelectorKind::FactName,
+                value: value.to_owned(),
+            }),
+            Lookup::FactKind(value) => PathLookup::Selector(Selector {
+                kind: SelectorKind::FactKind,
+                value: value.to_owned(),
+            }),
+            Lookup::EdgeSource(value) => PathLookup::Selector(Selector {
+                kind: SelectorKind::EdgeSource,
+                value: value.to_owned(),
+            }),
+            Lookup::EdgeTarget(value) => PathLookup::Selector(Selector {
+                kind: SelectorKind::EdgeTarget,
+                value: value.to_owned(),
+            }),
+        };
+        // Pages arrive in path order; filters run before the caller's limit.
+        let mut paths = Vec::new();
         let mut bytes = 0usize;
-        for shard in 0..=u8::MAX {
+        let mut cursor = after.map(str::to_owned);
+        let mut truncated = false;
+        'pages: loop {
             checkpoint()?;
-            let Some(encoded) =
-                self.map_get(map::MapDomain::Posting, &identity(selector, shard))?
-            else {
-                continue;
-            };
-            let posting = Posting::decode(&encoded, selector, shard)?;
-            for path in posting.paths {
+            let page = self
+                .with_index(|index| index.lookup(&engine, prefix, cursor.as_deref(), MAX_PAGE))?;
+            for path in page.paths {
                 checkpoint()?;
-                if self.accepts_path(&path)
-                    && path.starts_with(prefix)
-                    && after.is_none_or(|after| path.as_str() > after)
-                    && select(&path)?
-                {
+                if self.accepts_path(&path) && select(&path)? {
+                    if paths.len() == limit {
+                        truncated = true;
+                        break 'pages;
+                    }
                     bytes = bytes
                         .checked_add(path.len())
                         .context("current path page byte overflow")?;
-                    candidates.insert(path);
-                    if candidates.len() > limit + 1 {
-                        bytes -= candidates.pop_last().expect("candidate exists").len();
-                    }
                     ensure!(
                         bytes <= MAX_CHANGED_BYTES,
                         "current path page byte limit exceeded"
                     );
+                    paths.push(path);
                 }
             }
+            match page.next_after {
+                Some(next) => cursor = Some(next),
+                None => break,
+            }
         }
-        let truncated = candidates.len() > limit;
-        if truncated {
-            candidates.pop_last();
-        }
-        for path in &candidates {
-            checkpoint()?;
-            ensure!(
-                self.artifact(path)?.is_some(),
-                "current posting references absent artifact"
-            );
-        }
-        let paths = candidates.into_iter().collect::<Vec<_>>();
         let next_after = truncated.then(|| paths.last().expect("nonempty page").clone());
         Ok(PathPage { paths, next_after })
     }

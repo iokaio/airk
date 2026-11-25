@@ -10,6 +10,7 @@ use airk_core::{
     service::ProjectRegistration,
 };
 use airk_retrieval::{
+    embedding_batch::{MAX_INFERENCE_WORKERS, pooled_model_bytes},
     embedding_worker::{MAX_FRAME_BYTES, ModelLocation, PROTOCOL, Request, Response},
     model::{self, EmbeddingModel},
 };
@@ -506,15 +507,18 @@ impl Engine {
                                 memory_bytes,
                             } => {
                                 ensure!(
-                                    (1..=8).contains(&workers)
+                                    (1..=MAX_INFERENCE_WORKERS).contains(&workers)
                                         && (8 << 20..=4 << 30).contains(&memory_bytes),
                                     "invalid pool inference budget"
                                 );
+                                let threads = self.inference_threads.load(Ordering::Acquire);
+                                // Sessions live here, not in the worker: their memory
+                                // is the shared model charge the service reserves for
+                                // these threads, not the worker's working memory.
                                 Request::Embed {
                                     texts,
-                                    workers: workers
-                                        .min(self.inference_threads.load(Ordering::Acquire)),
-                                    memory_bytes: memory_bytes.min(512 << 20),
+                                    workers: workers.min(threads),
+                                    memory_bytes: pooled_model_bytes(threads) as usize,
                                 }
                             }
                             request => request,

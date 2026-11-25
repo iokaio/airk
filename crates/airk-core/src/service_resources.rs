@@ -10,6 +10,9 @@ use serde::{Deserialize, Serialize};
 pub const DEFAULT_QUERY_CONCURRENCY: usize = 16;
 pub const MAX_QUERY_CONCURRENCY: usize = 64;
 pub const QUERY_CONCURRENCY_CHOICES: [usize; 5] = [4, 8, 16, 32, 64];
+/// Most embedding inference threads (one-thread sessions) a configuration
+/// override or a work allowance may name: one per text of a full batch.
+pub const MAX_INFERENCE_THREADS: u16 = 32;
 pub const fn default_query_concurrency() -> usize {
     DEFAULT_QUERY_CONCURRENCY
 }
@@ -154,7 +157,7 @@ impl ResourceConfiguration {
                 .is_none_or(|threads| (1..=64).contains(&threads))
                 && self
                     .inference_threads
-                    .is_none_or(|threads| (1..=4).contains(&threads)),
+                    .is_none_or(|threads| (1..=MAX_INFERENCE_THREADS).contains(&threads)),
             "invalid service thread override"
         );
         ensure!(
@@ -195,7 +198,7 @@ impl WorkAllowance {
     pub fn validate(&self) -> Result<()> {
         ensure!(
             (1..=4).contains(&self.extraction_threads)
-                && (1..=4).contains(&self.inference_threads)
+                && (1..=MAX_INFERENCE_THREADS).contains(&self.inference_threads)
                 && (128 << 20..=4 << 30).contains(&self.working_memory_bytes)
                 && (1 << 20..=1 << 30).contains(&self.background_io_bytes_per_second)
                 && (1000..=300_000).contains(&self.ttl_ms),
@@ -237,6 +240,40 @@ mod gpu_opt_in_tests;
 #[cfg(test)]
 mod concurrency_tests {
     use super::*;
+    #[test]
+    fn inference_thread_overrides_and_allowances_accept_one_through_thirty_two() {
+        for value in 0..=40u16 {
+            let configuration = ResourceConfiguration {
+                inference_threads: Some(value),
+                ..Default::default()
+            };
+            assert_eq!(
+                configuration.validate().is_ok(),
+                (1..=32).contains(&value),
+                "{value}"
+            );
+            let allowance = WorkAllowance {
+                id: Incarnation::from_bytes([1; 16]),
+                identity: WorkerIdentity {
+                    service: Incarnation::from_bytes([2; 16]),
+                    worker: Incarnation::from_bytes([3; 16]),
+                    project: Sha256Digest::from_bytes([5; 32]),
+                    fencing_generation: 1,
+                },
+                job: Sha256Digest::from_bytes([4; 32]),
+                extraction_threads: 1,
+                inference_threads: value,
+                working_memory_bytes: 768 << 20,
+                background_io_bytes_per_second: 64 << 20,
+                ttl_ms: 300_000,
+            };
+            assert_eq!(
+                allowance.validate().is_ok(),
+                (1..=32).contains(&value),
+                "{value}"
+            );
+        }
+    }
     #[test]
     fn saved_legacy_policy_defaults_to_sixteen_and_only_listed_values_are_valid() {
         let mut legacy = serde_json::to_value(ResourceConfiguration::default()).unwrap();

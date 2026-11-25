@@ -375,7 +375,9 @@ impl FileStore {
     pub fn persistent_revision(&self) -> Result<Option<PersistentRevision>> {
         let _lifecycle = self.lifecycle(false)?;
         self.ensure_index_ready()?;
-        if !self.directory.join("index.sqlite3").exists() {
+        if !self.directory.join("index.sqlite3").exists()
+            || current::plain_writer::is_plain_index(&self.directory)
+        {
             return Ok(None);
         }
         sqlite::persistent_revision(&self.directory)

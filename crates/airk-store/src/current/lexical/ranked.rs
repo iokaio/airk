@@ -9,9 +9,8 @@
 //! calls it; product search never does.
 use super::{CurrentLexicalCandidate, CurrentLexicalCandidates, token};
 use crate::current::CurrentRead;
-use airk_core::{Citation, identity::Sha256Digest};
+use airk_core::identity::Sha256Digest;
 use anyhow::{Result, ensure};
-use rusqlite::params;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// At most this many term groups take part in one ranked request.
@@ -28,6 +27,8 @@ pub struct TermGroup {
 }
 
 impl TermGroup {
+    /// The FTS5 expression of this group, kept as the reference for `matches`.
+    #[cfg(test)]
     fn expression(&self) -> String {
         self.alternatives
             .iter()
@@ -82,10 +83,6 @@ pub struct RankedLexicalCandidates {
     pub dropped_groups: Vec<usize>,
 }
 
-/// Path prefix (?3), path selector (?4) and read scope (?5 atoms, ?6 aliases)
-/// over `d.path`, as in the conjunctive lexical query.
-const FILTERS: &str = "(?3 IS NULL OR substr(d.path,1,length(?3))=?3 COLLATE BINARY) AND (?4 IS NULL OR d.path IN (SELECT value FROM json_each(?4))) AND (?5 IS NULL OR EXISTS (SELECT 1 FROM json_each(?5) AS a WHERE NOT EXISTS (SELECT 1 FROM json_each(?6) AS alias WHERE ((d.path='@'||alias.value COLLATE BINARY OR substr(d.path,1,length(alias.value)+2)='@'||alias.value||'/' COLLATE BINARY) != (json_extract(a.value,'$.path')='@'||alias.value COLLATE BINARY OR substr(json_extract(a.value,'$.path'),1,length(alias.value)+2)='@'||alias.value||'/' COLLATE BINARY))) AND (d.path=json_extract(a.value,'$.path') COLLATE BINARY OR (json_extract(a.value,'$.kind')='subtree' AND (json_extract(a.value,'$.path')='' OR substr(d.path,1,length(json_extract(a.value,'$.path'))+1)=json_extract(a.value,'$.path')||'/' COLLATE BINARY)))))";
-
 impl CurrentRead {
     /// Chunks ranked by the summed inverse document frequency of the groups
     /// they match. Path prefix, path selector and read scope filter each
@@ -105,119 +102,77 @@ impl CurrentRead {
                 && (1..=1000).contains(&limit),
             "invalid ranked lexical request"
         );
-        if !self.private_query_eligible()? {
-            self.verify_lexical()?;
-        }
-        let scope = self.scope_atoms_json()?;
-        let scope_aliases = self.scope_aliases_json()?;
-        let paths = paths.map(serde_json::to_string).transpose()?;
+        use crate::index::{LexicalAfter, LexicalOrder, LexicalQuery, MAX_LEXICAL_HITS};
+        let paths: Option<Vec<String>> = paths.map(|paths| paths.iter().cloned().collect());
         ensure!(
-            paths.as_ref().is_none_or(|paths| paths.len() <= 4 << 20),
+            paths
+                .as_ref()
+                .is_none_or(|paths| paths.iter().map(String::len).sum::<usize>() <= 4 << 20),
             "filtered lexical path selector exceeds byte budget"
         );
-        let result = self.with_connection(|connection| {
-            let total: i64 =
-                connection.query_row("SELECT count(*) FROM current_lexical_docs", [], |row| {
-                    row.get(0)
-                })?;
-            let total = total.max(1) as f64;
-            let mut scores = BTreeMap::<i64, f64>::new();
-            let mut dropped_groups = Vec::new();
-            let mut statement = connection.prepare(&format!(
-                "SELECT d.id FROM current_fts JOIN current_lexical_docs AS d NOT INDEXED ON d.id=current_fts.rowid WHERE current_fts MATCH ?1 AND {FILTERS} LIMIT ?2"
-            ))?;
-            for (index, group) in groups.iter().enumerate() {
-                let mut rows = statement.query(params![
-                    group.expression(),
-                    (MAX_GROUP_ROWS + 1) as i64,
-                    path_prefix,
-                    paths,
-                    scope,
-                    scope_aliases
-                ])?;
-                let mut matched = Vec::new();
-                while let Some(row) = rows.next()? {
-                    matched.push(row.get::<_, i64>(0)?);
-                }
-                if matched.len() > MAX_GROUP_ROWS {
-                    dropped_groups.push(index);
-                    continue;
-                }
-                let frequency = matched.len() as f64;
-                let weight = (1.0 + (total - frequency + 0.5) / (frequency + 0.5)).ln();
-                for id in matched {
-                    *scores.entry(id).or_default() += weight;
+        let total = self.with_index(|index| index.chunk_count())?.max(1) as f64;
+        let mut scores = BTreeMap::<Sha256Digest, (f64, CurrentLexicalCandidate)>::new();
+        let mut dropped_groups = Vec::new();
+        'groups: for (index, group) in groups.iter().enumerate() {
+            // Every alternative's in-scope matches, united by stable identity.
+            let mut matched = BTreeMap::<Sha256Digest, CurrentLexicalCandidate>::new();
+            for alternative in &group.alternatives {
+                let mut after = None;
+                loop {
+                    let (hits, more) = self.with_index(|reader| {
+                        reader.lexical_keyset(
+                            &LexicalQuery {
+                                terms: alternative.iter().map(|term| token(term)).collect(),
+                                path_prefix: path_prefix.map(str::to_owned),
+                                paths: paths.clone(),
+                                limit: MAX_LEXICAL_HITS,
+                                ranked: false,
+                            },
+                            LexicalOrder::StableId,
+                            after.as_ref(),
+                        )
+                    })?;
+                    after = hits.last().map(|hit| LexicalAfter::StableId {
+                        id: hit.stable_id,
+                        inclusive: false,
+                    });
+                    for hit in hits {
+                        if self.accepts_path(&hit.path) {
+                            let candidate = super::candidate(hit)?;
+                            matched.insert(candidate.stable_id, candidate);
+                        }
+                    }
+                    if matched.len() > MAX_GROUP_ROWS {
+                        dropped_groups.push(index);
+                        continue 'groups;
+                    }
+                    if !more {
+                        break;
+                    }
                 }
             }
-            // Every scored row is already in scope; truncation cannot drop an
-            // in-scope row in favour of an out-of-scope one.
-            let mut ranked: Vec<(i64, f64)> = scores.into_iter().collect();
-            ranked.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
-            let prefilter = (limit * 4).min(4000);
-            let incomplete = !dropped_groups.is_empty() || ranked.len() > prefilter;
-            ranked.truncate(prefilter);
-            let score_of: BTreeMap<i64, f64> = ranked.iter().copied().collect();
-            let ids = serde_json::to_string(&ranked.iter().map(|(id, _)| *id).collect::<Vec<_>>())?;
-            let mut select = connection.prepare(&format!(
-                "SELECT d.id,d.path,d.local,d.stable_id,d.payload FROM current_lexical_docs AS d WHERE d.id IN (SELECT value FROM json_each(?1)) AND ?2 IS NULL AND {FILTERS}"
-            ))?;
-            let mut rows = select.query(params![
-                ids,
-                Option::<i64>::None,
-                path_prefix,
-                paths,
-                scope,
-                scope_aliases
-            ])?;
-            let mut found = Vec::new();
-            while let Some(row) = rows.next()? {
-                let id: i64 = row.get(0)?;
-                let path: String = row.get(1)?;
-                let local = u64::try_from(row.get::<_, i64>(2)?)?;
-                let stable_id: Sha256Digest = row.get::<_, String>(3)?.parse()?;
-                ensure!(
-                    stable_id == super::stable_id(&path, local)?,
-                    "FTS5 candidate identity mismatch"
-                );
-                let payload: String = row.get(4)?;
-                ensure!(
-                    payload.len() <= super::MAX_ROW_BYTES,
-                    "FTS5 candidate byte bound exceeded"
-                );
-                let citation: Citation = serde_json::from_str(&payload)?;
-                ensure!(citation.path == path, "invalid FTS5 candidate citation");
-                let score = *score_of
-                    .get(&id)
-                    .ok_or_else(|| anyhow::anyhow!("ranked FTS5 row outside its selection"))?;
-                found.push((
-                    score,
-                    CurrentLexicalCandidate {
-                        stable_id,
-                        local,
-                        citation,
-                    },
-                ));
+            let frequency = matched.len() as f64;
+            let weight = (1.0 + (total - frequency + 0.5) / (frequency + 0.5)).ln();
+            for (id, candidate) in matched {
+                scores.entry(id).or_insert((0.0, candidate)).0 += weight;
             }
-            ensure!(
-                found.len() == score_of.len(),
-                "ranked FTS5 rows changed between selection and read"
-            );
-            found.sort_by(|a, b| {
-                b.0.total_cmp(&a.0)
-                    .then(a.1.stable_id.cmp(&b.1.stable_id))
-            });
-            let incomplete = incomplete || found.len() > limit;
-            found.truncate(limit);
-            Ok(RankedLexicalCandidates {
-                candidates: CurrentLexicalCandidates {
-                    manifest_digest: self.head().lexical_commit,
-                    values: found.into_iter().map(|(_, candidate)| candidate).collect(),
-                    incomplete,
-                },
-                dropped_groups,
-            })
-        });
-        let result = self.observe_private_integrity(result)?;
+        }
+        // Every scored row is already in scope; truncation cannot drop an
+        // in-scope row in favour of an out-of-scope one.
+        let mut found: Vec<(f64, CurrentLexicalCandidate)> = scores.into_values().collect();
+        found.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.stable_id.cmp(&b.1.stable_id)));
+        let prefilter = (limit * 4).min(4000);
+        let incomplete =
+            !dropped_groups.is_empty() || found.len() > prefilter || found.len() > limit;
+        found.truncate(limit);
+        let result = RankedLexicalCandidates {
+            candidates: CurrentLexicalCandidates {
+                manifest_digest: self.head().lexical_commit,
+                values: found.into_iter().map(|(_, candidate)| candidate).collect(),
+                incomplete,
+            },
+            dropped_groups,
+        };
         self.token()?;
         Ok(result)
     }

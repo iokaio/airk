@@ -17,6 +17,9 @@ pub mod map;
 pub mod metadata;
 pub mod native_projection;
 pub mod native_range;
+pub mod plain;
+#[cfg(test)]
+mod plain_tests;
 pub mod plain_writer;
 pub mod policy_capsule;
 pub mod postings;
@@ -158,9 +161,12 @@ pub struct CurrentHead {
 }
 
 impl CurrentHead {
+    /// A plain-index head is synthesized (index CONTRACT.md, "Head"): it has
+    /// no graph allocation or Merkle root, and `live_nodes` counts the
+    /// committed vector rows. Only the scope binding and sequences are checked.
     pub fn validate(&self) -> Result<()> {
         self.scope.validate()?;
-        self.graph_head.validate()?;
+        self.graph_head.scope.validate()?;
         ensure!(
             self.version == 2
                 && self.sequence <= i64::MAX as u64
@@ -174,12 +180,6 @@ impl CurrentHead {
                 && graph.incarnation == self.scope.incarnation,
             "current graph belongs to another collection"
         );
-        if self.sequence == 0 {
-            ensure!(
-                self.artifact_root == map::empty_root(&self.scope)? && self.lexical_sequence == 0,
-                "initial current catalog is not empty"
-            );
-        }
         Ok(())
     }
     pub fn canonical_bytes(&self) -> Result<Vec<u8>> {
@@ -192,10 +192,11 @@ impl CurrentHead {
         Ok(bytes)
     }
     pub fn token(&self) -> Result<CurrentToken> {
+        self.validate()?;
         Ok(CurrentToken {
             incarnation: self.scope.incarnation,
             sequence: self.sequence,
-            digest: framed_digest(b"current-index-head/2", &[&self.canonical_bytes()?]),
+            digest: plain::head_digest(&self.scope, self.sequence),
         })
     }
 }
@@ -311,19 +312,9 @@ impl crate::FileStore {
             return Ok(None);
         }
         let _gate = gate::Gate::shared(self)?;
-        database::reject_legacy_collection(self.directory())?;
-        if !self.directory().join(database::OWNER_FILE).try_exists()? {
-            ensure!(
-                !self.directory().join("current.sqlite3").try_exists()?
-                    && !self
-                        .directory()
-                        .join("current-bootstrap.json")
-                        .try_exists()?,
-                "current ownership header missing; rebuild the managed collection"
-            );
-            return Ok(None);
-        }
-        database::discover_scope(self.directory(), root, collection).map(Some)
+        // The scope lives in the plain index. A directory with only an old
+        // index has none: it is never read and the writer rebuilds it.
+        plain::scope_at(self.directory(), root, collection)
     }
 
     /// Read the captured capacity bound before opening a recovering writer.

@@ -27,9 +27,7 @@ use airk_core::{
 use anyhow::{Context, Result, ensure};
 use std::{collections::BTreeMap, path::Path};
 
-pub const SCOPE_KEY: &str = "scope";
-pub const COLLECTION_STATE_KEY: &str = "collection_state";
-pub const LEXICAL_COMMIT_KEY: &str = "lexical_commit";
+pub use super::plain::{COLLECTION_STATE_KEY, LEXICAL_COMMIT_KEY, SCOPE_KEY, lexical_commit};
 const SOURCE_MEASUREMENT_PREFIX: &str = "source-measurement/";
 /// The engine bounds resource keys; longer paths use their digest.
 const MAX_RESOURCE_KEY_BYTES: usize = 256;
@@ -50,30 +48,21 @@ pub fn source_measurement_key(path: &str) -> String {
     }
 }
 
-/// `lexical_commit` of the publication that last changed lexical rows.
-pub fn lexical_commit(scope: &CurrentScope, sequence: u64) -> Sha256Digest {
-    framed_digest(
-        b"airk-index/lexical/1",
-        &[scope.incarnation.as_bytes(), &sequence.to_be_bytes()],
-    )
+/// Whether `directory` holds a plain index (the engine's format check), as
+/// opposed to the 1.1 SQLite store that used the same file name.
+pub fn is_plain_index(directory: &Path) -> bool {
+    directory.join(index::DATABASE_FILE).is_file() && IndexReader::open(directory).is_ok()
 }
 
-/// The token of one plain publication (contract: `current-index-head/3`).
+/// The token of one plain publication; the reader's `CurrentHead::token`
+/// uses the same digest (`plain::head_digest`).
 pub fn plain_token(scope: &CurrentScope, sequence: u64) -> CurrentToken {
     CurrentToken {
         incarnation: scope.incarnation,
         sequence,
-        digest: framed_digest(
-            b"current-index-head/3",
-            &[
-                scope.incarnation.as_bytes(),
-                &sequence.to_be_bytes(),
-                index::FORMAT.as_bytes(),
-            ],
-        ),
+        digest: super::plain::head_digest(scope, sequence),
     }
 }
-
 /// The plain index ran out of room (D8). The batch was not written.
 #[derive(Clone, Copy, Debug)]
 pub struct IndexSizeCap {
@@ -383,6 +372,14 @@ impl FileStore {
         scope.validate()?;
         configuration.validate()?;
         ensure!(!self.plain_index_present()?, "plain index already exists");
+        // Without a plain index an owner header names nothing; one left by an
+        // interrupted creation for another scope is replaced.
+        let owner = self.directory().join(super::database::OWNER_FILE);
+        if owner.try_exists()?
+            && super::database::owned_scope(self.directory()).ok().as_ref() != Some(scope)
+        {
+            std::fs::remove_file(&owner)?;
+        }
         super::database::create_owner(
             self.directory(),
             scope,
@@ -617,11 +614,7 @@ fn file_entry(upsert: PlainUpsert) -> Result<FileEntry> {
             end_line: chunk.end_line,
             location: chunk.location.clone(),
         };
-        let terms = airk_core::lexical::terms(&format!("{path} {}", chunk.text))
-            .iter()
-            .map(|term| lexical::token(term))
-            .collect::<Vec<_>>()
-            .join(" ");
+        let terms = lexical::chunk_terms(path, &chunk.text);
         chunks.push(ChunkEntry {
             stable_id: lexical::stable_id(path, ordinal as u64)?,
             citation: serde_json::to_string(&citation)?.into_bytes(),

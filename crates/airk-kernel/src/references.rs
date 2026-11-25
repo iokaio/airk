@@ -604,18 +604,22 @@ impl Kernel {
                         .and_then(|r| r.profile.as_ref())
                         .is_some_and(|p| p.chunk_version == 3)
                     {
-                        let retained = self.store.load_retrieval_artifact(&entry)?;
+                        let retained = read.load_retrieval_artifact(&entry)?;
                         (retained.artifact, Some(retained.payload))
                     } else {
-                        (self.store.load_retained(&entry)?, None)
+                        (read.load_retained(&entry)?, None)
                     };
-                    // Original source may be unavailable for saved historical
-                    // evidence. Canonical saved chunks remain reference evidence;
-                    // direct source-line proof requires a current payload.
+                    // Only utf8 files keep their source (Q5). Canonical chunks
+                    // remain reference evidence for the others; direct
+                    // source-line proof requires the stored source.
                     let source = payload
                         .as_ref()
-                        .map(|_| self.store.read_retained_source(&entry))
+                        .filter(|_| read.retained_source_available(&entry))
+                        .map(|_| read.read_retained_source(&entry))
                         .transpose()?;
+                    if source.is_none() {
+                        read.verify_retained_source(&entry)?;
+                    }
                     if artifact.extraction_method == "utf8"
                         && let (Some(payload), Some(source)) = (&payload, source)
                         && payload.text.as_bytes() == source.as_slice()

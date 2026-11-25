@@ -615,7 +615,7 @@ fn identifier_tokens(text: &str) -> Vec<&str> {
 /// Navigation is supplemental native evidence, not a rewrite or a reranker.
 /// Reads, file visits and serialized pointers have independent small ceilings.
 pub(crate) fn definition_hints(
-    store: &FileStore,
+    _store: &FileStore,
     read: &CurrentRead,
     query: &SearchQuery,
     filters: &SearchFilters,
@@ -659,11 +659,9 @@ pub(crate) fn definition_hints(
             // not a global imported-analysis merge whose work is outside this
             // helper's small allowance. Source verification remains mandatory.
             let native = read.observe_private_integrity((|| -> Result<_> {
-                let native =
-                    store.load_retained_bounded(&artifact, retained.object_bytes as u64)?;
-                if retained.legacy_origin.is_none() || retained.raw_source {
-                    store.verify_retained_source(&artifact)?;
-                }
+                let native = read.load_retained_bounded(&artifact, retained.object_bytes as u64)?;
+                // Checks the record's source hash only; no source is read (Q5).
+                read.verify_retained_source(&artifact)?;
                 Ok(native)
             })())?;
             for fact in native.facts {
@@ -718,7 +716,27 @@ pub(crate) fn definition_hints(
     Ok(hints)
 }
 
+/// The plain index does not serve vectors yet (indexing plan step P5): the
+/// semantic branch has no candidates and is incomplete, so hybrid search
+/// degrades to lexical evidence.
 fn vector_candidates(
+    _store: &FileStore,
+    read: &Arc<CurrentRead>,
+    _query: &SearchQuery,
+    _filtered_paths: Option<&ScopedPaths>,
+    _branch_limit: usize,
+) -> Result<Branch> {
+    read.token()?;
+    Ok(Branch {
+        values: Vec::new(),
+        incomplete: true,
+        kind: v2::BranchKind::Vector,
+    })
+}
+
+/// The old graph-backed branch, kept until the plain vector reader replaces it.
+#[allow(dead_code)]
+fn graph_vector_candidates(
     store: &FileStore,
     read: &Arc<CurrentRead>,
     query: &SearchQuery,
@@ -931,7 +949,7 @@ fn lexical_hit(
         read.observe_private_integrity(text.chunk_private(usize::try_from(candidate.local)?))?
     } else {
         let result = (|| -> Result<_> {
-            let full = super::load_lexical_artifact(store, compact)?;
+            let full = super::load_lexical_artifact(read, compact)?;
             Ok(full
                 .chunks
                 .get(usize::try_from(candidate.local)?)

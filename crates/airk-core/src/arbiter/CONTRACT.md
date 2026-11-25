@@ -507,7 +507,11 @@ configuration/session rollback; SessionNone alone is not a released-charge proof
 
 
 The existing service inference_threads setting governs ordinary MiniLM/embedding
-jobs and retains its existing bounds/default. Optional Arbiter execution uses
+jobs. It names the one-thread embedding sessions of the shared model, 1..=32
+(`MAX_INFERENCE_THREADS`; it was 1..=4 until the indexing performance plan's
+step P2.3, 24 November 2026), with the default and the shared model charge
+described in `docs/service-resources.md`. The stored shape is unchanged; every
+earlier stored value stays valid. Optional Arbiter execution uses
 the explicit chosen profile's fixed CPU fit (including the separately approved
 8-physical-core/intra-8 tier), after global and immutable-index/task consent.
 Status reasons disclose the optional profile's declared threads/physical fit;

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Sparse native line boundaries over the original immutable retained source.
-use super::{CurrentRead, map::MapDomain, metadata::FileMetadataRef, resources::*};
+use super::{CurrentRead, resources::*};
 use crate::FileStore;
 use airk_core::{Artifact, compression::CompressionMode, identity::Sha256Digest};
 use anyhow::{Context, Result, ensure};
@@ -222,26 +222,11 @@ pub struct SelectedSourceLines {
     pub truncated: bool,
 }
 impl CurrentRead {
+    /// The plain index keeps no native line projection.
     pub(crate) fn native_line_reference(&self, path: &str) -> Result<Option<ResourceReference>> {
-        let Some(bytes) = self.map_get(MapDomain::FileMetadata, path.as_bytes())? else {
-            return Ok(None);
-        };
-        let reference: FileMetadataRef = serde_json::from_slice(&bytes)?;
-        reference.validate_projection_declaration()?;
-        ensure!(
-            reference.path == path && serde_json::to_vec(&reference)? == bytes,
-            "native line metadata reference mismatch"
-        );
-        if let Some(lines) = &reference.native_lines {
-            ensure!(
-                self.query_projection_version()?
-                    .is_some_and(|version| version >= 3)
-                    && reference.scalars.is_some()
-                    && lines.bytes <= MAX_LINE_INDEX_BYTES,
-                "native line index lacks its scalar capability"
-            );
-        }
-        Ok(reference.native_lines)
+        self.require_path(path)?;
+        self.live()?;
+        Ok(None)
     }
     /// Selecting this authenticated index is navigation, not authority to skip
     /// full integrity checks. Public extraction through it stays strict.

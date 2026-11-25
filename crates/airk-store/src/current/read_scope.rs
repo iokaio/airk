@@ -5,7 +5,7 @@ use airk_core::{
     identity::Sha256Digest,
     scoped_reads::{CompiledReadScope, ScopeReadRefused},
 };
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -172,10 +172,7 @@ impl CurrentRead {
         self.charge_scope_origin(paths.paths.len(), 0, 0, 0)?;
         let mut allowed = false;
         for path in paths.paths {
-            if self
-                .native_definition_origins(store, &path)?
-                .contains(endpoint)
-            {
+            if self.native_definition_origins(&path)?.contains(endpoint) {
                 allowed = true;
                 break;
             }
@@ -221,11 +218,7 @@ impl CurrentRead {
         budget.rows += rows;
         Ok(())
     }
-    fn native_definition_origins(
-        &self,
-        store: &crate::FileStore,
-        path: &str,
-    ) -> Result<Arc<BTreeSet<String>>> {
+    fn native_definition_origins(&self, path: &str) -> Result<Arc<BTreeSet<String>>> {
         if let Some(origins) = self
             .scope_origin_budget
             .get_or_init(Default::default)
@@ -240,7 +233,7 @@ impl CurrentRead {
         let compact = self.artifact(path)?.ok_or(ScopeReadRefused)?;
         let retained = compact.retained.as_ref().ok_or(ScopeReadRefused)?;
         self.charge_scope_origin(0, 0, retained.object_bytes, 0)?;
-        let artifact = store.load_retained_bounded(&compact, retained.object_bytes as u64)?;
+        let artifact = self.load_retained_bounded(&compact, retained.object_bytes as u64)?;
         self.charge_scope_origin(0, 0, 0, artifact.facts.len())?;
         let origins = Arc::new(
             artifact
@@ -346,10 +339,12 @@ impl CurrentRead {
         let Some(reference) = self.resource_reference("analysis")? else {
             return Ok(Arc::new(BTreeSet::new()));
         };
-        // This fallback reads the original authenticated analysis, never analysis()
+        // This fallback reads the original analysis, never analysis()
         // whose record admission itself requires these definition proofs.
         self.charge_scope_origin(0, 0, reference.bytes, 0)?;
-        let bytes = store.read_current_resource(&reference)?;
+        let bytes = self
+            .resource(store, "analysis")?
+            .context("current analysis disappeared from this snapshot")?;
         let evidence: super::analysis::AnalysisEvidence = serde_json::from_slice(&bytes)?;
         ensure!(
             evidence.canonical_bytes()? == bytes
@@ -386,25 +381,5 @@ impl CurrentRead {
             ensure!(self.accepts_endpoint(store, endpoint)?, ScopeReadRefused);
         }
         Ok(())
-    }
-
-    pub(crate) fn scope_atoms_json(&self) -> Result<Option<String>> {
-        if !self.restricts_paths() {
-            return Ok(None);
-        }
-        self.read_scope
-            .get()
-            .map(|scope| serde_json::to_string(&scope.atoms).map_err(Into::into))
-            .transpose()
-    }
-
-    pub(crate) fn scope_aliases_json(&self) -> Result<Option<String>> {
-        if !self.restricts_paths() {
-            return Ok(None);
-        }
-        self.read_scope
-            .get()
-            .map(|scope| serde_json::to_string(&scope.external_aliases).map_err(Into::into))
-            .transpose()
     }
 }

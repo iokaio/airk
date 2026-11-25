@@ -134,6 +134,11 @@ fn binding(
     collection: &str,
 ) -> Result<Option<crate::PersistentRevision>> {
     crate::validate_collection(collection)?;
+    // The plain index of 1.9 shares the file name and is never a legacy
+    // coordination database.
+    if crate::current::plain_writer::is_plain_index(directory) {
+        return Ok(None);
+    }
     let database = directory.join("index.sqlite3");
     if !database.try_exists()? {
         ensure!(
@@ -186,6 +191,9 @@ impl FileStore {
                 "foreign index reset intent"
             );
             return Ok(IndexFormat::ResetRequired);
+        }
+        if crate::current::plain_writer::is_plain_index(self.directory()) {
+            return Ok(IndexFormat::Current);
         }
         let Some(header) = binding(self.directory(), owner_root, collection)? else {
             return Ok(if self.directory().join("index.sqlite3").try_exists()? {

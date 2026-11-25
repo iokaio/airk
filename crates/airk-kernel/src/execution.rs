@@ -64,13 +64,9 @@ pub(crate) fn plan(slots: usize) -> Result<ExecutionPlan> {
         if interactive {
             1
         } else {
-            cpu_share.min(if mode == ExecutionMode::Throughput {
-                8
-            } else {
-                4
-            })
+            default_inference_workers(cpu_share, budget)
         },
-        8,
+        airk_retrieval::embedding_batch::MAX_INFERENCE_WORKERS,
     )?;
     let extraction_memory = (budget.saturating_sub(airk_ingest::MAX_FILE_BYTES)
         / (2 * airk_ingest::ExtractionExecution::MAX_RESULT_BYTES
@@ -90,6 +86,15 @@ pub(crate) fn plan(slots: usize) -> Result<ExecutionPlan> {
         coordination:
             "four advisory slots per storage root; other applications/roots are not measured".into(),
     })
+}
+
+/// One embedding session per processor of this process's share, bounded by
+/// the sessions its working-memory budget admits.
+fn default_inference_workers(cpu_share: usize, budget: usize) -> usize {
+    use airk_retrieval::embedding_batch::{MAX_INFERENCE_WORKERS, SESSION_MEMORY_BYTES};
+    cpu_share
+        .min(budget / (SESSION_MEMORY_BYTES + (8 << 20)))
+        .clamp(1, MAX_INFERENCE_WORKERS)
 }
 
 fn working_budget(mode: ExecutionMode, memory: Option<u64>, slots: usize) -> usize {
@@ -194,5 +199,23 @@ mod tests {
             + (64 << 20);
         let budget = working_budget(ExecutionMode::Throughput, Some(128 * gib), 2);
         assert!((budget - airk_ingest::MAX_FILE_BYTES) / worker >= 4);
+    }
+
+    #[test]
+    fn inference_default_follows_processors_and_memory() {
+        let gib = 1usize << 30;
+        // 64 processors: one slot's share is 16, two throughput slots' 32.
+        assert_eq!(default_inference_workers(16, 4 * gib), 16);
+        assert_eq!(
+            default_inference_workers(32, 4 * gib),
+            20,
+            "4 GiB admits 20"
+        );
+        // The automatic 1 GiB process budget admits five sessions.
+        assert_eq!(default_inference_workers(16, gib), 5);
+        assert_eq!(default_inference_workers(3, gib), 3);
+        assert_eq!(default_inference_workers(1, 128 << 20), 1);
+        assert_eq!(default_inference_workers(0, 0), 1);
+        assert_eq!(default_inference_workers(256, 64 * gib), 32);
     }
 }

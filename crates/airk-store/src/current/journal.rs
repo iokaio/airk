@@ -3114,17 +3114,10 @@ impl super::CurrentRead {
     /// or a restart capability. An owner must open a fresh read while holding
     /// the actual logical writer before using it for native-owner enrollment.
     /// A retained pre-mutation read cannot establish current settled state.
+    /// The plain index has no journal: every committed snapshot is settled.
     pub fn settled_native_head(&self) -> Result<Option<CurrentHead>> {
-        self.with_connection(|connection| {
-            let (phase, head) = state(connection, &self.head().scope)?;
-            ensure!(head == *self.head(), "native owner read snapshot changed");
-            let pending = pending(connection, &head.scope)?;
-            if phase == TransactionPhase::Ready && pending.is_none() {
-                Ok(Some(head))
-            } else {
-                Ok(None)
-            }
-        })
+        self.token()?;
+        Ok(Some(self.head().clone()))
     }
 }
 
