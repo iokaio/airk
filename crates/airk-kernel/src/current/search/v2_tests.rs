@@ -56,7 +56,11 @@ fn query(text: &str) -> SearchQuery {
     }
 }
 
-fn switched(kernel: &Kernel, text: &str, on: bool) -> Result<CurrentSearchEvidence> {
+fn with_profile(
+    kernel: &Kernel,
+    text: &str,
+    profile: v2::SearchProfile,
+) -> Result<CurrentSearchEvidence> {
     search_with_switch(
         &kernel.store,
         kernel.current_reader()?,
@@ -68,8 +72,17 @@ fn switched(kernel: &Kernel, text: &str, on: bool) -> Result<CurrentSearchEviden
             snippet_bytes: None,
             filters: &SearchFilters::default(),
         },
-        on,
+        profile,
     )
+}
+
+fn switched(kernel: &Kernel, text: &str, on: bool) -> Result<CurrentSearchEvidence> {
+    let profile = if on {
+        v2::SearchProfile::LegacyV2
+    } else {
+        v2::SearchProfile::Baseline
+    };
+    with_profile(kernel, text, profile)
 }
 
 fn paths(hits: &[Hit]) -> Vec<&str> {
@@ -78,20 +91,30 @@ fn paths(hits: &[Hit]) -> Vec<&str> {
 
 /// Pin this test process's switch off, whatever its environment holds: the
 /// binding fails loudly if the process already read a different value.
+#[cfg(feature = "test-support")]
 fn product_switch() -> Result<()> {
     #[cfg(feature = "test-support")]
     v2::bind_evaluation_search(false)?;
-    anyhow::ensure!(!v2::active()?, "product search switch is on");
+    anyhow::ensure!(
+        v2::active()? == v2::SearchProfile::Baseline,
+        "evaluation baseline is not active"
+    );
     Ok(())
 }
 
 #[test]
-fn switch_off_hybrid_search_is_the_product_search() -> Result<()> {
-    product_switch()?;
+fn product_search_uses_the_expected_profile() -> Result<()> {
+    #[cfg(feature = "test-support")]
+    let expected = {
+        product_switch()?;
+        v2::SearchProfile::Baseline
+    };
+    #[cfg(not(feature = "test-support"))]
+    let expected = v2::SearchProfile::Keywords;
     let (_owner, kernel) = fixture()?;
     for text in [PROSE, "provider", "class code"] {
         let product = kernel.hybrid_search(&query(text))?;
-        let off = switched(&kernel, text, false)?;
+        let off = with_profile(&kernel, text, expected)?;
         assert_eq!(
             serde_json::to_vec(&product.hits)?,
             serde_json::to_vec(&off.hits)?,
@@ -102,7 +125,7 @@ fn switch_off_hybrid_search_is_the_product_search() -> Result<()> {
     // Independent of the fusion code: a prose instruction matches no chunk
     // conjunctively, so the product's hybrid order is the vector order.
     let vector = kernel.semantic_search(&query(PROSE))?;
-    let hybrid = kernel.hybrid_search(&query(PROSE))?;
+    let hybrid = switched(&kernel, PROSE, false)?;
     assert_eq!(paths(&hybrid.hits), paths(&vector.hits));
     assert_eq!(hybrid.hits.len(), 4);
     assert!(matches!(
@@ -143,6 +166,27 @@ fn switch_on_ranks_named_source_first_and_generated_copies_below_prose() -> Resu
     unique.sort_unstable();
     unique.dedup();
     assert_eq!(unique.len(), found.len());
+    Ok(())
+}
+
+#[test]
+fn ranked_term_branches_promote_named_matches_with_the_ordinary_depth_and_fusion() -> Result<()> {
+    let (_owner, kernel) = fixture()?;
+    for profile in [
+        v2::SearchProfile::Keywords,
+        v2::SearchProfile::Identifiers,
+        v2::SearchProfile::RankedTerms,
+    ] {
+        let evidence = with_profile(&kernel, PROSE, profile)?;
+        let found = paths(&evidence.hits);
+        assert!(
+            found.iter().take(2).any(|path| matches!(
+                *path,
+                "src/ProviderFactory.cs" | "src/generated/Client.g.cs"
+            )),
+            "{profile:?}: {found:?}"
+        );
+    }
     Ok(())
 }
 

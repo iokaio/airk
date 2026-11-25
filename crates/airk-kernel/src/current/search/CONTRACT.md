@@ -32,19 +32,31 @@ needs no reindex. The regression test
 It requires vector, hybrid and lexical search to find a retained late path
 after a deny and never return the denied file.
 
+## Ranked lexical candidates for prose
+
+Product hybrid Search adds a ranked keyword stream for prose queries of
+at least eight words. Named identifiers lead the ranked term groups.
+The stream uses the existing 100-candidate bound and verifies path
+scope before the cut. The same ranking pass combines the candidates with the
+existing conjunctive lexical branch and exact vector branch. Vector
+query text, branch depth, fusion weighting, output limits and snippet
+selection keep their ordinary policy. Short, lexical-only and vector-only
+requests keep their existing candidate selection.
+
+Test-support builds can pin the original baseline (none or unset), the
+keyword branch alone (ranked_keywords), the identifier branch alone
+(ranked_identifiers), or both streams (ranked_terms). These profiles
+use the same query and publication scope and require no index changes.
+
 ## Private evaluation switch `search_v2` (22 November 2026)
 
-The switch exists only in test-support builds (`v2::active()` is `false` in
-a product build). It is read once per process from
+The historical Search v2 profile is selectable only in test-support builds. It is read once per process from
 `AIRK_ARBITER_EVALUATION_SEARCH` (`search_v2`, or `none`/unset for off; any
 other value fails every search) or bound by `bind_evaluation_search`, and a
 later binding must agree. When the variable turns the switch on, the process
 writes `AIRK_EVALUATION_SEARCH bound=search_v2` once to stderr.
 
-When the switch is off, or the mode is not Hybrid, or the query has fewer
-than `PROSE_WORDS` (8) words, search takes the product path unchanged. The
-test `switch_off_hybrid_search_is_the_product_search` holds this byte for
-byte. When the switch is on and the hybrid query is prose:
+When the historical profile is selected and the hybrid query is prose:
 
 - the instruction is reduced to up to 20 key words, with named identifiers
   first;

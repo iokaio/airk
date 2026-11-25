@@ -95,7 +95,7 @@ pub struct CurrentSearchEvidence {
 enum Candidate {
     Lexical(CurrentLexicalCandidate),
     Vector(Arc<OccurrencePointer>),
-    /// Evaluation switch only: a ranked any-term match of these groups.
+    /// A ranked any-term match of these groups.
     LexicalAny(CurrentLexicalCandidate, Arc<Vec<TermGroup>>),
 }
 
@@ -216,7 +216,7 @@ pub(crate) fn search_current_read_with_filters(
     search_with_switch(store, read, expected, mode, query, options, v2::active()?)
 }
 
-/// `search_v2` is the process's evaluation switch; tests pass it explicitly.
+/// Tests pass an explicit profile to reproduce the baseline and branch variants.
 fn search_with_switch(
     store: &FileStore,
     read: Arc<CurrentRead>,
@@ -224,7 +224,7 @@ fn search_with_switch(
     mode: CurrentSearchMode,
     query: &SearchQuery,
     options: SearchOptions<'_>,
-    search_v2: bool,
+    profile: v2::SearchProfile,
 ) -> Result<CurrentSearchEvidence> {
     let SearchOptions {
         requested_mode,
@@ -318,13 +318,14 @@ fn search_with_switch(
     } else {
         filtered_paths(&read, query, filters)?
     };
-    // Evaluation switch only; `None` keeps every step below the product's.
-    let plan = if search_v2 && matches!(mode, CurrentSearchMode::Hybrid) {
+    let (keywords, identifiers) = profile.lexical_branches();
+    let plan = if (keywords || identifiers) && matches!(mode, CurrentSearchMode::Hybrid) {
         v2::Plan::for_query(&query.text)
     } else {
         None
     };
-    let branch_limit = if plan.is_some() {
+    let legacy = profile == v2::SearchProfile::LegacyV2 && plan.is_some();
+    let branch_limit = if legacy {
         v2::BRANCH_CANDIDATES
     } else {
         BRANCH_CANDIDATES
@@ -402,11 +403,11 @@ fn search_with_switch(
         .as_ref()
         .filter(|_| matches!(mode, CurrentSearchMode::Hybrid))
     {
-        for (kind, groups) in [
-            (v2::BranchKind::Key, &plan.key),
-            (v2::BranchKind::Named, &plan.named),
+        for (enabled, kind, groups) in [
+            (keywords, v2::BranchKind::Key, &plan.key),
+            (identifiers, v2::BranchKind::Named, &plan.named),
         ] {
-            if groups.is_empty() {
+            if !enabled || groups.is_empty() {
                 continue;
             }
             let ranked = read.lexical_search_ranked_any(
@@ -448,7 +449,7 @@ fn search_with_switch(
     for branch in branches {
         let kind = branch.kind;
         for (identity, rank, candidate) in branch.values {
-            let score = if plan.is_some() {
+            let score = if legacy {
                 v2::Plan::weight(kind) / (61.0 + rank as f64)
             } else {
                 1.0 / (61.0 + rank as f64)
@@ -467,13 +468,13 @@ fn search_with_switch(
         }
     }
     let mut ranked: Vec<_> = merged.into_iter().collect();
-    if plan.is_some() {
+    if legacy {
         for (_, (score, candidate)) in &mut ranked {
             *score *= v2::prior(candidate.path());
         }
     }
     ranked.sort_by(|a, b| b.1.0.total_cmp(&a.1.0).then(a.0.cmp(&b.0)));
-    let ranked = if plan.is_some() {
+    let ranked = if legacy {
         // Drop repeated passages first, as the loop below would, so they do
         // not count against their file's place in the order.
         let mut passages = BTreeSet::new();
@@ -487,6 +488,7 @@ fn search_with_switch(
     };
     let focus_text = plan
         .as_ref()
+        .filter(|_| legacy)
         .map_or(query.text.as_str(), |plan| &plan.focus);
     let mut emitted = BTreeSet::new();
     let mut hits = Vec::new();

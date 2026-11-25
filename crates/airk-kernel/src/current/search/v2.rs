@@ -1,19 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Private evaluation search switch `search_v2` (Answer evaluation, change set 2).
+//! Ranked terms for prose requests and the historical private Search v2 profile.
 //!
-//! Product search is unchanged: without the switch, [`Plan::for_query`] is never
-//! consulted and hybrid search keeps its conjunctive lexical branch, equal RRF
-//! votes and stable fusion order. The switch exists only in `test-support`
-//! builds and is read once per process from `AIRK_ARBITER_EVALUATION_SEARCH`
-//! (`search_v2` or `none`), or bound by [`bind_evaluation_search`].
-//!
-//! With the switch on, a hybrid search whose text reads as a prose instruction
-//! (at least [`PROSE_WORDS`] words) adds ranked any-term lexical branches over
-//! the instruction's key words and named identifiers, widens every branch to
-//! [`BRANCH_CANDIDATES`], weights the fused score by the kind of file, defers a
-//! file's hits beyond [`PER_FILE`] behind every other file's, and focuses
-//! snippets on the key words rather than on the whole instruction. Chunking,
-//! stored vectors and the index format are untouched.
+//! Product hybrid search uses one ranked lexical stream with the ordinary
+//! branch depth, equal rank fusion and original snippet query. Test-support
+//! images can select individual branches or reproduce an older profile.
 use airk_core::lexical::terms;
 use airk_store::current::lexical::{MAX_RANKED_GROUPS, TermGroup, valid_alternative};
 use std::collections::{BTreeMap, BTreeSet};
@@ -34,54 +24,88 @@ pub const NAMED_WEIGHT: f64 = 1.0;
 /// Key words kept for the lexical branches, named identifiers first.
 const MAX_KEY_WORDS: usize = 20;
 
-#[cfg(feature = "test-support")]
-static SWITCH: std::sync::OnceLock<Option<bool>> = std::sync::OnceLock::new();
+/// Selects the ranked lexical branches and preserves the historical replay.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SearchProfile {
+    #[cfg(any(test, feature = "test-support"))]
+    Baseline,
+    Keywords,
+    #[cfg(any(test, feature = "test-support"))]
+    Identifiers,
+    #[cfg(any(test, feature = "test-support"))]
+    RankedTerms,
+    LegacyV2,
+}
 
-/// The switch a variable value selects: unset or `none` off, `search_v2` on,
-/// anything else refused.
-#[cfg_attr(not(feature = "test-support"), allow(dead_code))]
-fn parse(value: Result<String, std::env::VarError>) -> Option<bool> {
-    match value {
-        Err(std::env::VarError::NotPresent) => Some(false),
-        Ok(value) if value == "none" => Some(false),
-        Ok(value) if value == "search_v2" => Some(true),
-        _ => None,
+impl SearchProfile {
+    pub(crate) fn lexical_branches(self) -> (bool, bool) {
+        match self {
+            #[cfg(any(test, feature = "test-support"))]
+            Self::Baseline => (false, false),
+            Self::Keywords => (true, false),
+            #[cfg(any(test, feature = "test-support"))]
+            Self::Identifiers => (false, true),
+            #[cfg(any(test, feature = "test-support"))]
+            Self::RankedTerms => (true, true),
+            Self::LegacyV2 => (true, true),
+        }
     }
 }
 
 #[cfg(feature = "test-support")]
-fn from_environment() -> Option<bool> {
-    let value = parse(std::env::var(VARIABLE));
-    if value == Some(true) {
+static SWITCH: std::sync::OnceLock<Option<SearchProfile>> = std::sync::OnceLock::new();
+
+#[cfg(any(test, feature = "test-support"))]
+fn parse(value: Result<String, std::env::VarError>) -> Option<SearchProfile> {
+    match value {
+        Err(std::env::VarError::NotPresent) => Some(SearchProfile::Baseline),
+        Ok(value) => match value.as_str() {
+            "none" => Some(SearchProfile::Baseline),
+            "ranked_keywords" => Some(SearchProfile::Keywords),
+            "ranked_identifiers" => Some(SearchProfile::Identifiers),
+            "ranked_terms" => Some(SearchProfile::RankedTerms),
+            "search_v2" => Some(SearchProfile::LegacyV2),
+            _ => None,
+        },
+        Err(_) => None,
+    }
+}
+
+#[cfg(feature = "test-support")]
+fn from_environment() -> Option<SearchProfile> {
+    let profile = parse(std::env::var(VARIABLE));
+    if profile == Some(SearchProfile::LegacyV2) {
         eprintln!("AIRK_EVALUATION_SEARCH bound=search_v2");
     }
-    value
+    profile
 }
 
-/// Bind the switch for this process (test-support only). A second binding,
-/// or a binding after the variable was read, must agree with it.
+/// Preserve the original private switch binding for historical replays.
 #[cfg(feature = "test-support")]
 pub fn bind_evaluation_search(on: bool) -> anyhow::Result<()> {
-    let bound = *SWITCH.get_or_init(|| Some(on));
+    let profile = if on {
+        SearchProfile::LegacyV2
+    } else {
+        SearchProfile::Baseline
+    };
+    let bound = *SWITCH.get_or_init(|| Some(profile));
     anyhow::ensure!(
-        bound == Some(on),
+        bound == Some(profile),
         "evaluation search is already bound differently"
     );
     Ok(())
 }
 
-/// Whether the evaluation search switch is on for this process. A product
-/// build has no switch. An unrecognized variable value fails every search.
-pub(crate) fn active() -> anyhow::Result<bool> {
+pub(crate) fn active() -> anyhow::Result<SearchProfile> {
     #[cfg(feature = "test-support")]
     {
         SWITCH
             .get_or_init(from_environment)
-            .ok_or_else(|| anyhow::anyhow!("{VARIABLE} must be search_v2 or none"))
+            .ok_or_else(|| anyhow::anyhow!("{VARIABLE} has an unsupported Search profile"))
     }
     #[cfg(not(feature = "test-support"))]
     {
-        Ok(false)
+        Ok(SearchProfile::Keywords)
     }
 }
 
@@ -357,9 +381,24 @@ mod tests {
     #[test]
     fn switch_values_parse_without_reading_the_environment() {
         use std::env::VarError;
-        assert_eq!(parse(Err(VarError::NotPresent)), Some(false));
-        assert_eq!(parse(Ok("none".into())), Some(false));
-        assert_eq!(parse(Ok("search_v2".into())), Some(true));
+        assert_eq!(
+            parse(Err(VarError::NotPresent)),
+            Some(SearchProfile::Baseline)
+        );
+        assert_eq!(parse(Ok("none".into())), Some(SearchProfile::Baseline));
+        assert_eq!(parse(Ok("search_v2".into())), Some(SearchProfile::LegacyV2));
+        assert_eq!(
+            parse(Ok("ranked_keywords".into())),
+            Some(SearchProfile::Keywords)
+        );
+        assert_eq!(
+            parse(Ok("ranked_identifiers".into())),
+            Some(SearchProfile::Identifiers)
+        );
+        assert_eq!(
+            parse(Ok("ranked_terms".into())),
+            Some(SearchProfile::RankedTerms)
+        );
         assert_eq!(parse(Ok("Search_V2".into())), None);
         assert_eq!(parse(Ok(String::new())), None);
     }

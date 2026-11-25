@@ -659,3 +659,58 @@ canned replies and a stub command runner. `test_fixture.py` belongs to `fixture.
 (including the `ready.json` wait, with an injected clock and reader and one
 real directory-change wait), `test_lg_lifetimes.py` to
 `lg_lifetimes.py` and `test_lg_bases.py` to `lg_bases.py`.
+
+### Matched CS1 Search with Focus off and on
+
+`search_focus_ab.py` freezes the exact first canonical Search requests from
+the 20 judged CS1 Search sessions in `08-windows-cuda-cs1-r2`. Use a fresh
+private output under the checked human-owned campaign root. The cohort holds
+private queries and essential notes. Its inputs are the judged pass index, the
+private grades CSV, and their frozen scenarios and retained first-call receipts.
+
+- Run `freeze --pass-dir DIR --pass-index-sha256 SHA --results-sha256 SHA --output cohort.json`.
+- With both optional stages disabled, run
+  `collect --cohort cohort.json --cohort-sha256 SHA --handle HANDLE --handle-sha256 SHA --arm off --output off.json`.
+- After enabling the admitted CUDA Focus profile alone on the same fixture, run
+  the same command with `--arm focus --focus-profile MANIFEST_SHA --output focus.json`.
+- Run `compare --off off.json --off-sha256 SHA --focus focus.json --focus-sha256 SHA --output comparison.json`.
+
+Use `python -I -B scripts/arbiter-answer-eval/search_focus_ab.py` for each
+command. Collection reads the live configuration and the two settled
+publications before and after; the operator owns all stage changes. The
+requests retain sent arguments and response mode, including the current
+default 10-result and 8,192-byte limits when omitted. The comparison reports
+coverage and one-based essential citation ranks under the existing rule 2,
+returned counts, and elapsed CLI time. Focus receipts bind CUDA execution to
+the selected profile, source publication and configuration revision and
+show whether any unscored tail was preserved. Missing applications or failed
+reads remain visible and cause the comparison to exit 2. This measures the
+first retained Search reply, with no widening or follow-up sessions. The
+result says nothing about candidates outside the returned pool. The guard
+probes precede measured requests, and cache and run order can affect latency.
+
+#### Cumulative Search milestones
+
+Retain the original complete Focus pair comparison once. Produce a new
+`compare` receipt for each milestone on the same frozen cohort. Then run:
+
+```text
+python -I -B scripts/arbiter-answer-eval/search_focus_ab.py cumulative --step N --original ORIGINAL.json --original-sha256 SHA --prior PRIOR.json --prior-sha256 SHA --current CURRENT.json --current-sha256 SHA --output CUMULATIVE.json
+```
+
+For step 1, supply the original comparison as the prior too. The original
+CS1 comparison predates the embedded Focus profile, so also supply
+`--original-focus-arm ORIGINAL-FOCUS.json`. Its SHA-256 comes from the pinned
+original pair receipt. Later milestones use the immediately preceding pair
+as the prior. Request identity, count and byte limits, response mode, note
+IDs, source revisions, index identity and exact Focus manifest must match.
+Step 6 alone accepts `--experimental-index` to compare changed publication
+tokens against the original source revisions, with the changed fields
+recorded explicitly.
+
+The report gives matched essential gains and losses, shared-note rank
+movement, top-three coverage, inverse rank, and paired CLI time deltas both
+overall and by repository. The Focus interaction is the change with Focus
+enabled minus the change with Focus disabled. Read it alongside cache and
+fixed-arm-order limits, and for an experimental index, the changed
+publications. The report does not contain query text or excerpts.

@@ -18690,3 +18690,207 @@ observer close receipt
 D: retained 390,341,746,688 free bytes. The next work measures
 the actual Focus ranking and Arbiter decision losses on the
 development scenarios.
+
+### 25 November 2026 — Reuse settled development indexes
+
+Answer-only and optional-model changes do not invalidate the existing
+Bookbuilder and Munarium publications when source revisions and
+indexing inputs stay fixed. The latest fresh fixture took 24 minutes
+11 seconds to settle. The earlier indexes did not fail. Choosing
+fresh installations avoided a fixture restart limitation and repeated
+work that the candidate did not require.
+
+The launcher bans a second CUDA lifetime in any fixture root. The
+native same-install restart also compares the previous CUDA Ready
+receipt against only the CPU roster. A CUDA Ready receipt records
+both CPU and CUDA profiles. Disabling the stages releases the active
+models but retains the selections and index enrollments. A safe
+restart must authenticate that saved configuration and acquire the
+same installation's native lease again.
+
+Add an explicit settled reuse path for the evaluation pair. Preserve
+the original control root, source archives and published index data.
+Authenticate a clean, idle predecessor and the original source and
+publication identities. On reopening, verify the repository revisions,
+index bindings, source policies, semantic readiness, embedding
+pipeline and publication tokens from the new service. Refuse drift
+before queuing setup, model installation, lexical indexing or vector
+work. The normal fresh-index and CPU restart paths keep their existing
+behavior.
+
+Acceptance is a live restart of the same settled Bookbuilder and
+Munarium installation. Compare both before and after publications and
+prove zero new native lexical-index or vectors jobs. Record elapsed
+time, old and new service identities, and teardown. The next candidate
+waits for this proof. No additional index rebuild is scheduled.
+
+The Windows CUDA reuse service passed scoped Clippy and 17 native tests
+(458 filtered out). The checked Python launcher suites passed 69 and
+13 tests. The CUDA service image SHA-256 was
+`f1808a6e147bc23ba79b5dd48368e311719dbd308b5079c4485f636e8c9d4116`.
+The old service closed cleanly. Its successor became ready in 15.040
+seconds using the original control root, both index bindings, both
+publication tokens and the same semantic pipeline. The native registry
+retained all 41 previous Index and Vectors job identities and recorded
+zero new ones. The readiness receipt SHA-256 is
+`8994b851317213bd16bf77914ae73e68b1a489afbd53b14f2eb3ec64805096de`.
+D: had 375,558,295,552 bytes free after readiness.
+
+### 25 November 2026 — Matched ordinary Search with and without CUDA Focus
+
+The user asked to finish this comparison and stop for review. The
+Windows CUDA run froze the first Search request from each of the 20
+judged change-set 1 development scenarios (10 per repository).
+Each arm sent the same requests in the same order with the original
+terse defaults of 10 hits and 8,192 bytes. Focus off ran first at
+configuration revision 5. The existing CUDA Focus profile
+`a3157dd1a6de8f6b5c6ea5348a7d2e53d70c0853f8d66833a12a39ca91f2d183`
+ran second at revision 6. Arbiter was disabled in both arms. The
+same service instance, source revisions, embedding pipeline and
+index publications served both arms.
+
+All 20 matched requests completed in hybrid mode. All 20 Focus
+receipts proved CUDA execution, shared the Focus-off original
+ordering and preserved the unscored tail. Both arms returned the
+same hit sets. Rule 2 matched 14 of 113 essential notes in each
+arm. Six rose with Focus enabled, two fell and six stayed at the
+same rank. Eight appeared in the first three positions with Focus
+enabled and six appeared there with it disabled. Bookbuilder
+covered 5 of 61 notes in each arm (two rose and three tied).
+Munarium covered 9 of 52 (four rose, two fell and three tied).
+
+Median elapsed CLI time was 1,066.5 ms off and 1,556.0 ms on,
+with a median paired increase of 523.5 ms. Nearest-rank p95 was
+1,718 ms off and 2,477 ms on. Both arms ran in a fixed order and
+all 20 responses in each arm reported truncation. This diagnostic
+measures initial Search citation coverage and rank in the returned
+pool. It does not measure Answer follow-up reads, completion or the
+effect of Arbiter.
+
+The exact command sequence used
+`python -I -B scripts/arbiter-answer-eval/search_focus_ab.py` with
+`freeze`, `collect --arm off`, `collect --arm focus --focus-profile <manifest>`,
+and `compare`. The private receipt directory is
+`answer-eval-r1/answer-loop/L5C/win-l7-cs2-index-reuse-r1`, with
+the following SHA-256 digests.
+
+- Cohort: `902735634b35de26c9715c83ec7317e01a810bb5613a5f3fd9623a01ce2f1790`
+- Focus off: `b20fa0180376307b7a529c75ddd31a4b3bd9cf1056e8dea30821dd52ee8d4f99`
+- Focus on: `f6a36c527ae1e53a0b342858e0d9c11c3b051e0e5c88adbb1100585f7c411648`
+- Comparison: `0a783e8cd71306c39685f2ba7f3f181d487461d52c20a1624a2fb7afc427720a`
+
+Seven focused harness tests passed. The first live harness attempt
+stopped at a repository alias lookup before issuing Search calls.
+The corrected harness resolves the retained Bookbuilder alias to
+the live Bookbuilder-v2 binding and has a regression at that boundary.
+Native Focus was disabled again at revision 7. The service closed
+cleanly with both stages idle and no owned processes remaining. The
+shutdown passed the original registry job set check again. The owned
+shutdown receipt SHA-256 is
+`badf6b761e85ab8ad6c4cb2cf649305d34a887f364f3e1ee0f66d6d5b41335a5`.
+Stop here for the requested review of Focus and Arbiter. No full
+training or later Answer evaluation was launched.
+
+### 25 November 2026 — First Search miss attribution
+
+A read-only analysis of the matched Focus-off arm found 14 of 113
+scenario-essential notes under the existing line-overlap rule. Of
+the other 99, 66 had no hit on an accepted source path, 30 had the
+right path with zero overlapping lines, and three had overlapping
+lines below the rule's threshold. Bookbuilder accounted for 48
+path misses, seven wrong spans and one short overlap. Munarium
+accounted for 18 path misses, 23 wrong spans and two short overlaps.
+All requests returned ten hits. Each request used the full 40 to
+68 word scenario instruction. The Search evaluation switch was off.
+
+The recorded change-set 1 Search sessions found the same 14
+essential notes on their first calls and 41 more on later calls.
+The first new matches came through additional Search calls for 19
+and targeted file reads for 22. The older Windows loop Search
+depth receipt `win-minilm-cuda-l7-r3/baseline-search-depth/depth.json`
+contained the same 20 scenario and 113 note identities and found
+30 essentials. The same 14 were in its first ten and the other
+16 had deeper ranks. That run requested up to 100 hits, returned
+53 to 81, used a larger response budget, and ran against different
+settled publication tokens. It provides a depth signal. A comparison
+on the current publications is needed to quantify the effect.
+
+The current hybrid path fuses the conjunctive lexical and vector
+branches before selecting and fitting hits to the response. Search
+Focus sees those already selected hits. The existing private
+search_v2 path tests ranked keyword and identifier branches, file
+diversity and keyword-centered snippets using the stored index.
+The proposed next diagnostic compares candidate presence, fused
+rank and emitted line coverage on the current publications with
+optional models disabled. The saved indexes can serve that test.
+No service restart, indexing, candidate fitting or evaluation was
+run for this analysis.
+
+The user narrowed the follow-up to underlying retrieval and Search.
+Three query-time candidates are ready for review: add ranked keyword
+and identifier branches for prose queries, improve fusion and file
+diversity before the ten-hit cutoff, and select a better passage
+within the ranked source under the same response budget. Test each
+independently on the two settled publications with Focus and Arbiter
+off. Record candidate and final ranks, qualifying line overlap,
+previously found notes lost, output bytes and latency. The current
+plain-store vector reader uses exact dot products over committed
+rows. The matched Focus pass scored four of the ten returned hits
+per query, so model tuning is outside this investigation. No
+retrieval behavior changed and no new live run was started.
+
+Fourth proposed query-time candidate: embed a small, fixed number
+of focused subqueries with the existing MiniLM pipeline, then merge
+their vector ranks before the same hybrid ranking and response limits.
+Current Search embeds each full instruction once, scores all eligible
+committed rows by exact dot product, and passes at most 100 resolved
+semantic units to ordinary hybrid fusion. The retained Focus comparison
+does not attribute misses to vector rank versus fusion or snippet
+selection. Replay full-query versus decomposed-query vector retrieval
+on the same settled publications, then measure downstream hybrid
+coverage, duplicate passages, losses and latency. This changes only
+query inputs and needs no vector rebuild. No live test ran.
+
+### 25 November 2026 — Cumulative Search improvement sequence
+
+The user approved all six Search milestones. Start with the retained
+Focus-off/on pair at `0a783e8cd71306c39685f2ba7f3f181d487461d52c20a1624a2fb7afc427720a`.
+Each matched milestone becomes the next baseline. Report its difference
+from the preceding pair and the original, and keep Arbiter off.
+The [approved plan](../arbiter/search-improvement-plan.md) records the
+sequence. The Answer change set stays paused.
+
+Step 1 adds the existing ranked lexical term groups for prose queries
+without carrying over the historical Search v2 ranking and snippet
+policies. The installed product admits both branches; private fixture
+profiles can select either branch for attribution. The scoped kernel
+regressions selected 14 and passed all 14 after correcting an assertion
+that had assumed a later file-priority rule. The 69 fixture, 13 CUDA
+fixture and 13 comparison-harness tests passed. The first Cargo receipt
+is `540cba9e3367eff447e5c0a19c4d0b64162bc986df7785c8449b1937c736caba`.
+It records passing CUDA-service and product Kernel Clippy and the
+original failed assertion. Run 2 owns the warm Windows CUDA target to
+build the fixture pair and verify the corrected native checks.
+
+The reviewed first-step fixture image was
+`5374bcdeb7406f4ee59d22167d129614c44cd2943484b0565eb3c250b870bb25`;
+the complete Cargo release receipt is
+`e24d9c14ad7f8207c57b6716094637ffbfcccce125b07748dd4e2bda9ee8649d`.
+The three private Search profiles each ran both Focus settings against
+the original 20 requests and publications. No baseline reran.
+Top-ten essential coverage was 14/14 for ranked keywords including
+named terms, 12/12 for both ranked streams and 9/9 for ranked
+identifiers alone. The selected keyword profile gained and lost
+four notes relative to the original. It raised Focus-off top-three
+coverage from six to seven and lowered Focus-on top-three coverage
+from eight to seven. Product Search selects the keyword stream.
+The separate identifier stream remains a private control. Keep the
+selected pair as the step 2 baseline, SHA-256
+`d6241b0f3a49f57e787dfbabcc70ba4f2281ee7c1800d6d0d0329085023f1b0f`.
+The complete incremental comparison is
+`32c533734ee1635b9a5f726df776c23e2e38fd1c77e60a202780d06eadc8863b`.
+All three native shutdowns settled with the same historical 41 Index
+or Vectors jobs and zero new ones. D: retained 373,221,990,400 bytes.
+The working-tree repository check found a missing SPDX header in the
+untracked paused Answer capture verifier. That file is outside this
+milestone's commit scope.

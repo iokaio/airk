@@ -253,7 +253,6 @@ def worker(args):
     """fixture.py's worker with the CUDA selector and its pinned inputs in the service environment."""
     # fixture.py's worker launches SELECTORS[args.selector] and adds the change-set
     # variables itself (selector_extras); this launcher adds the CUDA ones.
-    args.search = None
     if args.change_set_inputs:
         FX.SELECTORS["cs1-cuda"] = CS1_SELECTOR
         args.selector, args.answer_layers = "cs1-cuda", args.layers
@@ -342,6 +341,7 @@ def start(args):
         "schema": "airk.private.answer-eval-gpu-lifetime/1", "at": utc(), "model": args.model,
         "selector": CS1_SELECTOR if cs1 else SELECTOR, "change_set": cs1,
         "image": images, "seed_cpu": args.seed_cpu, "restart_from": args.restart_from,
+        **({"search": args.search} if args.search is not None else {}),
         "cuda": ({"pair": str(args.pair), "pair_sha256": args.pair_sha256} if pair
                  else {k: str(v) for k, v in MODELS[args.model].items()}),
         "cuda_rows": pair["profiles"] if pair else CUDA_PROFILES,
@@ -355,6 +355,8 @@ def start(args):
         argv += ["--pair", str(Path(args.pair).resolve()), "--pair-sha256", args.pair_sha256]
     if args.restart_from:
         argv += ["--restart-from", args.restart_from]
+    if args.search is not None:
+        argv += ["--search", args.search]
     if args.seed_cpu:
         argv += ["--seed-cpu", args.seed_cpu]
     if args.synthetic_root:
@@ -614,6 +616,7 @@ def main():
         sub.add_argument("--repositories", type=lambda v: [r for r in v.split(",") if r],
                          default=list(FX.DEFAULT_REPOSITORIES))
         sub.add_argument("--restart-from")
+        sub.add_argument("--search", choices=FX.SEARCH_SWITCHES)
         sub.add_argument("--seed-cpu", choices=SEEDS)
         sub.add_argument("--synthetic-root")
         sub.add_argument("--no-dispatch-observer", dest="dispatch_observer", action="store_false")
