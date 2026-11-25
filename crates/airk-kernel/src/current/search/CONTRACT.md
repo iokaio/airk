@@ -87,6 +87,17 @@ same final Focus path as lexical and semantic hits. The test-support
 profile is structural_definitions. Textual and syntax-only references
 do not supply resolved one-hop targets.
 
+## Contextual passage selection
+
+Product Search uses the contextual passage policy. The private keyword_passages profile tests the same policy with its ranked candidates and result limit.
+In prose hybrid snippet requests it selects a window around a ranked keyword
+anchor and keeps up to a third of the window for preceding context. This only
+changes native line-based windows. Their citations use the original source
+line coordinates for the delivered text. When the total byte budget is tight,
+each result is bounded by its share of the remaining budget as well as the
+per-snippet cap. Full-chunk requests keep their existing materialization.
+Focus receives the original query and the chosen excerpts.
+
 ## Private evaluation switch `search_v2` (22 November 2026)
 
 The historical Search v2 profile is selectable only in test-support builds. It is read once per process from

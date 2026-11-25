@@ -18999,3 +18999,35 @@ and the comparison to prior and original is
 The reused fixture settled with zero new Index or Vectors jobs,
 and D: retained 364,183,412,736 bytes. Start Step 5 from the
 selected file-diversity pair.
+
+### 25 November 2026 — Search step 5 contextual passages
+
+The paired trial used the Step 3 file-diversity result after
+rejecting Step 4. Windows CUDA fixture service SHA-256:
+`3b2d180225516acfbdb6be0640777e0518a47f8229ca2f416bd56d32002e90dc`.
+The build and Clippy receipt is
+`541031478da376e9aed4bdc9ffc68ec4e9f563828aa73468e340538e5bc06ee5`.
+It selected 18 Search tests and four CUDA restart tests, passing
+all (551 and 471 filtered). The first formatter attempt encountered
+a Windows mapped source file. The verified retry used Rustfmt
+standard input and checked sibling replacement.
+
+The off arm kept all 20 ranked file lists and changed 101 of 200
+excerpts. Coverage rose from 16 to 18 in both settings, with no
+Step 3 essentials lost. Focus enabled used the same four-scored
+candidate policy on all 20 calls. It promoted six essentials,
+demoted none and left twelve unchanged. Step 5 top-three coverage
+was nine off and ten on, versus six for each Step 3 arm. The new
+Munarium W1 and T2 spans entered at two and three, then moved to
+one and two with Focus. The original counts were 14 essentials
+and six/eight in the first three. Step 5 retains seven gains and
+three losses against it in both settings.
+
+Selected pair:
+`43a777e7a4b4278a60e82125cab843d0f944240e94ab1e850e8708d8b90ea991`.
+Incremental and cumulative report:
+`74d6c3557cf3ead527f6f331b4d37271ebec49d941605ee6f3f9b75b495668f8`.
+Native closure retained the exact publications and the same 41
+past source jobs with zero new Index or Vectors jobs. D: retained
+362,112,151,552 bytes. The next action is a read-only audit of
+essential span membership in the committed vector units.

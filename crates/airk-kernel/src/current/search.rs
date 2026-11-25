@@ -515,9 +515,13 @@ fn search_with_switch(
     } else {
         ranked
     };
+    let contextual_passages = profile.keyword_passages()
+        && snippet_bytes.is_some()
+        && plan.is_some()
+        && matches!(mode, CurrentSearchMode::Hybrid);
     let focus_text = plan
         .as_ref()
-        .filter(|_| legacy)
+        .filter(|_| legacy || contextual_passages)
         .map_or(query.text.as_str(), |plan| &plan.focus);
     let mut emitted = BTreeSet::new();
     let mut hits = Vec::new();
@@ -536,13 +540,36 @@ fn search_with_switch(
         let semantic = matches!(candidate, Candidate::Vector(_));
         let structural = matches!(candidate, Candidate::Structure(_));
         let mut hit = materialize(store, &read, query, candidate, &mut read_bytes)?;
-        let allowance = snippet_bytes.unwrap_or(remaining).min(remaining);
+        let contextual_hit = contextual_passages
+            && matches!(
+                hit.citation.location,
+                airk_core::DocumentLocation::Lines { .. }
+            );
+        let allowance = passage_allowance(
+            snippet_bytes,
+            remaining,
+            query.limit - hits.len(),
+            contextual_hit,
+        );
         if structural && hit.text.len() > allowance {
             incomplete = true;
             continue;
         }
         if !structural && (snippet_bytes.is_some() || semantic) {
-            focus_hit(&mut hit, focus_text, allowance);
+            if contextual_hit {
+                focus_hit_with_context(&mut hit, focus_text, allowance);
+                if hit.text.is_empty() {
+                    incomplete = true;
+                    continue;
+                }
+            } else {
+                let snippet_query = if contextual_passages {
+                    &query.text
+                } else {
+                    focus_text
+                };
+                focus_hit(&mut hit, snippet_query, allowance);
+            }
         }
         if !structural_hits.is_empty()
             && hits
@@ -879,6 +906,7 @@ fn trace_semantic_queries(
     if !std::env::var("AIRK_ARBITER_EVALUATION_SEARCH").is_ok_and(|profile| {
         profile == "semantic_subqueries"
             || profile == "structural_definitions"
+            || profile == "keyword_passages"
             || profile.starts_with("fusion_")
     }) {
         return Ok(());
@@ -1039,6 +1067,44 @@ pub(crate) fn focus_hit(hit: &mut Hit, query: &str, allowance: usize) {
         return;
     }
     let span = airk_retrieval::focus_span(&hit.text, query, allowance);
+    apply_snippet(hit, span);
+}
+
+fn passage_allowance(
+    requested: Option<usize>,
+    remaining: usize,
+    slots: usize,
+    balanced: bool,
+) -> usize {
+    let share = if balanced {
+        (remaining / slots).max(1)
+    } else {
+        remaining
+    };
+    requested.unwrap_or(share).min(share)
+}
+
+fn focus_hit_with_context(hit: &mut Hit, query: &str, allowance: usize) {
+    use airk_core::location::ByteSpan;
+    if hit.text.len() <= allowance {
+        return;
+    }
+    let anchor = airk_retrieval::focus_span(&hit.text, query, allowance);
+    let mut start = anchor
+        .start
+        .saturating_sub(allowance / 3)
+        .min(hit.text.len().saturating_sub(allowance));
+    while !hit.text.is_char_boundary(start) {
+        start += 1;
+    }
+    let mut end = start.saturating_add(allowance).min(hit.text.len());
+    while !hit.text.is_char_boundary(end) {
+        end -= 1;
+    }
+    apply_snippet(hit, ByteSpan { start, end });
+}
+
+fn apply_snippet(hit: &mut Hit, span: airk_core::location::ByteSpan) {
     let first = hit.citation.start_line
         + hit.text[..span.start]
             .bytes()

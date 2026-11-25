@@ -111,10 +111,7 @@ fn product_search_uses_the_expected_profile() -> Result<()> {
         v2::SearchProfile::Baseline
     };
     #[cfg(not(feature = "test-support"))]
-    let expected = v2::SearchProfile::Fusion {
-        weighted: false,
-        diverse: true,
-    };
+    let expected = v2::SearchProfile::KeywordPassages;
     let (_owner, kernel) = fixture()?;
     for text in [PROSE, "provider", "class code"] {
         let product = kernel.hybrid_search(&query(text))?;
@@ -307,6 +304,33 @@ fn structure_requires_unique_complete_match_and_full_span() -> Result<()> {
             .is_empty()
     );
     Ok(())
+}
+
+#[test]
+fn contextual_passages_preserve_original_citations_and_share_small_budgets() {
+    assert_eq!(passage_allowance(Some(768), 8_192, 10, true), 768);
+    assert_eq!(passage_allowance(None, 30, 3, true), 10);
+    assert_eq!(passage_allowance(Some(25), 30, 3, false), 25);
+    let mut hit = Hit {
+        citation: airk_core::Citation {
+            path: "example.rs".into(),
+            content_hash: "fixture".into(),
+            start_line: 10,
+            end_line: 13,
+            location: airk_core::DocumentLocation::Lines { start: 10, end: 13 },
+        },
+        text: "0123456789\nABCDEFGHIJ\nneedle\nlast line".into(),
+        truncated: false,
+    };
+    focus_hit_with_context(&mut hit, "needle", 15);
+    assert!(hit.text.contains("needle") && hit.text.contains("HIJ"));
+    assert!(hit.text.len() <= 15 && hit.truncated);
+    assert_eq!(hit.citation.start_line, 11);
+    assert_eq!(hit.citation.end_line, 12);
+    assert_eq!(
+        hit.citation.location,
+        airk_core::DocumentLocation::Lines { start: 11, end: 12 }
+    );
 }
 
 fn groups(words: &[&str]) -> Vec<TermGroup> {

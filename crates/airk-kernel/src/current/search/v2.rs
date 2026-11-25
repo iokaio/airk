@@ -34,6 +34,8 @@ pub(crate) enum SearchProfile {
     #[cfg(any(test, feature = "test-support"))]
     SemanticSubqueries,
     StructuralDefinitions,
+    KeywordPassages,
+    #[cfg(any(test, feature = "test-support"))]
     Fusion {
         weighted: bool,
         diverse: bool,
@@ -53,8 +55,10 @@ impl SearchProfile {
             #[cfg(any(test, feature = "test-support"))]
             Self::Keywords => (true, false),
             Self::StructuralDefinitions => (true, false),
+            Self::KeywordPassages => (true, false),
             #[cfg(any(test, feature = "test-support"))]
             Self::SemanticSubqueries => (true, false),
+            #[cfg(any(test, feature = "test-support"))]
             Self::Fusion { .. } => (true, false),
             #[cfg(any(test, feature = "test-support"))]
             Self::Identifiers => (false, true),
@@ -67,15 +71,22 @@ impl SearchProfile {
     pub(crate) fn uses_semantic_subqueries(self) -> bool {
         match self {
             Self::StructuralDefinitions => true,
+            Self::KeywordPassages => true,
             #[cfg(any(test, feature = "test-support"))]
             Self::SemanticSubqueries => true,
+            #[cfg(any(test, feature = "test-support"))]
             Self::Fusion { .. } => true,
             _ => false,
         }
     }
 
+    pub(crate) fn keyword_passages(self) -> bool {
+        self == Self::KeywordPassages
+    }
+
     pub(crate) fn branch_weight(self, branch: BranchKind) -> f64 {
         match (self, branch) {
+            #[cfg(any(test, feature = "test-support"))]
             (Self::Fusion { weighted: true, .. }, BranchKind::Key) => 0.9,
             _ => 1.0,
         }
@@ -85,7 +96,10 @@ impl SearchProfile {
         match self {
             Self::LegacyV2 => Some(PER_FILE),
             Self::StructuralDefinitions => Some(2),
+            Self::KeywordPassages => Some(2),
+            #[cfg(any(test, feature = "test-support"))]
             Self::Fusion { diverse: true, .. } => Some(2),
+            #[cfg(any(test, feature = "test-support"))]
             _ => None,
         }
     }
@@ -103,6 +117,7 @@ fn parse(value: Result<String, std::env::VarError>) -> Option<SearchProfile> {
             "ranked_keywords" => Some(SearchProfile::Keywords),
             "semantic_subqueries" => Some(SearchProfile::SemanticSubqueries),
             "structural_definitions" => Some(SearchProfile::StructuralDefinitions),
+            "keyword_passages" => Some(SearchProfile::KeywordPassages),
             "fusion_weights" => Some(SearchProfile::Fusion {
                 weighted: true,
                 diverse: false,
@@ -158,10 +173,7 @@ pub(crate) fn active() -> anyhow::Result<SearchProfile> {
     }
     #[cfg(not(feature = "test-support"))]
     {
-        Ok(SearchProfile::Fusion {
-            weighted: false,
-            diverse: true,
-        })
+        Ok(SearchProfile::KeywordPassages)
     }
 }
 

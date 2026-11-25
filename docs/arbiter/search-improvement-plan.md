@@ -233,6 +233,32 @@ The measured pair SHA-256 is `e0a4ee29cebf18698961077204fce83c1ea2a2bba52119ed80
 Its comparison to Step 3 and the original is `54821801e401a7db9d4bd5b59438fb471ec10604fef6eae25fc1ca342bdf4429`.
 The reused fixture closed cleanly with zero new indexing jobs.
 
+### Step 5 result — Contextual passages
+
+| Reference or candidate | Essentials off / on | Top 3 off / on | Median CLI ms off / on | p95 CLI ms off / on |
+| --- | ---: | ---: | ---: | ---: |
+| Original | 14 / 14 | 6 / 8 | 1,066.5 / 1,556 | 1,718 / 2,477 |
+| Step 3, retained after Step 4 | 16 / 16 | 6 / 6 | 1,139.5 / 1,727.5 | 2,316 / 3,261 |
+| Step 5 | 18 / 18 | 9 / 10 | 1,155.5 / 1,662 | 2,197 / 3,491 |
+
+The Focus-off results retained the same file order for all 20 queries.
+The new selection changed 101 of 200 excerpts. Both Focus settings
+gained two essential spans and lost none against the selected prior.
+Against the original, both gained seven and lost three. The new
+Munarium W1 and T2 evidence appeared at ranks two and three with
+Focus off and rose to one and two with Focus on. Focus applied on
+all 20 requests, promoted six essentials, demoted none and left
+twelve unchanged. It scores the excerpt Search delivers, so these
+changes come from the new windows entering its scored prefix. The
+rank trace does not identify which terms drove the scores.
+
+The paired median latency change versus Step 3 was +97.5 ms off
+and +11.5 ms on. The p95 with Focus on was 230 ms higher.
+Carry this policy into Step 6. The paired receipt SHA-256 is
+`43a777e7a4b4278a60e82125cab843d0f944240e94ab1e850e8708d8b90ea991`. The comparison to the prior and original is
+`74d6c3557cf3ead527f6f331b4d37271ebec49d941605ee6f3f9b75b495668f8`. Both publications reused the original job set
+and the fixture shut down with zero new Index or Vectors jobs.
+
 ## Evidence and implementation references
 
 - [Matched Focus comparison and first-Search miss attribution](../simplify/one-process-ledger.md#25-november-2026--matched-ordinary-search-with-and-without-cuda-focus)
