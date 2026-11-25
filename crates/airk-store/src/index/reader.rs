@@ -129,6 +129,11 @@ impl IndexReader {
         self.sequence
     }
 
+    /// A caller meta value written through `Batch::meta`.
+    pub fn meta(&self, key: &str) -> Result<Option<Vec<u8>>> {
+        schema::meta_blob(&self.connection, key)
+    }
+
     pub fn resource(&self, key: &str) -> Result<Option<Vec<u8>>> {
         Ok(self
             .connection

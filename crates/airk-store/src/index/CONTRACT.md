@@ -75,7 +75,9 @@ here first.
   gates, which stay. A directory with `current.sqlite3` and no
   `index.sqlite3` holds an old index: it is not read and is rebuilt through
   the existing full-rebuild owner (`rebuild_obsolete_index`).
-- **meta keys** (besides the engine's own):
+- **meta keys** (besides the engine's own), written through `Batch::meta` in
+  the batch's transaction and read with `IndexReader::meta`; a batch may not
+  write an engine key. Integers in the digests below are 8-byte big-endian:
   - `scope`: canonical JSON of `CurrentScope` (root, collection, incarnation).
   - `collection_state`: canonical JSON of `CollectionState`, rewritten by the
     writer in the same transaction whenever configuration or counts change.
@@ -124,7 +126,12 @@ here first.
   `semantic-policy`, `scan-work`, `analysis`, `legacy-adoption`,
   `source-controls/1`, and so on), body = the bytes today's resource object
   holds. `embedding-cache` is not written. A source measurement for usage
-  is the resource `source-measurement/<path>`.
+  is the resource `source-measurement/<path>`; when that key exceeds the
+  engine's 256-byte key bound it is `source-measurement/#<digest>` with the
+  digest `framed_digest(b"airk-index/source-measurement/1", [path])`
+  (`plain_writer::source_measurement_key`).
+- **changes.** The writer records no change history yet; readers serve the
+  absent-history view.
 - **Accelerators and integrity.** `private_query_eligible` is false; every
   projection is `None`; lexical seals, Merkle proofs, grants, the journal and
   object reclamation have no counterpart.
@@ -133,6 +140,8 @@ here first.
 
 Compaction of dead vector rows; the free-space and size-cap check (D8) is
 the caller's; Verify runs `integrity_check` and the FTS5 integrity check
-only. Tests: `index::tests` (14), including rollback of a failed batch,
+only. Tests: `index::tests` (15), including rollback of a failed batch,
 snapshot isolation, payload reclamation, stale vector planning, leftover
-rows and format refusal.
+rows, format refusal and caller meta. The current types' writer is
+`current::plain_writer`; its end-to-end tests are
+`airk-kernel/tests/plain_writer.rs`.

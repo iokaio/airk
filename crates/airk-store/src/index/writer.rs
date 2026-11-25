@@ -32,7 +32,20 @@ pub struct Batch {
     pub resources: Vec<ResourceChange>,
     /// The caller's change record for this publication, kept in the bounded log.
     pub change: Option<Vec<u8>>,
+    /// Caller meta values (for example `scope` or `collection_state`), written
+    /// in the same transaction. The engine's own keys are refused.
+    pub meta: Vec<(String, Vec<u8>)>,
 }
+
+/// Meta keys the engine owns; a batch may not write them.
+pub(super) const ENGINE_META_KEYS: [&str; 6] = [
+    "format",
+    "sequence",
+    "vector_dimensions",
+    "vector_pipeline",
+    "vector_generation",
+    "vector_rows",
+];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Commit {
@@ -166,8 +179,19 @@ impl IndexWriter {
                 .is_none_or(|body| body.len() <= MAX_METADATA_BYTES),
             "index change record exceeds byte limit"
         );
-        let publishes =
-            !batch.files.is_empty() || !batch.resources.is_empty() || batch.change.is_some();
+        for (key, value) in &batch.meta {
+            ensure!(
+                !key.is_empty()
+                    && key.len() <= 256
+                    && !ENGINE_META_KEYS.contains(&key.as_str())
+                    && value.len() <= MAX_METADATA_BYTES,
+                "invalid index meta value"
+            );
+        }
+        let publishes = !batch.files.is_empty()
+            || !batch.resources.is_empty()
+            || batch.change.is_some()
+            || !batch.meta.is_empty();
         let transaction = self.connection.transaction()?;
         let next = sequence(&transaction)?
             .checked_add(u64::from(publishes))
@@ -227,6 +251,9 @@ impl IndexWriter {
                 "DELETE FROM changes WHERE sequence<=?1",
                 [i64::try_from(next)? - RETAINED_CHANGE_SEQUENCES],
             )?;
+        }
+        for (key, value) in &batch.meta {
+            schema::set_meta(&transaction, key, value.as_slice())?;
         }
         if publishes {
             schema::set_meta(&transaction, "sequence", i64::try_from(next)?)?;

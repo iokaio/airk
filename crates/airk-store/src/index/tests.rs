@@ -606,3 +606,33 @@ fn exact_search_keeps_the_best_rows_with_ties_to_the_lower_row() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn caller_meta_publishes_atomically_and_engine_keys_are_refused() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let mut writer = IndexWriter::create(directory.path())?;
+    let commit = writer.apply(Batch {
+        meta: vec![("scope".into(), b"{\"a\":1}".to_vec())],
+        ..Default::default()
+    })?;
+    assert_eq!(commit.sequence, 1, "a meta-only batch publishes");
+    let reader = IndexReader::open(directory.path())?;
+    assert_eq!(
+        reader.meta("scope")?.as_deref(),
+        Some(b"{\"a\":1}".as_slice())
+    );
+    assert_eq!(reader.meta("collection_state")?, None);
+    for key in ["sequence", "format", "vector_rows"] {
+        assert!(
+            writer
+                .apply(Batch {
+                    meta: vec![(key.into(), b"1".to_vec())],
+                    ..Default::default()
+                })
+                .is_err(),
+            "engine key {key} accepted"
+        );
+    }
+    assert_eq!(writer.sequence()?, 1);
+    Ok(())
+}
