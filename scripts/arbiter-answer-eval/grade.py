@@ -275,7 +275,12 @@ def csv_text(rows: list[dict]) -> str:
     return buffer.getvalue()
 
 
-def summarize(rows: list[dict], series: str) -> dict:
+FIRST_GRADE_SECOND_JOBS = "first-grade-second-jobs.json"
+
+
+def summarize(rows: list[dict], series: str, second_jobs=None) -> dict:
+    frozen = {tuple(job) for job in second_jobs} if second_jobs is not None else None
+    controls = {scenario: name for scenario, name in frozen or () if name in BASELINES}
     scen = lambda r: f"{r['repo']}-{r['slot']}"  # noqa: E731
     first = [r for r in rows if r.get("sample", 1) == 1]
     results: dict[tuple, dict[str, dict]] = {}
@@ -286,7 +291,8 @@ def summarize(rows: list[dict], series: str) -> dict:
         samples.setdefault((r["configuration"], r["device"]), {}).setdefault(scen(r), []).append(r)
     baselines = {c: rows_ for (c, _d), rows_ in results.items() if c in BASELINES}
     scenarios = sorted({scen(r) for r in first})
-    best = {s: better_of([baselines.get(c, {}).get(s) for c in BASELINES]) for s in scenarios}
+    best = {s: (baselines.get(controls[s], {}).get(s) if s in controls
+                else better_of([baselines.get(c, {}).get(s) for c in BASELINES])) for s in scenarios}
     meta = {scen(r): (r["repo"], r["kind"]) for r in first}
     configs = {}
     for (configuration, device), by_scen in sorted(results.items()):
@@ -294,11 +300,26 @@ def summarize(rows: list[dict], series: str) -> dict:
             continue
         per = []
         for s, row in sorted(by_scen.items()):
-            cases = []
-            for k, a_sample in enumerate(samples[(configuration, device)][s]):
-                best_k = better_of([_sample(samples, c, s, k) for c in BASELINES]) if baselines else None
-                cases.append(case(a_sample, best_k))
-            c = combine_samples(cases)
+            answer_samples = samples[(configuration, device)][s]
+            if frozen is None:
+                cases = []
+                for k, a_sample in enumerate(answer_samples):
+                    best_k = better_of([_sample(samples, c, s, k) for c in BASELINES]) if baselines else None
+                    cases.append(case(a_sample, best_k))
+                c = combine_samples(cases)
+            elif (s, f"{configuration}-{device}") in frozen:
+                control = best[s]
+                answer_second = next((r for r in answer_samples if r.get("sample") == 2), None)
+                control_second = next(
+                    (r for r in samples.get((controls.get(s), "none"), {}).get(s, []) if r.get("sample") == 2),
+                    None)
+                if all(r is not None and r.get("adjudicated_grade") is not None
+                       for r in (row, control, answer_second, control_second)):
+                    c = combine_samples([case(row, control), case(answer_second, control_second)])
+                else:
+                    c = combine_samples([])
+            else:
+                c = case(row, best[s])
             per.append({"scenario": s, "repo": meta[s][0], "kind": meta[s][1], "case": c,
                         "answer_grade": row["adjudicated_grade"],
                         "best_grade": best[s]["adjudicated_grade"] if best.get(s) else None,
@@ -412,7 +433,9 @@ def main(argv: list[str] | None = None) -> int:
     adjudications = common.read_json(adj_path) if adj_path.is_file() else {}
     rows = build_rows(index, adjudications)
     common.write_text(args.pass_dir / "results.csv", csv_text(rows))
-    summary = summarize(rows, index["series"])
+    frozen_path = args.pass_dir / FIRST_GRADE_SECOND_JOBS
+    frozen = common.read_json(frozen_path)["second_sessions"] if frozen_path.is_file() else None
+    summary = summarize(rows, index["series"], frozen)
     common.write_json(args.pass_dir / "summary.json", summary)
     print(json.dumps({"results": len(rows), "pending": len(summary["pending_adjudication"]),
                       "headroom": summary["headroom"]["count"]}))

@@ -15,6 +15,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
@@ -587,6 +588,26 @@ class CaseTable(unittest.TestCase):
         self.assertFalse(grade.configuration_rule(per(12, 3))["substantially_improves"])
         self.assertFalse(grade.configuration_rule(per(10, 0, (5, 5)))["substantially_improves"])
         self.assertFalse(grade.configuration_rule(per(12, 0, kinds_ok=False))["substantially_improves"])
+
+    def test_frozen_second_grade_uses_the_original_control_and_requires_both_samples(self):
+        def sample(config, turns, which=1):
+            return row(turns, repo="bookbuilder", slot="A1", configuration=config,
+                       device="gpu" if config == "focus" else "none", sample=which,
+                       key=f"A1/{config}/{which}", reused_from=None, adjudication="agreement",
+                       rubric_b_j1=None, rubric_b_j2=None, cost_usd=None, judge_cost_usd=None)
+
+        first = [sample("focus", 2), sample("parse", 4), sample("search", 5)]
+        second = [sample("focus", 4, 2), sample("parse", 6, 2)]
+        jobs = [("bookbuilder-A1", "focus-gpu"), ("bookbuilder-A1", "parse")]
+
+        def result(rows):
+            return grade.summarize(rows, "frozen", jobs)["configurations"]["focus-gpu"]["scenarios"][0]
+
+        result_row = result(first + second)
+        self.assertEqual(result_row["best_path"], "parse")
+        self.assertEqual(result_row["case"]["case"], "substantial-win")
+        self.assertEqual(result_row["case"]["samples"], 2)
+        self.assertEqual(result(first + second[:1])["case"]["case"], "pending")
 
     def test_headroom(self):
         best = {"a": row(1), "b": row(2), "c": row(3), "d": row(None, 1), "e": None}
@@ -1237,16 +1258,193 @@ class Decisions(TempDir):
             ran.append((kwargs["configuration"], kwargs["sample"]))
             return {"status": "complete"}
         spec = self.spec(series="sec", results=[{"configuration": "parse", "path": "parse"},
+                                                {"configuration": "search", "path": "search"},
                                                 {"configuration": "focus", "path": "focus", "device": "cpu"}])
         flow = run_pass.Pass(spec, self.tmp / "R", session_runner=runner, settle_fn=settled_fake(),
                              digest_fn=lambda s, e: {"digest": "d", "ok": True})
         common.write_json(flow.pass_dir / "summary.json", {"configurations": {"focus-cpu": {
             "scenarios": [{"scenario": "airk-C1", "best_path": "parse"}], "close_calls": ["airk-C1"]}}})
-        self.assertEqual(flow.second_sessions({"focus-cpu"}), ["airk-C1/focus-cpu.s2"])
+        frozen = flow.freeze_second_jobs()
+        self.assertEqual(flow.second_sessions({"focus-cpu"}, frozen), ["airk-C1/focus-cpu.s2"])
         self.assertEqual(ran, [("focus", 2)])
-        self.assertEqual(flow.second_sessions({"parse"}), ["airk-C1/parse.s2"])
+        expected = {"second_sessions": [["airk-C1", "focus-cpu"], ["airk-C1", "parse"]]}
+        self.assertEqual(common.read_json(frozen), expected)
+        common.write_json(flow.pass_dir / "summary.json", {"configurations": {"focus-cpu": {
+            "scenarios": [{"scenario": "airk-C1", "best_path": "search"}], "close_calls": []}}})
+        self.assertEqual(flow.freeze_second_jobs(), frozen)
+        self.assertEqual(flow.second_sessions({"search"}, frozen), [])
+        self.assertEqual(flow.second_sessions({"parse"}, frozen), ["airk-C1/parse.s2"])
+        self.assertEqual(common.read_json(frozen), expected)
         self.assertEqual(common.read_json(flow.pass_dir / "second-sessions.json"),
                          ["airk-C1/focus-cpu.s2", "airk-C1/parse.s2"])
+
+    def strict_receipt_row(self, flow, row, *, status="complete", canonical=True, judges=("j1", "j2")):
+        scenario = next(s for s in flow.scenarios if s["id"] == row["scenario_id"])
+        key, directory = row["key"], Path(row["session_dir"])
+        raw = envelope({"hits": []})
+        common.write_bytes(directory / "stream.jsonl", b"")
+        common.write_text(directory / "brief.md", "synthetic brief")
+        common.write_json(directory / "session.json", {
+            "schema": run_session.SESSION_SCHEMA, "series": flow.series,
+            "repo": row["repo"], "slot": row["slot"], "scenario_id": scenario["id"],
+            "scenario_sha256": scenario["_sha256"], "configuration": row["configuration"],
+            "device": row["device"], "path": row["path"], "sample": row["sample"],
+            "model_requested": row["agent_model"], "effort_requested": row["agent_effort"],
+            "status": status, "started": "t0", "ended": "t1", "exit_code": 0 if status == "complete" else 1,
+            "stream_sha256": common.sha256_file(directory / "stream.jsonl"),
+            "brief_sha256": common.sha256_file(directory / "brief.md"),
+        })
+        if canonical and row["sample"] == 1:
+            common.write_bytes(flow.pass_dir / "digests" / key / "canonical.stdout.json", raw)
+            flow.digests[key] = {"ok": True, "digest": evidence.evidence_digest(common.raw_body(raw))}
+        if status != "complete":
+            return
+        coverage.for_session(scenario, directory)
+        packet = judge.build_packet(scenario, directory, key)
+        essential = [n["id"] for n in scenario["notes"] if n["mark"] == "essential"]
+        result = verdict(essential=essential)
+        for name, verdict_path in zip(("j1", "j2"), map(Path, row["judges"])):
+            if name not in judges:
+                continue
+            packet_path = verdict_path.with_name("packet.json")
+            output_path = verdict_path.with_name("output.json")
+            common.write_json(packet_path, packet)
+            common.write_json(output_path, {"session_id": f"{key}-{name}", "structured_output": result})
+            common.write_json(verdict_path, {
+                "schema": judge.VERDICT_SCHEMA, "key": key, "judge": name, "status": "valid",
+                "exit_code": 0, "session_dir": str(directory), "verdict": result, "session_id": f"{key}-{name}",
+                "packet_sha256": common.sha256_file(packet_path), "output_sha256": common.sha256_file(output_path),
+            })
+
+    def test_strict_l7_grade_and_freeze_require_full_first_receipts(self):
+        spec = self.spec(series="strict-first", strict_judged_receipts=True)
+        flow = run_pass.Pass(spec, self.tmp / "R")
+        row = flow.index()["results"][0]
+        with self.assertRaisesRegex(common.HarnessError, "missing session receipt"):
+            flow.grade()
+        common.write_json(flow.pass_dir / "summary.json", {"configurations": {}})
+        with self.assertRaisesRegex(common.HarnessError, "missing session receipt"):
+            flow.freeze_second_jobs()
+        self.strict_receipt_row(flow, row, canonical=False, judges=("j1",))
+        with self.assertRaisesRegex(common.HarnessError, "missing or failed canonical digest"):
+            flow.grade()
+        self.strict_receipt_row(flow, row, judges=("j1",))
+        digest = flow.digests[row["key"]]["digest"]
+        flow.digests[row["key"]]["digest"] = "forged"
+        with self.assertRaisesRegex(common.HarnessError, "canonical evidence digest differs"):
+            flow.grade()
+        flow.digests[row["key"]]["digest"] = digest
+        with self.assertRaisesRegex(common.HarnessError, "missing j2 verdict"):
+            flow.grade()
+        self.strict_receipt_row(flow, row)
+        second = Path(row["judges"][1])
+        record = common.read_json(second)
+        record["session_id"] = f"{row['key']}-j1"
+        output = second.with_name("output.json")
+        common.write_json(output, {"session_id": record["session_id"], "structured_output": record["verdict"]})
+        record["output_sha256"] = common.sha256_file(output)
+        common.write_json(second, record)
+        with self.assertRaisesRegex(common.HarnessError, "lacks a distinct valid judge result"):
+            flow.grade()
+        self.strict_receipt_row(flow, row)
+        with patch.object(grade, "build_rows", return_value=[{"key": row["key"], "adjudication": "pending"}]):
+            with self.assertRaisesRegex(common.HarnessError, "unresolved adjudication"):
+                flow.grade()
+        self.assertEqual(flow.grade()["pending_adjudication"], [])
+        self.assertEqual(common.read_json(flow.freeze_second_jobs()), {"second_sessions": []})
+
+    def test_strict_l7_final_grade_requires_actual_outcomes_for_all_frozen_jobs(self):
+        spec = self.spec(series="strict-final", strict_judged_receipts=True, results=[
+            {"configuration": "parse", "path": "parse", "device": "none"},
+            {"configuration": "focus", "path": "focus", "device": "cpu"},
+        ])
+        flow = run_pass.Pass(spec, self.tmp / "R")
+        for row in flow.index()["results"]:
+            self.strict_receipt_row(flow, row)
+        flow.grade()
+        frozen = flow.pass_dir / run_pass.FIRST_GRADE_SECOND_JOBS
+        jobs = (("airk-C1", "focus-cpu"), ("airk-C1", "parse"))
+        common.write_json(frozen, {"second_sessions": jobs})
+        with self.assertRaisesRegex(common.HarnessError, "differ from the frozen roster"):
+            flow.grade()
+        common.write_json(flow.pass_dir / "second-sessions.json", [f"{scenario}/{name}.s2" for scenario, name in jobs])
+        with self.assertRaisesRegex(common.HarnessError, "missing session receipt"):
+            flow.grade()
+        for row in flow.index()["results"]:
+            if row["sample"] == 2:
+                self.strict_receipt_row(flow, row, status="timeout" if row["configuration"] == "parse" else "failed")
+        summary = flow.grade()
+        self.assertEqual(summary["pending_adjudication"], [])
+        self.assertEqual(summary["configurations"]["focus-cpu"]["scenarios"][0]["case"]["samples"], 2)
+
+    def test_historical_second_resume_skips_legacy_device_less_summary_label(self):
+        spec = self.spec(series="resume-second", results=[
+            {"configuration": "noModel", "path": "noModel", "device": "none"},
+            {"configuration": "parse", "path": "parse", "device": "none"},
+        ])
+        flow = run_pass.Pass(spec, self.tmp / "R", session_runner=Mock(return_value={"status": "complete"}),
+                             settle_fn=settled_fake())
+        common.write_json(flow.pass_dir / "second-sessions.json", ["airk-C1/noModel.s2"])
+        common.write_json(flow.pass_dir / "summary.json", {"configurations": {"noModel-none": {
+            "scenarios": [{"scenario": "airk-C1", "best_path": "parse"}], "close_calls": ["airk-C1"]}}})
+        self.assertEqual(flow.second_sessions(), ["airk-C1/parse.s2"])
+        self.assertFalse((flow.pass_dir / run_pass.FIRST_GRADE_SECOND_JOBS).exists())
+
+    def test_second_session_jobs_refuse_foreign_or_excluded_scenarios(self):
+        spec = self.spec(series="bad-jobs", results=[{"configuration": "focus", "path": "focus",
+                                                     "device": "cpu", "slots": ["C2"]}])
+        runner = Mock(return_value={"status": "complete"})
+        snapshot = Mock(side_effect=AssertionError("an invalid cohort reached the publication guard"))
+        flow = run_pass.Pass(spec, self.tmp / "R", session_runner=runner, settle_fn=snapshot)
+        jobs = self.tmp / "gate-jobs.json"
+        for scenario in ("foreign-C1", "airk-C1"):
+            with self.subTest(scenario=scenario):
+                common.write_json(jobs, {"second_sessions": [[scenario, "focus-cpu"]]})
+                with self.assertRaisesRegex(common.HarnessError, "ineligible scenario"):
+                    flow.second_sessions({"focus-cpu"}, jobs)
+        runner.assert_not_called()
+        snapshot.assert_not_called()
+
+    def test_second_sessions_refuse_changed_first_publication_at_start_or_end(self):
+        for phase in ("start", "end"):
+            with self.subTest(phase=phase):
+                spec = self.spec(series="second-" + phase, results=[
+                    {"configuration": "focus", "path": "focus", "device": "cpu"}])
+                runner = Mock(return_value={"status": "complete"})
+                tokens = ["first", "changed"] if phase == "start" else ["first", "first", "changed"]
+                flow = run_pass.Pass(spec, self.tmp / "R", session_runner=runner, settle_fn=settled_fake(tokens))
+                entry = flow.spec["results"][0]
+                flow.guard("start", [entry])
+                jobs = self.tmp / "gate-jobs.json"
+                common.write_json(jobs, {"second_sessions": [["airk-C1", "focus-cpu"]]})
+                with self.assertRaisesRegex(common.HarnessError, f"publication token changed \\({phase}\\)"):
+                    flow.second_sessions(jobs_file=jobs)
+                self.assertEqual(runner.call_count, 0 if phase == "start" else 1)
+                self.assertTrue((flow.pass_dir / "INVALID.json").is_file())
+                self.assertFalse((flow.pass_dir / "second-sessions.json").exists())
+
+    def test_second_sessions_require_live_stages_when_the_entry_says_so(self):
+        spec = self.spec(series="strict-control", results=[{"configuration": "parse", "path": "parse",
+                         "stages": {"focus": None, "context": None}, "require_live_stages": True}])
+        runner = Mock(return_value={"status": "complete"})
+        flow = run_pass.Pass(spec, self.tmp / "R", session_runner=runner, settle_fn=settled_fake())
+        jobs = self.tmp / "gate-jobs.json"
+        common.write_json(jobs, {"second_sessions": [["airk-C1", "parse"]]})
+        handle = Mock()
+        handle.stages.side_effect = AssertionError("strict staging used the recorded fallback")
+        with patch.object(common, "load_handle", return_value=handle):
+            for live, expected in ((None, "could not verify live stages"),
+                                   ({"focus": "enabled", "context": None}, "needs stages")):
+                handle.live_stages.return_value = live
+                with self.subTest(live=live), self.assertRaisesRegex(common.HarnessError, expected):
+                    flow.second_sessions(jobs_file=jobs)
+                with self.assertRaisesRegex(common.HarnessError, expected):
+                    flow.sessions()
+            runner.assert_not_called()
+            handle.live_stages.return_value = {"focus": None, "context": None}
+            self.assertEqual(flow.second_sessions(jobs_file=jobs), ["airk-C1/parse.s2"])
+        handle.stages.assert_not_called()
+        runner.assert_called_once()
 
     def test_newest_handle_and_settled_wait_check(self):
         fixture = self.tmp / "fixture"

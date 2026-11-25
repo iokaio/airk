@@ -68,16 +68,27 @@
         "rounds": 3
       }
     },
+    "strict_judged_receipts": true,
     "results": [
       {
         "configuration": "search",
         "path": "search",
-        "device": "none"
+        "device": "none",
+        "stages": {
+          "focus": null,
+          "context": null
+        },
+        "require_live_stages": true
       },
       {
         "configuration": "parse",
         "path": "parse",
-        "device": "none"
+        "device": "none",
+        "stages": {
+          "focus": null,
+          "context": null
+        },
+        "require_live_stages": true
       },
       {
         "arm": "F",
@@ -94,7 +105,12 @@
         },
         "reuse": true,
         "call_timeout": 900,
-        "session_timeout": 3600
+        "session_timeout": 3600,
+        "stages": {
+          "focus": "focus-1024-cuda",
+          "context": null
+        },
+        "require_live_stages": true
       },
       {
         "arm": "C",
@@ -114,7 +130,12 @@
         },
         "reuse": true,
         "call_timeout": 900,
-        "session_timeout": 3600
+        "session_timeout": 3600,
+        "stages": {
+          "focus": "focus-1024-cuda",
+          "context": "context-compact-fp16-cuda"
+        },
+        "require_live_stages": true
       },
       {
         "arm": "A",
@@ -134,7 +155,12 @@
         },
         "reuse": true,
         "call_timeout": 900,
-        "session_timeout": 3600
+        "session_timeout": 3600,
+        "stages": {
+          "focus": null,
+          "context": "context-compact-fp16-cuda"
+        },
+        "require_live_stages": true
       }
     ]
   },
@@ -142,10 +168,11 @@
     {
       "sessions": {
         "spec": "<R>/passes/<series>/spec.json",
+        "stager": "cuda",
         "groups": [
           [
-            "@any",
-            "@any",
+            null,
+            null,
             "search,parse"
           ]
         ]
@@ -185,6 +212,11 @@
         "stager": "cuda",
         "groups": [
           [
+            null,
+            null,
+            "search,parse"
+          ],
+          [
             "focus-1024-cuda",
             null,
             "focus-gpu"
@@ -199,7 +231,13 @@
             "context-compact-fp16-cuda",
             "arbiter-gpu"
           ]
-        ]
+        ],
+        "freeze_first_grade_jobs": true
+      }
+    },
+    {
+      "grade": {
+        "spec": "<R>/passes/<series>/spec.json"
       }
     }
   ]

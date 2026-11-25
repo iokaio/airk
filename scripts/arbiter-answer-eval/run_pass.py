@@ -9,6 +9,7 @@ result::
      "scenario_ids": ["munarium-C1", ...],     # optional subset (e.g. a pilot)
      "freeze": "<R>/scenario-freeze.json",     # optional: refuse scenarios that differ from the freeze
      "pilot": false,                           # true only for plumbing pilots (never judged evidence)
+     "strict_judged_receipts": true,             # require exact terminal and judge receipts (L7)
      "accept_queryable": false,                # pilot specs only: accept a queryable, not yet ready, handle
      "prompts_freeze": "<R>/design/prompts-freeze.json",   # required unless pilot; refuses a mismatch
      "handle": "<handle.json>",                # default handle for entries that name none
@@ -54,11 +55,12 @@ Everything resumes: a completed session, a valid verdict or a stored digest is
 not redone. Sessions live in ``<R>/sessions/<series>/``; the pass index,
 digests, judging, ``results.csv`` and ``summary.json`` in ``<R>/passes/<series>/``.
 
-Stages: ``sessions``, ``coverage``, ``judge``, ``grade``, ``all`` (default), and
-``second`` (run second sessions for the close calls listed in summary.json,
-for the Answer configuration and the better of Parse and Search, then
-coverage, judge and grade again). ``--only`` limits sessions to named results
-(e.g. ``focus-cpu``), so a pass can follow fixture lifetimes.
+Stages: ``sessions``, ``coverage``, ``judge``, ``grade``, and ``all`` (default).
+``freeze-second`` freezes the first grade's close calls and chosen controls.
+``second-sessions --second-jobs <file>`` runs selected second sessions while
+leaving coverage, judging and grading to later stages. Historical ``second``
+runs the same cohort or explicit gate jobs and then covers, judges and grades.
+``--only`` limits first sessions to named results (e.g. ``focus-cpu``).
 """
 
 from __future__ import annotations
@@ -78,6 +80,7 @@ if str(HERE) not in sys.path:
 
 import common  # noqa: E402
 import coverage  # noqa: E402
+import evidence  # noqa: E402
 import grade  # noqa: E402
 import judge  # noqa: E402
 import loop_reply  # noqa: E402
@@ -85,6 +88,9 @@ import prompts_freeze  # noqa: E402
 import replay  # noqa: E402
 import run_session  # noqa: E402
 import settled  # noqa: E402
+
+
+FIRST_GRADE_SECOND_JOBS = grade.FIRST_GRADE_SECOND_JOBS
 
 
 class Pass:
@@ -192,10 +198,13 @@ class Pass:
 
     def check_stages(self, entry: dict) -> None:
         """Refuse to run an entry whose declared stages (``"stages": {"focus": ..., "context": ...}``) are not live."""
+        strict = entry.get("require_live_stages", False)
         if "stages" not in entry:
+            common.require(not strict, "require_live_stages needs explicit expected stages")
             return
         handle = common.load_handle(self.handle_of(entry), accept_queryable=bool(self.spec.get("accept_queryable")))
-        live = handle.stages()
+        live = handle.live_stages() if strict else handle.stages()
+        common.require(live is not None, f"{self.result_name(entry)} could not verify live stages")
         wanted = {"focus": None, "context": None, **entry["stages"]}
         common.require(live == wanted, f"{self.result_name(entry)} needs stages {wanted}, the fixture has {live}")
 
@@ -494,44 +503,103 @@ class Pass:
             for future in concurrent.futures.as_completed(futures):
                 future.result()
 
-    def second_sessions(self, only: set[str] | None = None, jobs_file: Path | None = None) -> list[str]:
-        """Second sessions of close calls (plan 3.5). By default the close calls against the better of Parse and
-        Search in ``summary.json``; with ``jobs_file`` (``gate.py outcomes`` writes one for the gate arms,
-        plan 12.7.1 test 3) the listed ``[scenario, result name]`` pairs."""
-        self.check_names(only)
-        by_name = {self.result_name(e): e for e in self.spec["results"]}
-        by_id = {f"{s['repository']}-{s['slot']}": s for s in self.scenarios}
+    def read_second_jobs(self, path: Path) -> list[tuple[str, str]]:
+        listed = common.read_json(path)
+        common.require(isinstance(listed, dict) and isinstance(listed.get("second_sessions"), list),
+                       f"{path} lists no second_sessions")
+        pairs = listed["second_sessions"]
+        common.require(all(isinstance(pair, list) and len(pair) == 2
+                           and all(isinstance(value, str) and value for value in pair) for pair in pairs),
+                       f"{path} contains an invalid second-session pair")
+        return sorted({(scenario, result) for scenario, result in pairs})
+
+    def validate_second_jobs(self, jobs: list[tuple[str, str]]) -> None:
+        allowed = {self.result_name(entry): {s["id"] for s in self.entry_scenarios(entry)}
+                   for entry in self.spec["results"]}
+        for scenario, result in jobs:
+            common.require(result in allowed, f"second sessions name an unknown result {result!r}")
+            common.require(scenario in allowed[result],
+                           f"second sessions name an ineligible scenario {scenario!r} for {result!r}")
+
+    def freeze_second_jobs(self) -> Path:
+        """Keep the first-grade close calls and their original Parse/Search comparisons."""
+        path = self.pass_dir / FIRST_GRADE_SECOND_JOBS
+        first = (self.require_judged_receipts(self.index(), self.adjudications())
+                 if self.spec.get("strict_judged_receipts") else None)
+        if path.is_file():
+            self.validate_second_jobs(self.read_second_jobs(path))
+            return path
+        common.require(not (self.pass_dir / "second-sessions.json").exists(),
+                       "cannot freeze first-grade jobs after running second sessions")
+        summary_path = self.pass_dir / "summary.json"
+        common.require(summary_path.is_file(), "grade the pass before freezing second sessions")
         jobs = set()
-        if jobs_file is not None:
-            listed = common.read_json(jobs_file)
-            common.require(isinstance(listed, dict) and isinstance(listed.get("second_sessions"), list),
-                           f"{jobs_file} lists no second_sessions")
-            jobs = {(str(a), str(b)) for a, b in listed["second_sessions"]}
-            unknown = sorted({b for _a, b in jobs} - set(by_name))
-            common.require(not unknown, f"{jobs_file} names results the spec does not have: {unknown}")
+        controls = {}
+        summary = common.read_json(summary_path)
+        if first is not None:
+            common.require(summary["configurations"] == grade.summarize(first, self.series)["configurations"],
+                           "first-grade summary differs from the retained L7 receipts; grade again")
+        common.require(not summary.get("pending_adjudication"),
+                       "resolve first-grade adjudications before freezing second sessions")
+        for name, config in summary["configurations"].items():
+            close = set(config["close_calls"])
+            rows = {row["scenario"]: row for row in config["scenarios"]}
+            common.require(close <= rows.keys(), f"{name} has a close call without a grade row")
+            for scenario in close:
+                best = rows[scenario].get("best_path")
+                common.require(best in grade.BASELINES, f"{name}/{scenario} has no first-grade Parse/Search comparator")
+                prior = controls.setdefault(scenario, best)
+                common.require(prior == best, f"{scenario} has conflicting first-grade Parse/Search comparators")
+                jobs.add((scenario, name))
+        jobs.update(controls.items())
+        ordered = sorted(jobs)
+        self.validate_second_jobs(ordered)
+        # Exclusive creation preserves the original first-grade cohort on resume.
+        with path.open("x", encoding="utf-8", newline="\n") as stream:
+            json.dump({"second_sessions": ordered}, stream, indent=2, ensure_ascii=False)
+            stream.write("\n")
+        return path
+
+    def second_sessions(self, only: set[str] | None = None, jobs_file: Path | None = None) -> list[str]:
+        """Run the selected first-grade close calls or the gate's explicit immutable jobs."""
+        self.check_names(only)
+        by_id = {s["id"]: s for s in self.scenarios}
+        names = {self.result_name(e) for e in self.spec["results"]}
+        if jobs_file is not None or self.spec.get("strict_judged_receipts"):
+            jobs = self.read_second_jobs(jobs_file if jobs_file is not None else self.freeze_second_jobs())
+            self.validate_second_jobs(jobs)
         else:
             summary_path = self.pass_dir / "summary.json"
             common.require(summary_path.is_file(), "grade the pass before running second sessions")
             summary = common.read_json(summary_path)
-            for name, config in summary["configurations"].items():
-                for row in config["scenarios"]:
-                    if row["scenario"] in config["close_calls"]:
-                        jobs.add((row["scenario"], name))
-                        if row.get("best_path"):
-                            jobs.add((row["scenario"], row["best_path"]))
-        scheduled = []
+            # Earlier passes regrade after each group. Keep selecting the remaining
+            # close calls, including their controls, with the original name filter.
+            jobs = sorted({(row["scenario"], candidate)
+                           for name, config in summary["configurations"].items()
+                           for row in config["scenarios"] if row["scenario"] in config["close_calls"]
+                           for candidate in (name, row.get("best_path"))
+                           if candidate in names and row["scenario"] in by_id})
+        jobs = [(scenario, name) for scenario, name in jobs if not only or name in only]
+        if not jobs:
+            return []
+        names = {name for _, name in jobs}
+        entries = [e for e in self.spec["results"] if self.result_name(e) in names]
+        by_name = {self.result_name(e): e for e in entries}
+        for entry in entries:
+            self.check_image(entry)
+            self.check_lifetime(entry)
+            self.check_stages(entry)
         workers = int(self.spec.get("concurrency", 4))
-        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = []
-            for scenario_id, name in sorted(jobs):
-                entry = by_name.get(name)
-                if entry is None or scenario_id not in by_id or (only and name not in only):
-                    continue
-                self.check_stages(entry)
-                scheduled.append(self.key(by_id[scenario_id], entry, 2))
-                futures.append(pool.submit(self.run_one, by_id[scenario_id], entry, 2))
-            for future in concurrent.futures.as_completed(futures):
-                future.result()
+        self.guard("start", entries)
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = [pool.submit(self.run_one, by_id[scenario], by_name[name], 2)
+                           for scenario, name in jobs]
+                for future in concurrent.futures.as_completed(futures):
+                    future.result()
+        finally:
+            self.guard("end", entries)
+        scheduled = [self.key(by_id[scenario], by_name[name], 2) for scenario, name in jobs]
         path = self.pass_dir / "second-sessions.json"
         previous = set(common.read_json(path)) if path.is_file() else set()
         common.write_json(path, sorted(previous | set(scheduled)))
@@ -615,17 +683,156 @@ class Pass:
                 self.log(event="judge", key=record.get("key"), judge=record.get("judge"), status=record.get("status"),
                          cost_usd=record.get("cost_usd"))
 
+    def adjudications(self) -> dict:
+        path = self.pass_dir / "adjudications.json"
+        return common.read_json(path) if path.is_file() else {}
+
+    def require_receipt_hash(self, path: Path, expected: str | None, key: str) -> None:
+        common.require(path.is_file() and common.sha256_file(path) == expected,
+                       f"{key}: missing or changed {path.name}")
+
+    def require_canonical_digest(self, series: str, key: str) -> str:
+        directory = self.r_root / "passes" / series
+        path = directory / "digests.json"
+        records = self.digests if series == self.series else common.read_json(path) if path.is_file() else {}
+        record = records.get(key) or {}
+        expected = record.get("digest")
+        common.require(record.get("ok") is True and isinstance(expected, str) and not record.get("arm_problems"),
+                       f"{key}: missing or failed canonical digest")
+        raw = directory / "digests" / key / "canonical.stdout.json"
+        envelope = common.read_json(raw) if raw.is_file() else {}
+        body = common.envelope_body(envelope)
+        common.require(isinstance(body, dict) and envelope.get("isError") is not True
+                       and evidence.evidence_digest(body) == expected, f"{key}: canonical evidence digest differs")
+        return expected
+
+    def require_terminal_session(self, row: dict, scenario: dict, reuse: dict | None) -> tuple[dict, str]:
+        key = row["key"]
+        series, source_key = (reuse["series"], reuse["key"]) if reuse else (self.series, key)
+        directory = Path(row["session_dir"])
+        path = directory / "session.json"
+        common.require(path.is_file(), f"{key}: missing session receipt")
+        session = common.read_json(path)
+        actual_key = (f"{session.get('repo')}-{session.get('slot')}/"
+                      + run_session.result_name(session.get("configuration"), session.get("device")))
+        if session.get("sample") == 2:
+            actual_key += ".s2"
+        common.require(session.get("schema") == run_session.SESSION_SCHEMA and session.get("series") == series
+                       and session.get("scenario_id") == scenario["id"]
+                       and session.get("scenario_sha256") == scenario["_sha256"]
+                       and session.get("sample") == row["sample"] and actual_key == source_key
+                       and session.get("model_requested") == row["agent_model"]
+                       and session.get("effort_requested") == row["agent_effort"],
+                       f"{key}: session receipt identity differs")
+        common.require(session.get("status") in ("complete", "failed", "timeout")
+                       and session.get("started") and session.get("ended"),
+                       f"{key}: session has no terminal complete, failed or timeout receipt")
+        if session["status"] == "complete":
+            common.require(session.get("exit_code") == 0 and not session.get("is_error"),
+                           f"{key}: complete session receipt has a failing exit")
+        self.require_receipt_hash(directory / "stream.jsonl", session.get("stream_sha256"), key)
+        self.require_receipt_hash(directory / "brief.md", session.get("brief_sha256"), key)
+        if row["sample"] == 1:
+            expected = self.require_canonical_digest(self.series, key)
+            if reuse:
+                common.require(self.require_canonical_digest(series, source_key) == expected,
+                               f"{key}: reused canonical evidence differs")
+        return session, source_key
+
+    def require_complete_judges(self, row: dict, scenario: dict, source_key: str) -> None:
+        key = row["key"]
+        coverage_path = Path(row["coverage"])
+        common.require(coverage_path.is_file(), f"{key}: missing coverage receipt")
+        observed = common.read_json(coverage_path)
+        common.require(observed.get("schema") == coverage.COVERAGE_SCHEMA
+                       and observed.get("scenario_id") == scenario["id"]
+                       and observed.get("scenario_sha256") == scenario["_sha256"],
+                       f"{key}: coverage receipt identity differs")
+        directory = Path(row["session_dir"])
+        common.require(observed == coverage.for_session(scenario, directory, write=False),
+                       f"{key}: coverage differs from the retained tool receipts")
+        packet = judge.build_packet(scenario, directory, source_key)
+        judge_sessions = set()
+        for name, verdict_path in zip(("j1", "j2"), map(Path, row["judges"]), strict=True):
+            common.require(verdict_path.is_file(), f"{key}: missing {name} verdict")
+            record = common.read_json(verdict_path)
+            verdict = record.get("verdict")
+            common.require(record.get("schema") == judge.VERDICT_SCHEMA and record.get("key") == source_key
+                           and record.get("judge") == name and record.get("status") == "valid"
+                           and record.get("exit_code") == 0 and not record.get("problems")
+                           and Path(record.get("session_dir", "")).resolve() == Path(row["session_dir"]).resolve(),
+                           f"{key}: invalid or crossed {name} verdict")
+            packet_path = verdict_path.with_name("packet.json")
+            self.require_receipt_hash(packet_path, record.get("packet_sha256"), key)
+            common.require(common.read_json(packet_path) == packet,
+                           f"{key}: {name} packet differs from the judged session")
+            output_path = verdict_path.with_name("output.json")
+            self.require_receipt_hash(output_path, record.get("output_sha256"), key)
+            output = common.read_json(output_path)
+            identifier = record.get("session_id")
+            common.require(isinstance(identifier, str) and identifier and identifier not in judge_sessions
+                           and output.get("session_id") == identifier
+                           and judge.parse_verdict(output) == verdict and not judge.validate(verdict, scenario),
+                           f"{key}: {name} lacks a distinct valid judge result")
+            judge_sessions.add(identifier)
+
+    def require_judged_receipts(self, index: dict, adjudications: dict, frozen=None) -> list[dict]:
+        """Admit an L7 grade only from complete retained receipts for its expected roster."""
+        rows = index["results"]
+        by_id = {s["id"]: s for s in self.scenarios}
+        common.require(rows and len({row["key"] for row in rows}) == len(rows), "invalid L7 grade roster")
+        if frozen is not None:
+            self.validate_second_jobs(frozen)
+            controls = [scenario for scenario, name in frozen if name in grade.BASELINES]
+            answers = {scenario for scenario, name in frozen if name not in grade.BASELINES}
+            common.require(len(controls) == len(set(controls)) and set(controls) == answers,
+                           "frozen L7 jobs must include one original control per scheduled Answer scenario")
+            planned = {f"{scenario}/{name}.s2" for scenario, name in frozen}
+            scheduled_path = self.pass_dir / "second-sessions.json"
+            scheduled = set(common.read_json(scheduled_path)) if scheduled_path.is_file() else set()
+            indexed = {row["key"] for row in rows if row["sample"] == 2}
+            common.require(planned == scheduled == indexed, "L7 scheduled second sessions differ from the frozen roster")
+        else:
+            rows = [row for row in rows if row["sample"] == 1]
+        reuse = self.reuse_map()
+        for row in rows:
+            scenario = by_id[row["scenario_id"]]
+            session, source_key = self.require_terminal_session(row, scenario, reuse.get(row["key"]))
+            if session["status"] == "complete":
+                self.require_complete_judges(row, scenario, source_key)
+            else:
+                common.require(source_key not in adjudications,
+                               f"{row['key']}: a failed or timed-out session cannot be adjudicated as complete")
+        graded = grade.build_rows({**index, "results": rows}, adjudications)
+        common.require(len(graded) == len(rows), "L7 grade lost a receipt from the expected roster")
+        unresolved = [row["key"] for row in graded if row["adjudication"] in ("pending", "single-judge")
+                      or type(row["adjudicated_grade"]) is not int or not 0 <= row["adjudicated_grade"] <= 4
+                      or (row["correct_finish"] is True and row["turns_to_finish"] is None)]
+        common.require(not unresolved, f"L7 grading has unresolved adjudication: {unresolved}")
+        return graded
+
     def grade(self) -> dict:
         index = self.index()
-        adj_path = self.pass_dir / "adjudications.json"
-        rows = grade.build_rows(index, common.read_json(adj_path) if adj_path.is_file() else {})
-        common.write_text(self.pass_dir / "results.csv", grade.csv_text(rows))
-        summary = grade.summarize(rows, self.series)
+        adjudications = self.adjudications()
+        frozen_path = self.pass_dir / FIRST_GRADE_SECOND_JOBS
+        strict = self.spec.get("strict_judged_receipts")
+        frozen = self.read_second_jobs(frozen_path) if strict and frozen_path.is_file() else None
+        rows = (self.require_judged_receipts(index, adjudications, frozen) if strict
+                else grade.build_rows(index, adjudications))
+
+        summary = grade.summarize(rows, self.series, frozen)
+        if frozen is not None:
+            cases = {(row["scenario"], name): row["case"] for name, config in summary["configurations"].items()
+                     for row in config["scenarios"]}
+            common.require(all(cases.get((scenario, name), {}).get("samples") == 2
+                               for scenario, name in frozen if name not in grade.BASELINES),
+                           "L7 final grade does not resolve every frozen pair")
         invalid = self.pass_dir / "INVALID.json"
         summary["invalid"] = common.read_json(invalid) if invalid.is_file() else None
         summary["pilot"] = self.pilot
         summary["prompts_freeze"] = self.prompts
         summary["timing_only"] = sorted(self.result_name(e) for e in self.spec["results"] if e.get("timing_only"))
+        common.write_text(self.pass_dir / "results.csv", grade.csv_text(rows))
         common.write_json(self.pass_dir / "summary.json", summary)
         return summary
 
@@ -634,16 +841,22 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--spec", type=Path, required=True)
     parser.add_argument("--r-root", type=Path, default=common.DEFAULT_R)
-    parser.add_argument("--stage", default="all", choices=["all", "sessions", "coverage", "judge", "grade", "second"])
+    parser.add_argument("--stage", default="all", choices=["all", "sessions", "coverage", "judge", "grade", "second", "freeze-second", "second-sessions"])
     parser.add_argument("--only", help="comma-separated result names for the sessions stage (e.g. focus-cpu)")
     parser.add_argument("--only-second", help="comma-separated result names for the second stage")
-    parser.add_argument("--second-jobs", type=Path, help="gate close calls (gate.py outcomes) for the second stage")
+    parser.add_argument("--second-jobs", type=Path, help="frozen first-grade or explicit gate close-call jobs")
     args = parser.parse_args(argv)
     run = Pass(common.read_json(args.spec), args.r_root)
     only = set(args.only.split(",")) if args.only else None
     if args.stage in ("all", "sessions"):
         run.sessions(only)
-    if args.stage == "second":
+    if args.stage == "freeze-second":
+        print(json.dumps({"second_jobs": str(run.freeze_second_jobs())}))
+    if args.stage == "second-sessions":
+        expected = run.pass_dir / FIRST_GRADE_SECOND_JOBS
+        common.require(args.second_jobs is not None and args.second_jobs.resolve() == expected.resolve(),
+                       f"second-sessions requires --second-jobs {expected}")
+    if args.stage in ("second", "second-sessions"):
         print(json.dumps({"second_sessions": run.second_sessions(
             set(args.only_second.split(",")) if args.only_second else None, args.second_jobs)}))
     if args.stage in ("all", "coverage", "second"):

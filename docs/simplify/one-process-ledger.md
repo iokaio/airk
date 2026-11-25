@@ -16048,7 +16048,8 @@ gate image from `5f971a70` plus `loop/l5c`, the short trial and the gate.
   budget to 380,000 tokens." An agent is raising the default and the maximum input-token pool to
   380,000 as its own commit, with the identity controls checked first. Not landed at this entry.
 - **Review of `5f971a70`, `ffa08c04` and `54155bb3`** (read-only): 1 high, 2 medium, 11 low; record
-  `review-deview-5f971a70.md` in the private `answer-loop` folder. No location is lost by the
+  `review-d
+eview-5f971a70.md` in the private `answer-loop` folder. No location is lost by the
   duplicate rule. The high finding: from trimming level 2 on a carrying row is cut to 768 or 384
   bytes, so a row pointing into it can refer to text that is in no row of the reply. The same agent
   fixes it after the pool commit, with a wrong containment claim and the missing tests, and then cuts
@@ -18273,3 +18274,149 @@ establishes the stated client and transport checks. The private
 replacement CUDA image has its own live scope, leak, and model
 qualification; the results do not establish cross-platform,
 Workbench or release qualification.
+
+#### Windows L7 controls and Arbiter profile binding
+
+The R2 fixture published both repositories and passed all 30 fresh
+leak probes. Four overlapping ordinary hybrid Search requests
+returned Focus reranking receipts with Arbiter off. Each receipt
+covered four scored hits. Bookbuilder requests took 3.431 and
+3.589 seconds, and Munarium requests took 1.739 and 1.829 seconds.
+This directly exercises ordinary Search on the signed CUDA settlement
+correction and the original Focus profile.
+
+The previous Arbiter profile was refused at warm admission. Its
+protected FP16 math policy includes the exact source bytes of
+`cuda.rs` and `runtime.rs`, which changed with score settlement.
+The refusal is scoped to the immutable profile binding. The original
+model graph, weights, task policies and calibration remain the inputs.
+
+The same R2 fixture then completed 40 Search and Parse control
+sessions with both optional stages disabled. All 40 canonical
+digests succeeded. The optional model dispatch count stayed at
+16 throughout the controls, and both publications remained stable.
+All 80 independent Sonnet judgments were valid. Thirty-eight
+control grade pairs agreed and two took the lower adjacent grade.
+None required primary adjudication. Keep these candidate control
+receipts private until the fresh fixture matches canonical evidence.
+The R2 process then closed normally with zero surviving processes
+and no forced termination. Its owner receipt SHA-256 is
+`6d99e279bb37918dde1f5ea9591ed4c99d62f1657ac522e6c960d3d738b77001`.
+The native observer recorded all 80 events without drops or writer
+failures, SHA-256
+`d02fe571e79b0047a954110042edf21c425f8c9157bf54d2335b9f908faa9b4f`.
+
+The current native diagnostic rebuilt under the same checked Windows
+Cargo target with one owner and audited 669 outputs. The existing
+profile emitter completed graph review, two metadata emissions and
+strict CUDA confirmation. It measured ten warm samples each at 32,
+1,024 and 8,192 tokens. The respective warm medians were 0.049118,
+0.198726 and 1.705150 seconds. Each strict score vector exactly
+matched the former retained receipt for the same input digest.
+The new strict receipt SHA-256 is
+`b6a983ba1cb8d9a17deadab363c298e6791c99fc043db2b758f0c8a03acca97b`.
+The Arbiter manifest is
+`5ef84f36bca423002f6e543e502904d6f4b5a72b172a4b1b8d610c539470b987`.
+Reauthenticated Focus and Arbiter assets formed immutable pair
+`e4e7b548d8cf830b763cf3965e9803b4e9b426b96806c869297637061169e269`.
+
+The existing roots are ineligible for catalog restart with the
+re-emitted profile. An authenticated replacement R3 fixture started
+with the same corrected service image and pinned source revisions.
+It retains fresh source copies and publications in its own root.
+The new baseline spec has SHA-256
+`26a20f71f782ed9390f23ac229fceec0d9891684fd21084cf1409dfd21e445ad`
+with the unchanged approved prompt freeze
+`2ec1a20cecec49f42b33f6e04abcdb0c17d9f569bb08005b6398261392087385`.
+Before admitting R3 scoring, require both semantic publications,
+fresh leak probes and native stage placement. R3 runs all five paths
+on the same fresh publication. The candidate reuse spec is retained.
+Its span digest cannot establish full Parse equivalence because plans
+and requests for missing input can have no extracted spans. R2 has
+no model-arm grades or full baseline finding.
+
+R3's native Ready file was complete at 08:28:35 UTC, but the
+Windows directory-change waiter remained asleep. The original
+receipt independently matched the launched image, process, input
+digest and physical control directory. One checked metadata event
+in the private lifetime directory woke the waiter at 08:37:28 UTC.
+It then adopted the original receipt and began indexing. No native
+readiness file or indexed publication was modified by the wake.
+
+R3 produced both semantic publications and a native catalog of 60
+tool schemas. Its live leak check passed all 30 probes, SHA-256
+`d6277a587ba3ee750274ba3bec96a2e8d3c0ccc77865ab926bd93f20d8481fce`.
+Four fresh hybrid Search calls again recorded Focus reranking with
+Arbiter off. With both models active, Bookbuilder's end-to-end smoke
+took 9.007 seconds and Munarium's took 3.564 seconds. Four concurrent
+Answer calls succeeded in 13.335 seconds. The 74 in-window native
+dispatches each had score return and job settlement. Publication
+tokens remained unchanged. The native settlement receipt SHA-256 is
+`d528cbe1a026bad8034eabda0d476a48917f5ed688f47742397d463968aab65f`.
+The four-way receipt is
+`70c745b3f3d096a8ea586ed60c6a70711ae3fc78f7067bfe62696f9e178cb8e9`.
+D: had 406,114,742,272 free bytes after the smoke. The 20-scenario
+model-free controls began next under the final spec. The diagnostic
+smoke provides native proof and does not contribute judged scores.
+
+#### Windows L7 R3 first-sample execution
+
+The five first-sample cohorts finished all 100 sessions. The 40
+model-free controls took 368.9 seconds with the native optional-model
+dispatch census unchanged. The Focus-only, combined and Arbiter-only
+session subprocesses took 345.9, 322.7 and 340.3 seconds. Each model
+cohort produced 20 canonical evidence receipts with the expected arm
+and no model placement flags, including the combined case below.
+
+One separate combined replay returned empty output. The original
+failed output remains in custody. The matching measured session had
+already received a full Answer on its canonical first call. Its
+original same-scope, same-budget, checked-arm result supplied the
+canonical evidence projection for this case. No measured session was
+re-run or overwritten. The recovery receipt SHA-256 is
+`d1a957a656069cff1f4d954e7a829cb716a4b3b76316e14257af00ea02b40114`.
+
+The combined outer audit exited 1 after the successful session step
+because global Claude configuration metadata changed. The file was
+human-owned. The write at 09:23:10.503 UTC fell during native warm-up,
+before the session driver was started at 09:23:17 UTC. Its writer
+remains unobserved. The ownership and policy checks independently
+passed for all 26 changed entries under the approved Claude config
+root. The subsequent Arbiter-only run passed the original guard and
+had matching global file timestamps and lengths at entry and at
+child exit. D: had 406,009,339,904 free bytes after the run.
+
+Direct model-free Search depth covered 30 of 113 essential notes in
+the returned excerpts, with final digest
+`5783c34e9af399b6f6fb90c343d8312acee460a4f11230cf22cd48a41c604ca8`.
+It is a diagnostic at the observed Search limits. Internal Answer
+candidate ranks require additional evidence. The first grading stage
+began at 09:42:19.964 UTC. Freeze eligible second samples from the
+first strict grade before scheduling them.
+
+
+The full judge step completed in 578.9 seconds with 200 valid Sonnet
+verdicts. All 100 grades agreed and no unresolved adjudication remained.
+The approved second-sample roster was empty, SHA-256
+`4c77cd2af0832460f9ab2d834bd5e7d878ad591f58fec7ec00181523cfd86154`.
+The scoped `run_pass.py --stage grade` final reconciliation completed
+in 2.276 seconds using the existing verdicts. The final summary SHA-256
+is `7ffcffb2ea284f159573172690cd2e4c1e46d55567ed52b46909f55743618e3b`.
+All configurations had zero correct finishes. Answer recorded zero
+substantial wins on 20 scenarios with a theoretical opportunity to win.
+The first-sample native window retained 971 successful score returns
+and matching settlements. Scored replies disclosed zero deadline
+partials. The first change set proceeds from the published baseline with
+actual Answer-query depth, follow-up and coverage-stop diagnostics.
+Current validated outcomes and private receipt identities are in the
+[baseline report](../arbiter/answer-evaluation/05-loop-baseline.md).
+
+Baseline harness validation included 144 harness/loop regressions
+with 1,086 audited synthetic outputs, three result comparison tests and
+three baseline report tests. The sample-join correction is in the
+reporting-only summary. The measured freeze remained unchanged. The
+repository check passed over 10,713 eligible files. Both publications
+settled in all eight guard observations per repository. The complete
+first judging launcher passed both ownership audits and had unchanged
+global config metadata and native dispatch census. D: retained
+405,990,252,544 free bytes at grading postflight.

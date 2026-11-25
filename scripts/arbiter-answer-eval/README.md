@@ -223,6 +223,23 @@ python -I -B scripts/arbiter-answer-eval/leak_check.py --handle R/fixture-<serie
 
 ## The loop: gates (LG) and the new baseline (L7)
 
+For a graded L7 pass, print the supplementary sample-one table with the
+command below.
+
+~~~powershell
+python -I -B scripts/arbiter-answer-eval/baseline_summary.py --pass-dir <graded-pass-directory> --l7-metrics
+~~~
+
+Each repository/configuration row reports cumulative essential and supporting
+coverage, reply text bytes, rereads of truncated and whole rows, failed tool
+calls, wrapper refusals, typed retries, queue ticket attachments, deadline
+partials disclosed by Answer, and native decision sources when present.
+Mean wall and tool time use observed sessions. Totals include sessions reused
+across passes. Dashes indicate unavailable observations. The final column
+shows how many sessions supplied coverage, reread, and wrapper receipts.
+The view prints only aggregate metrics and leaves all receipts unchanged.
+
+
 Answer /3 is read by `loop_reply.py` against the Core contract
 (`crates/airk-core/src/arbiter/CONTRACT.md`, "Answer loop wire contract
 version 3"), the generated schema
@@ -358,7 +375,10 @@ pair, munarium and bookbuilder):
   - **Budget sent.** The report states the exact budget every Answer was
     sent, from the arms' `budgets_sent`, or names the arms that were sent
     different budgets and says their figures do not compare.
-- **L7.** `make_loop_spec.py l7` writes the new baseline's spec and plan:
+- **L7.** `make_loop_spec.py l7 --handle <ready handle.json> --claude <pinned executable>`
+  binds the pass to the current fixture and evaluation runner. The CUDA
+  stage switches and the sessions use the same bound lifetime. The
+  baseline spec and plan cover:
   Search, Parse, and the loop as Focus only (F), Arbiter with Focus (C) and
   Arbiter only (A, `arbiter-gpu`), with no CPU cells. Large was dropped after
   LG and is not in the L7 plan; the `gate` command still builds the LG series
@@ -567,9 +587,11 @@ agent can overrule them.
   better of Parse and Search does.
 - **"Not worse on average in a kind".** This compares mean adjudicated grades.
 - **Close calls.** A close call is a turn difference of -1, 0, 1 or 2 between
-  two correct finishes. `--stage second` runs a second session for the Answer
-  configuration and the better of Parse and Search. Samples that differ give
-  "undecided".
+  two correct finishes. The L7 plan freezes the eligible Answer and stronger
+  Search or Parse pairs from the first grade before any second session.
+  Search and Parse run with both stages off in both samples. The plan
+  refreshes the report after all requested second samples. Samples that
+  differ give "undecided".
 - **Reuse.** The evidence digest covers each span's path, lines, a hash of
   its text and its kind, in order, plus Answer's paragraph texts. Timings,
   receipts and publication tokens are excluded. A session is reused when the

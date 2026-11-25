@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Compare two graded passes per configuration: correct finishes, essential coverage, first-call yield, grades.
 
-Each pass's ``results.csv`` (sample 1 rows) is read. For every configuration
-present in both passes, the scenario rows they share are compared:
+Read each pass's sample-one grading receipts. A historical CSV without
+grading receipts is accepted only when every scenario/configuration key is
+unique. For configurations present in both passes, compare shared scenarios:
 
 * correct finishes and the turns saved on rows both finish;
 * essential notes covered over the session;
@@ -29,13 +30,31 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 import common  # noqa: E402
+import grade  # noqa: E402
 
 
 def rows(pass_dir: Path) -> dict[tuple, dict]:
+    index_path = pass_dir / "pass-index.json"
+    if index_path.is_file():
+        index = common.read_json(index_path)
+        adjudications = pass_dir / "adjudications.json"
+        overrides = common.read_json(adjudications) if adjudications.is_file() else {}
+        selected = [row for row in grade.build_rows(index, overrides) if row["sample"] == 1]
+        expected = sum(entry.get("sample", 1) == 1 for entry in index["results"])
+        common.require(len(selected) == expected,
+                       f"{pass_dir}: missing sample-one grading receipts; restore the pass-index inputs")
+    else:
+        with (pass_dir / "results.csv").open(encoding="utf-8", newline="") as stream:
+            selected = [dict(row, correct_finish=row["correct_finish"] == "True")
+                        for row in csv.DictReader(stream)]
     out = {}
-    for row in csv.DictReader((pass_dir / "results.csv").open(encoding="utf-8")):
+    for row in selected:
         name = row["configuration"] + ("" if row["device"] in ("", "none") else f"-{row['device']}")
-        out[(name, f"{row['repo']}-{row['slot']}")] = row
+        key = (name, f"{row['repo']}-{row['slot']}")
+        common.require(key not in out,
+                       f"{pass_dir}: duplicate comparison row for {key[1]}/{key[0]}; "
+                       "supply the original pass-index.json and grading receipts to identify sample one")
+        out[key] = row
     return out
 
 
@@ -52,10 +71,12 @@ def summarize(a: dict, b: dict) -> dict:
     for name in names:
         shared = sorted(s for (n, s) in a if n == name and (n, s) in b)
         ra, rb = [a[(name, s)] for s in shared], [b[(name, s)] for s in shared]
-        fin = lambda rs: [r for r in rs if r["correct_finish"] == "True"]  # noqa: E731
-        both = [s for s in shared if a[(name, s)]["correct_finish"] == "True" and b[(name, s)]["correct_finish"] == "True"]
+        both = [s for s in shared if a[(name, s)]["correct_finish"] is True
+                and b[(name, s)]["correct_finish"] is True]
         table[name] = {
-            "rows": len(shared), "finishes_a": len(fin(ra)), "finishes_b": len(fin(rb)),
+            "rows": len(shared),
+            "finishes_a": sum(r["correct_finish"] is True for r in ra),
+            "finishes_b": sum(r["correct_finish"] is True for r in rb),
             "turns_saved_on_shared_finishes": sum(int(a[(name, s)]["turns_to_finish"]) - int(b[(name, s)]["turns_to_finish"])
                                                  for s in both),
             "essential_a": sum(int(num(r["essential_covered"])) for r in ra),

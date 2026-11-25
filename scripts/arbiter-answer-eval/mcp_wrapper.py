@@ -168,8 +168,9 @@ class Wrapper:
         Each retried reply is kept beside the turn's result; the agent sees only the final reply."""
         retries = []
         outcome = self.backend(tool, sent)
+        index_id = self.handle.index_id(self.repo) if self.handle is not None else None
         while len(retries) < self.MAX_TYPED_RETRIES:
-            retry, delay_ms, code = common.typed_retry(outcome.envelope)
+            retry, delay_ms, code = common.typed_retry(outcome.envelope, index_id)
             if not retry:
                 break
             path = self.results_dir / f"{stem}.retry-{len(retries) + 1}.stdout.json"

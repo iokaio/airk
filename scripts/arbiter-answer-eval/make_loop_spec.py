@@ -406,24 +406,29 @@ def l7_spec(series: str, r_root: Path, profiles: dict, repos: list[str], budget:
     """The new baseline of L7 (plan section 2 "after LG", 12.8): Search, Parse, and the loop as Focus only (F),
     Arbiter with Focus (C) and Arbiter only (A). CUDA only: no CPU cells. Large was dropped after LG."""
     spec = base_spec(series, r_root, repos, note or "L7 baseline: the loop on CUDA, Parse and Search", budget)
+    spec["strict_judged_receipts"] = True
     arms = {e["arm"]: e for e in gate_arms(profiles, "arbiter")}
-    results = [{"configuration": "search", "path": "search", "device": "none"},
-               {"configuration": "parse", "path": "parse", "device": "none"}]
-    results += [{**arms[arm], "reuse": True} for arm in L7_ARMS]
+    results = [{"configuration": path, "path": path, "device": "none",
+                "stages": {"focus": None, "context": None}, "require_live_stages": True}
+               for path in ("search", "parse")]
+    results += [{**arms[arm], "reuse": True, "stages": arms[arm]["arm_stages"],
+                 "require_live_stages": True} for arm in L7_ARMS]
     spec["results"] = results
     return spec
 
 
 def l7_plan(spec_path: Path, spec: dict, r_root: Path) -> list[dict]:
     loops = [e for e in spec["results"] if e.get("arm")]
-    # Search and Parse do not use the Arbiter stages: "@any" leaves the live stages as they are.
-    steps: list[dict] = [{"sessions": {"spec": str(spec_path), "groups": [["@any", "@any", "search,parse"]]}}]
-    steps.append({"sessions": {"spec": str(spec_path), "stager": "cuda", "groups": [
-        [e["arm_stages"]["focus"], e["arm_stages"]["context"], result_name(e)] for e in loops]}})
-    steps.append({"grade": {"spec": str(spec_path)}})
-    steps.append({"second": {"spec": str(spec_path), "stager": "cuda", "groups": [
-        [e["arm_stages"]["focus"], e["arm_stages"]["context"], result_name(e)] for e in loops]}})
-    return steps
+    # An enabled Focus stage also reranks ordinary Search. Both switches must
+    # be off for the development comparators, including their second samples.
+    controls = [None, None, "search,parse"]
+    groups = [[e["arm_stages"]["focus"], e["arm_stages"]["context"], result_name(e)] for e in loops]
+    source = {"spec": str(spec_path), "stager": "cuda"}
+    return [{"sessions": {**source, "groups": [controls]}},
+            {"sessions": {**source, "groups": groups}},
+            {"grade": {"spec": str(spec_path)}},
+            {"second": {**source, "groups": [controls, *groups], "freeze_first_grade_jobs": True}},
+            {"grade": {"spec": str(spec_path)}}]
 
 
 # ---------------------------------------------------------------- shakedown
@@ -494,6 +499,9 @@ def main(argv: list[str] | None = None) -> int:
         if name == "gate":
             sub.add_argument("--lifetimes", type=Path,
                              help="JSON {arm: {fixtures, lifetime, launcher, start_args, device_gib, host_gib}} overrides")
+        else:
+            sub.add_argument("--handle", type=Path, help="bind the baseline to this fixture lifetime's handle.json")
+            sub.add_argument("--claude", type=Path, help="bind the baseline to this installed Claude Code executable")
     sub = commands.add_parser("template")
     sub.add_argument("--out", type=Path, required=True)
     sub = commands.add_parser("shakedown")
@@ -536,6 +544,15 @@ def main(argv: list[str] | None = None) -> int:
                            gate_report_inputs(spec, args.r_root))
     else:
         spec = l7_spec(args.series, args.r_root, profiles, repos, budget, args.note)
+        for field, path in (("handle", args.handle), ("claude", args.claude)):
+            if path is not None:
+                common.require(path.is_file(), f"{field} does not name an existing file: {path}")
+                spec[field] = str(path.resolve())
+        if args.handle is not None:
+            life = args.handle.resolve().parent
+            for entry in spec["results"]:
+                if entry.get("arm"):
+                    entry["stage_guard"] = stage_guard(str(life.parent), life.name, entry["arm_stages"])
         directory = _write(args.r_root, args.series, spec, l7_plan(spec_path, spec, args.r_root))
     print(directory)
     return 0

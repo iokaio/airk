@@ -71,18 +71,21 @@ MAX_TICKET_ATTACHES = 16
 MAX_TICKET_WAIT_MS = 30000
 
 
-def _retrying(call, tool: str, args: dict, sleep) -> tuple[common.CallOutcome, int]:
+def _retrying(call, tool: str, args: dict, sleep, index_id=None) -> tuple[common.CallOutcome, int]:
     outcome = call(tool, args)
     retries = 0
-    while retries < 8 and common.typed_retry(outcome.envelope)[0]:  # the same typed-retry rule as the wrapper
-        sleep(min(max(common.typed_retry(outcome.envelope)[1], 25) * (2 ** retries), 2000) / 1000)
+    while retries < 8:
+        retry, delay, _ = common.typed_retry(outcome.envelope, index_id)
+        if not retry:
+            break
+        sleep(min(max(delay, 25) * (2 ** retries), 2000) / 1000)
         retries += 1
         outcome = call(tool, args)
     return outcome, retries
 
 
 def attach_tickets(call, tool: str, args: dict, outcome: common.CallOutcome, sleep=time.sleep,
-                   max_attaches: int = MAX_TICKET_ATTACHES) -> tuple[common.CallOutcome, list[dict], int]:
+                   max_attaches: int = MAX_TICKET_ATTACHES, index_id=None) -> tuple[common.CallOutcome, list[dict], int]:
     """Attach to queued Answer /3 tickets until a reply that is not a ticket (or the attach limit)."""
     tickets, retries = [], 0
     while len(tickets) < max_attaches:
@@ -94,7 +97,7 @@ def attach_tickets(call, tool: str, args: dict, outcome: common.CallOutcome, sle
         sleep(waited / 1000)
         tickets.append({"id": ticket_id, "queue_position": body["ticket"].get("queue_position"),
                         "retry_after_ms": after_ms, "waited_ms": waited, "attempt_ms": outcome.elapsed_ms})
-        outcome, more = _retrying(call, tool, {**args, "continuation": ticket_id}, sleep)
+        outcome, more = _retrying(call, tool, {**args, "continuation": ticket_id}, sleep, index_id)
         retries += more
     return outcome, tickets, retries
 
@@ -103,10 +106,11 @@ def issue(handle: common.Handle, repo: str, tool: str, args: dict, out: Path, st
           timeout_s: float, backend=None, sleep=time.sleep) -> dict:
     # Same environment as an agent's tool call (decision 2): the product's default response mode.
     call = backend or (lambda t, a: common.call_tool(handle, t, repo, a, timeout_s, strip_env=common.AGENT_STRIPPED_ENV))
-    outcome, retries = _retrying(call, tool, args, sleep)
+    index_id = handle.index_id(repo) if isinstance(handle, common.Handle) else None
+    outcome, retries = _retrying(call, tool, args, sleep, index_id)
     tickets: list[dict] = []
     if tool == "airk_answer":
-        outcome, tickets, more = attach_tickets(call, tool, args, outcome, sleep)
+        outcome, tickets, more = attach_tickets(call, tool, args, outcome, sleep, index_id=index_id)
         retries += more
     out.mkdir(parents=True, exist_ok=True)
     raw = out / f"{stem}.stdout.json"

@@ -232,7 +232,9 @@ class Handle:
         # Name manifests from every lifetime's stages.jsonl: a restarted lifetime carries the stages over
         # without logging them again (L17-cs1, 22 Nov 2026).
         names = {}
-        for log in sorted(self.path.parent.parent.glob("L*/stages.jsonl")):
+        own_log = self.path.parent / "stages.jsonl"
+        history = sorted(set(self.path.parent.parent.glob("L*/stages.jsonl")) - {own_log})
+        for log in [*history, own_log]:
             names.update({r.get("manifest"): r.get("profile") for r in read_jsonl(log) if r.get("manifest")})
         current: dict[str, str | None] = {}
         for kind in ("focus", "context"):
@@ -512,7 +514,7 @@ TYPED_RETRY_CODES = ("selection_busy", "publication_busy", "scoped_observation_u
                      "scoped_status_unavailable")
 
 
-def typed_retry(envelope: dict | None) -> tuple[bool, int, str | None]:
+def typed_retry(envelope: dict | None, index_id: str | None = None) -> tuple[bool, int, str | None]:
     """Whether a reply is a typed retry an MCP client must honour (the server's "Honor typed retries;
     never replay uncertain work"), with the delay in ms and the code.
 
@@ -526,6 +528,17 @@ def typed_retry(envelope: dict | None) -> tuple[bool, int, str | None]:
     if body.get("status") == "retry" and body.get("retryable") is True and body.get("action") == "repeat_same_request":
         return True, int(body.get("retry_after_ms") or 25), body.get("code")
     error = body.get("error")
+    if isinstance(error, dict) and error.get("retryable") is True and error.get("code") == "scoped_connection_unavailable":
+        # A new CLI process gets fresh brokerage. Match the original single
+        # index and require positive proof that no query ever ran.
+        scope = body.get("requested_scope")
+        selection = scope.get("selection") if isinstance(scope, dict) else None
+        window = selection.get("window_scope_selection") if isinstance(selection, dict) else None
+        delay = error.get("retry_after_ms")
+        if (index_id is not None and isinstance(window, dict) and window.get("index_ids") == [index_id]
+                and error.get("query_submitted") is False and error.get("fresh_brokerage_required") is True
+                and error.get("query_replay_safe", True) is True and type(delay) is int and 1 <= delay <= 1000):
+            return True, delay, error["code"]
     if isinstance(error, dict) and error.get("retryable") is True and error.get("code") in TYPED_RETRY_CODES \
             and error.get("query_submitted") is not True:
         return True, int(error.get("retry_after_ms") or 250), error.get("code")
@@ -538,7 +551,7 @@ def call_tool_retrying(handle: Handle, tool: str, repo: str, args: dict, timeout
     outcome = call_tool(handle, tool, repo, args, timeout_s, strip_env)
     retries = 0
     while retries < attempts:
-        retry, delay_ms, _ = typed_retry(outcome.envelope)
+        retry, delay_ms, _ = typed_retry(outcome.envelope, handle.index_id(repo))
         if not retry:
             break
         time.sleep(min(max(delay_ms, 25) * (2 ** retries), 2000) / 1000)

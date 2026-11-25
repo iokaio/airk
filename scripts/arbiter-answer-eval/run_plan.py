@@ -107,6 +107,7 @@ class Plan:
         self.fixture_dir = self.r / "fixture"
         self.log_path = args.log
         self.children: list[subprocess.Popen] = []
+        self.cuda_handle: Path | None = None
         # On a resumed plan (--from-step) the live CUDA stages are given, so the first switch releases them.
         self.live_cuda = json.loads(args.live_cuda) if getattr(args, "live_cuda", None) else None
 
@@ -206,7 +207,7 @@ class Plan:
     live_cuda: dict | None = None
 
     def lifetime_name(self) -> str:
-        return self.newest().parent.name
+        return (self.cuda_handle or self.newest()).parent.name
 
     def switch_context(self, body: dict) -> dict:
         """The in-lifetime Context switch hook (plan 12.5.2 item 4, L5 design section 5.3): release first, then
@@ -248,8 +249,9 @@ class Plan:
         return receipt
 
     def stage_command(self, lifetime: str, profile: str, enable: bool, repos: str | None, stage: str):
+        fixtures = ["--fixtures", str(self.cuda_handle.parent.parent)] if self.cuda_handle else []
         self.run(f"stage-{'on' if enable else 'off'}-{profile}",
-                 [*PY, "-S", str(HERE / "gpu_fixture.py"), "stage", "--lifetime", lifetime, "--profile", profile,
+                 [*PY, "-S", str(HERE / "gpu_fixture.py"), *fixtures, "stage", "--lifetime", lifetime, "--profile", profile,
                   "--enable" if enable else "--disable", *stage_repositories({"stage_repositories": repos})], 3600)
 
     @staticmethod
@@ -447,8 +449,21 @@ class Plan:
             if ensure:
                 self.ensure_stages(kind)
             spec = Path(body["spec"])
-            pass_dir = self.r / "passes" / common.read_json(spec)["series"]
+            pass_spec = common.read_json(spec)
+            handle = pass_spec.get("handle")
+            if body.get("stager") == "cuda" and handle not in (None, common.NEWEST):
+                target = Path(handle).resolve()
+                common.require(target.name == "handle.json" and target.is_file(),
+                               f"CUDA staging needs a live fixture handle: {target}")
+                common.require(self.cuda_handle is None or self.cuda_handle == target,
+                               "a plan cannot switch CUDA stages across different bound lifetimes")
+                self.cuda_handle = target
+            pass_dir = self.r / "passes" / pass_spec["series"]
             jobs = body.get("jobs") or [None]
+            if kind == "second" and body.get("freeze_first_grade_jobs"):
+                common.require(not body.get("jobs"), "choose either first-grade jobs or explicit jobs")
+                self.pass_step(spec, "freeze-second-jobs", "--stage", "freeze-second")
+                jobs = [pass_dir / "first-grade-second-jobs.json"]
             for focus, context, names in body["groups"]:
                 self.stage_group(focus, context, pass_dir, body.get("stager"))
                 if kind == "sessions":
@@ -456,7 +471,8 @@ class Plan:
                 else:
                     for job in jobs:
                         extra = ["--second-jobs", str(job)] if job else []
-                        self.pass_step(spec, f"second-{names}", "--stage", "second", "--only-second", names, *extra)
+                        second_stage = "second-sessions" if body.get("freeze_first_grade_jobs") else "second"
+                        self.pass_step(spec, f"second-{names}", "--stage", second_stage, "--only-second", names, *extra)
         elif kind == "switch_context":
             self.switch_context(body)
         elif kind == "gate":

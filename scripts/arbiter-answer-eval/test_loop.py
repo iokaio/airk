@@ -1299,13 +1299,39 @@ class Specs(TempDir):
         inputs = make_loop_spec.gate_report_inputs(spec, self.tmp)
         self.assertEqual(sorted(inputs["outcomes"]), ["C-L", "F-C"])
 
+    def test_fresh_brokerage_retry_requires_original_scope_and_proof_of_non_submission(self):
+        code = "scoped_connection_unavailable"
+        refusal = {"retryable": True, "code": code, "query_submitted": False,
+                   "fresh_brokerage_required": True, "retry_after_ms": 100}
+        scope = {"selection": {"window_scope_selection": {"index_ids": ["named-index"]}}}
+
+        def decision(error, index):
+            envelope = {"structuredContent": {"error": error, "requested_scope": scope}}
+            return common.typed_retry(envelope, index)
+
+        self.assertEqual(decision(refusal, "named-index"), (True, 100, code))
+        self.assertFalse(decision(refusal, "other-index")[0])
+        for invalid in ({"query_submitted": None}, {"query_submitted": True},
+                        {"fresh_brokerage_required": False}, {"query_replay_safe": False},
+                        {"retry_after_ms": 1001}):
+            with self.subTest(invalid=invalid):
+                self.assertFalse(decision(refusal | invalid, "named-index")[0])
+
     def test_l7_spec_has_no_cpu_cells_and_the_template_is_current(self):
         # L7 after LG: Search, Parse, Focus only, Arbiter with Focus, Arbiter only; no Large and no CPU cell.
         spec = make_loop_spec.l7_spec("l7", self.tmp, make_loop_spec.PROFILES, list(common.REPOS), {})
+        self.assertIs(spec["strict_judged_receipts"], True)
         names = [run_pass.Pass.result_name(e) for e in spec["results"]]
         self.assertEqual(names, ["search", "parse", "focus-gpu", "compact-gpu", "arbiter-gpu"])
         plan = make_loop_spec.l7_plan(self.tmp / "spec.json", spec, self.tmp)
-        self.assertEqual(plan[0]["sessions"]["groups"], [["@any", "@any", "search,parse"]])
+        self.assertEqual(plan[0]["sessions"]["stager"], "cuda")
+        self.assertEqual(plan[0]["sessions"]["groups"], [[None, None, "search,parse"]])
+        for entry in spec["results"]:
+            self.assertEqual(entry["stages"], entry.get("arm_stages", {"focus": None, "context": None}))
+            self.assertIs(entry["require_live_stages"], True)
+        self.assertTrue(plan[3]["second"]["freeze_first_grade_jobs"])
+        self.assertEqual(plan[3]["second"]["groups"], plan[0]["sessions"]["groups"] + plan[1]["sessions"]["groups"])
+        self.assertEqual(plan[4], plan[2])
         self.assertEqual(plan[1]["sessions"]["groups"],
                          [["focus-1024-cuda", None, "focus-gpu"],
                           ["focus-1024-cuda", "context-compact-fp16-cuda", "compact-gpu"],
@@ -1317,6 +1343,23 @@ class Specs(TempDir):
         self.assertIs(arbiter["arm_check"]["focus"], False)
         committed = common.read_json(HERE / "l7_plan_template.json")
         self.assertEqual(committed, make_loop_spec.template(), "regenerate l7_plan_template.json (make_loop_spec.py template)")
+
+
+    def test_l7_generation_pins_the_explicit_handle_and_runner(self):
+        handle = self.tmp / "handle.json"
+        runner = self.tmp / "claude.exe"
+        handle.touch()
+        runner.touch()
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(make_loop_spec.main(["--r-root", str(self.tmp), "l7", "--series", "pinned",
+                                                  "--handle", str(handle), "--claude", str(runner)]), 0)
+        spec = common.read_json(self.tmp / "passes" / "pinned" / "spec.json")
+        self.assertEqual((spec["handle"], spec["claude"]), (str(handle.resolve()), str(runner.resolve())))
+        for entry in spec["results"][:2]:
+            self.assertNotIn("stage_guard", entry)
+        arbiter_guard = spec["results"][-1]["stage_guard"]
+        self.assertEqual(arbiter_guard[-4:], ["--lifetime", handle.resolve().parent.name,
+                                             "--profiles", "context-compact-fp16-cuda"])
 
 
 class PlanHook(TempDir):
@@ -1344,6 +1387,24 @@ class PlanHook(TempDir):
         receipt = common.read_json(self.tmp / "s2.json")
         self.assertEqual((receipt["from"]["context"], receipt["to"]["context"], receipt["ok"]), ("c16", "l16", True))
         self.assertEqual(receipt["lifetime"], "L40-gate")
+
+    def test_cuda_session_stages_the_pass_specs_explicit_lifetime(self):
+        args = argparse.Namespace(r_root=self.tmp, log=self.tmp / "p.jsonl", plan=None, from_step=1,
+                                  hold=False, live_cuda=None)
+        plan = run_plan.Plan(args)
+        commands = []
+        plan.run = lambda label, command, timeout=0: commands.append(command)
+        plan.gpu_memory = lambda: {}
+        handle = self.tmp / "fresh-fixture" / "bound-lifetime" / "handle.json"
+        handle.parent.mkdir(parents=True)
+        handle.touch()
+        spec = self.tmp / "spec.json"
+        common.write_json(spec, {"series": "pinned", "handle": str(handle)})
+        with contextlib.redirect_stdout(io.StringIO()):
+            plan.step({"sessions": {"spec": str(spec), "stager": "cuda", "groups": [["f-w8", None, "focus-gpu"]]}})
+        self.assertEqual(commands[0][-8:], ["--fixtures", str(handle.parent.parent.resolve()), "stage",
+                                            "--lifetime", "bound-lifetime", "--profile", "f-w8", "--enable"])
+        self.assertEqual(commands[1][-4:], ["--stage", "sessions", "--only", "focus-gpu"])
 
     def test_an_arbiter_only_switch_releases_focus_and_needs_known_stages(self):
         # Arm A after arm C releases Focus and keeps the Context model; as the plan's first switch it is refused,
