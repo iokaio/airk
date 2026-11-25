@@ -178,6 +178,14 @@ pub struct ResourceChange {
     pub body: Option<Vec<u8>>,
 }
 
+/// Whether a collection-directory entry is one of this engine's files: the
+/// database, its SQLite sidecars or a vector generation file.
+pub fn is_index_file(name: &str) -> bool {
+    name.strip_prefix(DATABASE_FILE)
+        .is_some_and(|suffix| matches!(suffix, "" | "-wal" | "-shm" | "-journal"))
+        || vectors::generation_of(name).is_some()
+}
+
 pub fn validate_path(path: &str) -> Result<()> {
     ensure!(
         !path.is_empty()

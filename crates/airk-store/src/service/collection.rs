@@ -343,6 +343,7 @@ fn retirement_inventory(directory: &Path) -> Result<(Vec<PathBuf>, Vec<PathBuf>)
                         .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
             };
             let known = match parts.as_slice() {
+                [name] if metadata.is_file() && crate::index::is_index_file(name) => true,
                 [name] if metadata.is_file() => matches!(
                     *name,
                     "writer.lock"
@@ -1115,7 +1116,9 @@ impl Replacement {
                 "replacement graph validation byte budget exceeded"
             );
         }
-        read.map_entries(crate::current::map::MapVisitLimits::default())?;
+        // The plain index has no keyed map: SQLite's own checks of the
+        // replacement database stand in for the map traversal.
+        crate::index::IndexWriter::open(store.directory())?.verify()?;
         let token = read.token()?;
         manifest.retired.push(Retired {
             slot: manifest.active,

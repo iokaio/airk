@@ -48,6 +48,34 @@ pub fn source_measurement_key(path: &str) -> String {
     }
 }
 
+/// Bound of payloads producers stage for the next publication, per process.
+const MAX_STAGED_PAYLOAD_BYTES: usize = 1 << 30;
+static STAGED_PAYLOADS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<Sha256Digest, Vec<u8>>>,
+> = std::sync::LazyLock::new(Default::default);
+
+/// Stage a producer's payload (its raw JSON bytes) for the next publication
+/// that upserts a record naming its digest. Keyed by content digest.
+pub fn stage_payload(raw: Vec<u8>) -> Result<Sha256Digest> {
+    let encoded = EncodedPayload::encode(&raw)?;
+    let mut staged = STAGED_PAYLOADS
+        .lock()
+        .map_err(|_| anyhow::anyhow!("staged payloads poisoned"))?;
+    let total: usize = staged.values().map(Vec::len).sum();
+    if total.saturating_add(raw.len()) > MAX_STAGED_PAYLOAD_BYTES {
+        staged.clear();
+    }
+    staged.insert(encoded.digest, raw);
+    Ok(encoded.digest)
+}
+
+fn take_staged_payload(digest: &Sha256Digest) -> Result<Option<Vec<u8>>> {
+    Ok(STAGED_PAYLOADS
+        .lock()
+        .map_err(|_| anyhow::anyhow!("staged payloads poisoned"))?
+        .remove(digest))
+}
+
 /// Whether `directory` holds a plain index (the engine's format check), as
 /// opposed to the 1.1 SQLite store that used the same file name.
 pub fn is_plain_index(directory: &Path) -> bool {
@@ -321,7 +349,9 @@ impl PlainRead {
             }
         }
     }
-    /// The batch form of a stored file's extraction.
+    /// The batch form of a stored file's extraction: the payload this index
+    /// stores under the record's digest, else one a producer staged for this
+    /// publication (`stage_payload`).
     pub fn captured(&self, compact: &Artifact) -> Result<CapturedPayload> {
         let digest: Sha256Digest = compact
             .retained
@@ -329,7 +359,11 @@ impl PlainRead {
             .context("stored record has no extraction reference")?
             .object
             .parse()?;
-        CapturedPayload::from_stored(compact, self.reader.payload(&digest)?)
+        let raw = match self.reader.payload(&digest) {
+            Ok(raw) => raw,
+            Err(stored) => take_staged_payload(&digest)?.ok_or(stored)?,
+        };
+        CapturedPayload::from_stored(compact, raw)
     }
 }
 

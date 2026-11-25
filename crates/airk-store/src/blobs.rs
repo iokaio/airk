@@ -999,6 +999,15 @@ impl FileStore {
         mode: airk_core::compression::CompressionMode,
     ) -> Result<Artifact> {
         let _stage = airk_core::stage_timing::scope("blob.retain");
+        if crate::current::plain_writer::is_plain_index(self.directory()) {
+            // The plain index writes payloads in its batch: stage this one
+            // for the next publication instead of writing an object file.
+            payload.validate()?;
+            let (compact, _) =
+                crate::current::plain_writer::CapturedPayload::capture(artifact, payload, profile)?;
+            crate::current::plain_writer::stage_payload(serde_json::to_vec(payload)?)?;
+            return Ok(compact);
+        }
         let bind_stage = airk_core::stage_timing::scope("blob.retain.bind_check");
         payload.validate()?;
         profile.identity()?;
@@ -1371,6 +1380,25 @@ impl FileStore {
                 && entry.retained.as_ref().is_some_and(|r| r.raw_source),
             "retained source unavailable or oversized"
         );
+        if crate::current::plain_writer::is_plain_index(self.directory()) {
+            // Q5: the record must name the stored file's source; a UTF-8
+            // source (the payload text) is also hashed and observed.
+            let row = crate::index::IndexReader::open(self.directory())?
+                .file(&entry.path)?
+                .with_context(|| format!("indexed path {:?} is not in the index", entry.path))?;
+            ensure!(
+                row.source_hash.to_string() == entry.content_hash,
+                "indexed record of {:?} differs from its stored source hash",
+                entry.path
+            );
+            if entry.extraction_method == "utf8" {
+                let bytes = self.read_retained_source(entry)?;
+                if let Some(observer) = observer.as_mut() {
+                    observer(&bytes)?;
+                }
+            }
+            return Ok(());
+        }
         if let Some(encoding) = entry
             .retained
             .as_ref()
