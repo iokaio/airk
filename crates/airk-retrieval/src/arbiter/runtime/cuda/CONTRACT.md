@@ -792,6 +792,31 @@ and changes with it (LF SHA-256
 working tree at 04:01 UTC). That change is allowed in the private evaluation
 build and needs a recorded decision before any product use.
 
+### Private Protected MHA loop calibration
+
+The ignored Windows same-install fixture can replace the single calibration
+asset of an exact reviewed, zero-rule Compact Protected MHA base with fitted
+native loop-card rules. The raw descriptor, base snapshot, replacement set,
+pass-1 graph review, and adapter are pinned independently. The review is
+verified against the original base. At open, the protected route rechecks
+the calibration-only relation against that base and still verifies the live
+graph and its reviewed placement policy. The recipe accepts only its
+internal graph verification. No graph bytes are supplied by the overlay.
+Protected QKV and ordinary product admission keep their existing checks.
+
+The fixture takes an absolute descriptor path through
+`AIRK_ARBITER_EVALUATION_LOOP_CALIBRATION_OVERLAY` and its raw SHA-256 through
+`AIRK_ARBITER_EVALUATION_LOOP_CALIBRATION_OVERLAY_SHA256`. Stage it in a
+private artifacts folder outside index, data, control, and state roots,
+with the exact replacement set in the sibling `loop-calibration.json`. The
+descriptor has schema `airk.private.cuda-loop-calibration-overlay/1` and the
+fields `base_profile_sha256`, `base_manifest`, `calibration_sha256`,
+`review_sha256`, `pass1_profile_sha256`, and the 16-byte `adapter` array.
+The fixture must use its default calibrated mode, with the private
+decision-mode environment override absent. All standard roster and review
+pins still apply. Use the new manifest from the private overlay receipt
+and native Ready for stage selection. The original assets stay read-only.
+
 ## Private fixed-graph Compact FP16 T32 scoring
 
 The Windows x64 test-support profiled open requires the exact unqualified

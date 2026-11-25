@@ -171,6 +171,8 @@ def main(argv: list[str] | None = None) -> int:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--sessions", type=Path, help="series folder under R/sessions")
     mode.add_argument("--canonical", metavar="PATH", choices=sorted(common.PATH_TOOLS))
+    parser.add_argument("--session-path", choices=sorted(common.ANSWER_PATHS),
+                        help="restrict --sessions to a recorded Answer configuration")
     parser.add_argument("--all-calls", action="store_true")
     parser.add_argument("--answer-defaults")
     parser.add_argument("--repos", default=",".join(common.REPOS))
@@ -178,6 +180,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--call-timeout", type=float, default=300.0)
     parser.add_argument("--accept-queryable", action="store_true", help="pilot only (see common.load_handle)")
     args = parser.parse_args(argv)
+    if args.session_path and args.sessions is None:
+        parser.error("--session-path requires --sessions")
     handle = common.load_handle(args.handle, accept_queryable=args.accept_queryable)
     defaults = json.loads(args.answer_defaults) if args.answer_defaults else None
     repos, slots = args.repos.split(","), args.slots.split(",")
@@ -193,6 +197,8 @@ def main(argv: list[str] | None = None) -> int:
             scenario = scenarios.get(record.get("scenario_id"))
             if scenario is None or record.get("path") not in common.ANSWER_PATHS or record.get("status") != "complete":
                 continue
+            if args.session_path and record["path"] != args.session_path:
+                continue
             name = f"{record_path.parent.parent.name}/{record_path.parent.name}"
             entries.append(replay_session(record_path.parent, scenario, handle, args.out / name,
                                           all_calls=args.all_calls, answer_defaults=defaults,
@@ -205,6 +211,9 @@ def main(argv: list[str] | None = None) -> int:
                   [c for e in entries for c in (e.get("calls") or [e.get("call")]) if c]),
               "mode": "canonical" if args.canonical else "sessions",
               "entries": entries}
+    if args.session_path:
+        common.require(bool(entries), "no completed recorded sessions matched --session-path")
+        report["session_path"] = args.session_path
     common.write_json(args.out / "replay.json", report)
     for entry in entries:
         cov = entry["coverage"]

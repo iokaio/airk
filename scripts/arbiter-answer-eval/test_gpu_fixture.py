@@ -78,6 +78,18 @@ class MathEnvironmentTests(unittest.TestCase):
         self.assertEqual(len(gf.math_problems(dict(good, AIRK_ARBITER_EVALUATION_DECISION_MODE="calibrated"))), 1)
 
 
+class CardCaptureEnvironmentTests(unittest.TestCase):
+    def test_capture_is_opt_in_for_the_observed_cuda_pair(self):
+        self.assertEqual(gf.card_capture_environment(False, gf.PAIR, True), {})
+        self.assertEqual(gf.card_capture_environment(True, gf.PAIR, True),
+                         {"AIRK_ARBITER_EVALUATION_CARD_CAPTURE": "true"})
+
+    def test_capture_refuses_an_unobserved_or_non_pair_lifetime(self):
+        for model, observed in ((gf.PAIR, False), ("compact", True)):
+            with self.subTest(model=model, observed=observed), self.assertRaises(ValueError):
+                gf.card_capture_environment(True, model, observed)
+
+
 class ChangeSetEnvironmentTests(unittest.TestCase):
     def test_change_set_cuda_variables_are_pinned_and_seeding_is_fresh_only(self):
         with tempfile.TemporaryDirectory() as folder:

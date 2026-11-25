@@ -1,4 +1,48 @@
 # Context trainer, gate 1: oracle leverage collector
+## Verify an Answer V3 development card capture
+
+`verify_card_capture.py` checks private native score custody for one
+closed Windows CUDA same-install development fixture. It does not run
+an inference, replay, fitter, or grader. Use a checked same-human shell.
+Audit the work directory and each file's owner before obtaining the pins.
+Pass the same expected owner SID that was verified against the host session.
+
+```powershell
+python -I -B scripts/arbiter/training/context_answer_eval_r1/verify_card_capture.py
+    --work <native-work-directory> --owner-sid <verified-Windows-SID>
+    --capture-sha256 <development-card-calls.jsonl>
+    --closure-sha256 <development-card-calls.closed.json>
+    --ready-sha256 <ready.json> --closed-sha256 <closed.json>
+    --journal-sha256 <composed-observer.jsonl>
+    --journal-closure-sha256 <composed-observer.closed.json>
+```
+
+Run the example as one shell command and replace each receipt name in
+angle brackets with its exact SHA-256. All six files must be direct
+children of the supplied work directory inside `artifacts/`. Pins
+authenticate exact input bytes against the checked custody that supplied
+them. The native Ready and close receipts must share the service instance
+and control root, and prove shutdown and lease reacquisition. Both recorder
+closures must account for all bytes and records without loss. The card
+capture closure also binds its stream by native SHA-256.
+
+The verifier checks the recorded order of card segments and advice,
+request-attempt and slot uniqueness, and exact native f32 score bits.
+Every captured scored call must consume a distinct native dispatch with the
+same profile, task, complete scope, input digest, token count, timings and
+score bits. The journal must witness admission, score return, job settlement
+and profile and charge release for matched calls. If the card capture missed
+its compiler callback, the journal can witness that callback's compiled input.
+Unmatched native card returns may be undelivered or late and remain visible
+as a count. Captured refusals remain in the accounting.
+
+The JSON report contains input hashes and aggregate counts by task and
+profile. It establishes native execution custody for the retained capture.
+Delivered Answer decisions and coverage require separate checks against the
+replies. Keep the source receipts and development-only corpus private.
+
+Run the in-memory regression checks with
+`python -I -B scripts/arbiter/training/context_answer_eval_r1/test_verify_card_capture.py`.
 
 Evaluation tooling of the AIRK Answer evaluation (plan `docs/arbiter/final-plan-fp16.md`,
 sections 5.2 and 5.4), never product. It measures how much the Context action could change

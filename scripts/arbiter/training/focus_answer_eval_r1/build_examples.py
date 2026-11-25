@@ -27,6 +27,7 @@ from pathlib import Path, PurePosixPath
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+import corpus_admission as admission  # noqa: E402
 import focus_text as ft  # noqa: E402
 
 SCHEMA = "airk.private.focus-answer-eval-examples/1"
@@ -122,33 +123,66 @@ class Bm25:
 class Repository:
     """Read-only text access to one repository through the miner's git plumbing."""
 
-    def __init__(self, miner, name: str, path: Path, snapshot: str):
+    def __init__(self, miner, name: str, path: Path, snapshot: str, *, protected=None):
         self.miner, self.name, self.snapshot = miner, name, snapshot
-        self.git = miner.Git(path)
+        self.protected = protected
+        self.git = miner.Git(path, l7=True) if protected is not None else miner.Git(path)
         self.cache = {}
+        self.snapshot_paths = None
 
     def readable(self, path: str) -> bool:
+        if self.protected is not None and (not self.miner.l7_policy.safe_relative_path(path) or self.protected(path)):
+            return False
         if PurePosixPath(path).name.lower() in NEVER_READ:
             return False
         if self.miner.path_exclusion(self.name, path) is not None:
             return False
         return PurePosixPath(path.lower()).suffix in CODE_EXT | DOC_EXT
 
+    def regular_paths(self, commit: str, *selectors: str) -> set[str]:
+        if not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", commit):
+            raise ValueError("Focus source read requires an exact Git commit")
+        tree = self.git.run("ls-tree", "-r", "--full-tree", "-z", commit, "--", *selectors).split("\0")
+        if tree[-1]:
+            raise ValueError("malformed Focus Git tree listing")
+        paths = set()
+        for row in tree[:-1]:
+            metadata, separator, path = row.partition("\t")
+            fields = metadata.split()
+            if not separator or len(fields) != 3:
+                raise ValueError("malformed Focus Git tree row")
+            mode, kind, _oid = fields
+            if mode in self.miner.REGULAR_MODES and kind == "blob" and self.readable(path):
+                paths.add(path)
+        return paths
+
     def lines(self, commit: str, path: str):
         key = (commit, path)
         if key not in self.cache:
             text = None
             if self.readable(path):
-                text = self.miner.text_of(self.git.blob(commit, path))
+                if self.protected is None:
+                    allowed = True
+                elif commit == self.snapshot and self.snapshot_paths is not None:
+                    allowed = path in self.snapshot_paths
+                else:
+                    allowed = path in self.regular_paths(commit, path)
+                if allowed:
+                    text = self.miner.text_of(self.git.blob(commit, path))
             self.cache[key] = None if text is None else text.replace("\r\n", "\n").split("\n")
             if len(self.cache) > 4096:
                 self.cache.pop(next(iter(self.cache)))
         return self.cache[key]
 
     def snapshot_windows(self):
-        listing = self.git.run("ls-tree", "-r", "--name-only", self.snapshot)
+        if self.protected is None:
+            listing = self.git.run("ls-tree", "-r", "--name-only", self.snapshot)
+            paths = [path for path in listing.splitlines() if path and self.readable(path)]
+        else:
+            self.snapshot_paths = self.regular_paths(self.snapshot)
+            paths = self.snapshot_paths
         windows = []
-        for path in sorted(p for p in listing.splitlines() if p and self.readable(p)):
+        for path in sorted(paths):
             lines = self.lines(self.snapshot, path)
             if not lines:
                 continue
@@ -299,15 +333,16 @@ def sample_eval(pairs, total):
     return [p for k in ("commit", "doc", "test") for p in by_kind[k][: share.get(k, 0)]]
 
 
-def replay_rows(builder, execution_root: Path, pins):
+def replay_rows(builder, execution_root: Path, pins, *, admitted=None):
     """Pilot replay: 400 judged code TRAIN rows + 45 QASPER + 45 TechQA (training), 85 DEV (eval)."""
-    census_path = execution_root / "f2-native-census-actual-plan-r1/execution/native-census.json"
-    roster_path = execution_root / "f2-existing-pairs-closure-r1/all-original1955-roster.json"
-    techqa_path = execution_root / "f2-existing-replay-candidates-r1/techqa-software-document-fixed45.json"
-    for p in (census_path, roster_path, techqa_path):
-        pins[str(p)] = file_sha(p)
-    census = json.loads(census_path.read_bytes())["census"]["rows"]
-    roster = {r["id"]: r for r in json.loads(roster_path.read_bytes())}
+    if admitted is None:
+        admitted = {}
+        for name, relative in admission.REPLAY_FILES.items():
+            path = execution_root / relative
+            pins[str(path)] = file_sha(path)
+            admitted[name] = path.read_bytes()
+    census = json.loads(admitted["census"])["census"]["rows"]
+    roster = {r["id"]: r for r in json.loads(admitted["roster"])}
     train, evaluation = [], []
     for record in census:
         pair = record["pair"]
@@ -330,7 +365,7 @@ def replay_rows(builder, execution_root: Path, pins):
                                 "set": purpose, "role": "replay"})
         if row:
             target.append(row)
-    for draw in json.loads(techqa_path.read_bytes()):
+    for draw in json.loads(admitted["techqa"]):
         source = Path(draw["source_pin"]["path"])
         raw = source.read_bytes()
         if hashlib.sha256(raw).hexdigest() != draw["source_pin"]["sha256"]:
@@ -391,26 +426,45 @@ def main(argv=None) -> int:
     p.add_argument("--docs", type=int, default=500)
     p.add_argument("--tests", type=int, default=500)
     p.add_argument("--eval-pairs", type=int, default=150, help="pairs per repository per evaluation set")
+    p.add_argument("--protected-paths", type=Path, help="enable the pinned two-repository L7 corpus")
+    p.add_argument("--protected-paths-sha256")
+    p.add_argument("--pairs-stats-sha256")
+    p.add_argument("--replay-sha256", action="append", default=[], help="pinned census=SHA, roster=SHA, techqa=SHA")
     args = p.parse_args(argv)
+    strict = any((args.protected_paths, args.protected_paths_sha256, args.pairs_stats_sha256, args.replay_sha256))
+    if strict and not all((args.protected_paths, args.protected_paths_sha256, args.pairs_stats_sha256, args.replay_sha256)):
+        p.error("L7 requires the protected paths, its SHA-256, the pair stats SHA-256, and all replay pins")
     out = args.output.resolve()
     if out.exists() or "artifacts" not in out.parts:
         raise SystemExit("build_examples: output must be a fresh folder under artifacts")
     miner, miner_path = load_miner()
     stats_path = args.pairs / "stats.json"
     pins = {str(Path(__file__).resolve()): file_sha(Path(__file__)), str(HERE / "focus_text.py"): file_sha(HERE / "focus_text.py"),
-            str(miner_path): file_sha(miner_path), str(stats_path.resolve()): file_sha(stats_path),
-            str(args.tokenizer.resolve()): file_sha(args.tokenizer)}
-    mined = json.loads(stats_path.read_bytes())
+            str(miner_path): file_sha(miner_path), str(args.tokenizer.resolve()): file_sha(args.tokenizer)}
+    protected, local_pairs, replay = {}, {}, None
+    if strict:
+        helper = HERE / "corpus_admission.py"
+        pins[str(helper)] = file_sha(helper)
+        repos, mined, protected, local_pairs = admission.admit_local(
+            args.pairs, args.repo, args.pairs_stats_sha256, args.protected_paths, args.protected_paths_sha256, pins)
+        replay = admission.admit_replay(args.execution_root.resolve(), args.replay_sha256, pins)
+        repo_specs = list(repos.items())
+    else:
+        pins[str(stats_path.resolve())] = file_sha(stats_path)
+        mined = json.loads(stats_path.read_bytes())
+        repo_specs = [(name, location) for name, _, location in (spec.partition("=") for spec in args.repo)]
     tokenizer = HfTokenizer(args.tokenizer)
     builder = Builder(tokenizer, args.width, args.instruction)
     train_rows, eval_rows, counts = [], [], collections.Counter()
-    for spec in args.repo:
-        name, _, location = spec.partition("=")
-        jsonl = args.pairs / f"{name}.jsonl"
-        pins[str(jsonl.resolve())] = file_sha(jsonl)
-        pairs = [json.loads(line) for line in jsonl.read_text(encoding="utf-8").splitlines() if line.strip()]
+    for name, location in repo_specs:
+        if strict:
+            pairs = local_pairs[name]
+        else:
+            jsonl = args.pairs / f"{name}.jsonl"
+            pins[str(jsonl.resolve())] = file_sha(jsonl)
+            pairs = [json.loads(line) for line in jsonl.read_text(encoding="utf-8").splitlines() if line.strip()]
         snapshot = mined["mine"]["repos"][name]["snapshot_commit"]
-        repo = {"name": name, "repo": Repository(miner, name, Path(location), snapshot)}
+        repo = {"name": name, "repo": Repository(miner, name, Path(location), snapshot, protected=protected.get(name))}
         all_paths = {e["path"] for pair in pairs for e in pair["evidence"]}
         held = {path for path in all_paths if path_heldout(name, path)}
         touches = lambda pair: any(e["path"] in held for e in pair["evidence"])
@@ -445,7 +499,9 @@ def main(argv=None) -> int:
                     counts[f"{name}:{purpose}:{'pos' if row['label'] else 'neg'}"] += 1
         assert all(x["id"] in chosen_ids for x in train_eval)
         repo["repo"].git.close()
-    replay_train, replay_eval = replay_rows(builder, args.execution_root.resolve(), pins)
+    if strict and any(counts[f"{name}:train:pos"] == 0 for name in admission.REPOSITORIES):
+        raise ValueError("L7 needs admitted training positives from both repositories")
+    replay_train, replay_eval = replay_rows(builder, args.execution_root.resolve(), pins, admitted=replay)
     counts["replay_train_rows"] = len(replay_train)
     counts["replay_dev_rows"] = len(replay_eval)
     eval_rows.extend(replay_eval)

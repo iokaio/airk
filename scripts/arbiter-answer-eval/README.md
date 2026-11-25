@@ -221,6 +221,12 @@ python -I -B scripts/arbiter-answer-eval/leak_check.py --handle R/fixture-<serie
     --out R/fixture-<series>-<arm>/leak-check.json
 ```
 
+Use `--session-path compact` to restrict a recorded-session replay to
+the combined Focus and Arbiter path. Combine it with
+`--slots A1,A2,A3 --all-calls` to examine later Answer calls in the
+architecture cases. The replay retains recorded arguments and reports
+whether each reply matches its recorded evidence.
+
 ### Initial Search depth for Answer change set 1
 
 Use a retained L7 pass and a settled, pinned live Search control with Focus

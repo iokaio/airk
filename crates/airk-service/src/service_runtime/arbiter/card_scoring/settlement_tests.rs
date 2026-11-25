@@ -207,11 +207,96 @@ fn settle(
                 max_sub_needs,
                 reserved: 8_000,
                 deadline: Instant::now() + Duration::from_secs(30),
+                #[cfg(feature = "test-support")]
+                score_evidence: None,
             },
             advice,
             pending,
         ))
 }
+#[cfg(feature = "test-support")]
+#[tokio::test]
+async fn private_card_capture_preserves_roster_order_advice_and_native_score_bits() -> Result<()> {
+    use crate::service_runtime::arbiter::card_capture::{Observer, Record, ScoreEvidence};
+
+    let segments = [coverage(3, 1), coverage(8, 2)];
+    let calibration = calibration(Task::ContextCoverage, rule(CardClass::Covered, 0.5))?;
+    let (ledger, ticket) = reserved(1)?;
+    let mut advice = advice(Task::ContextCoverage, 1, &segments);
+    let mut score_evidence = ScoreEvidence::default();
+    settle_card_call(
+        CardCall {
+            ledger: &ledger,
+            ticket,
+            stage: LoopStage::Coverage,
+            segments: &segments,
+            calibration: &calibration,
+            mode: DecisionMode::Calibrated,
+            max_sub_needs: 4,
+            reserved: 8_000,
+            deadline: Instant::now() + Duration::from_secs(30),
+            score_evidence: Some(&mut score_evidence),
+        },
+        &mut advice,
+        Some(Ok(completed(3_000, vec![0.0, -0.0, 3.0, 1.0]))),
+    )
+    .await?;
+    advice.validate()?;
+    assert!(matches!(
+        advice.segments[0].outcome,
+        Outcome::Abstained { .. }
+    ));
+    assert!(matches!(
+        advice.segments[1].outcome,
+        Outcome::Accepted { .. }
+    ));
+
+    let (observer, mut receiver) = Observer::channel();
+    observer.offer_with(|| {
+        Record::settled(
+            attempt().request_id,
+            4,
+            &segments,
+            &advice,
+            DecisionMode::Calibrated,
+            score_evidence,
+        )
+    });
+    let captured = serde_json::to_value(receiver.try_recv()?)?;
+    assert_eq!(
+        captured["request_id"],
+        serde_json::to_value(attempt().request_id)?
+    );
+    assert_eq!(captured["segments"], serde_json::to_value(&segments)?);
+    assert_eq!(captured["advice"], serde_json::to_value(&advice)?);
+    assert_eq!(captured["decision_mode"], "calibrated");
+    assert_eq!(
+        captured["raw_score_bits"],
+        serde_json::json!([[0, 0x8000_0000u32], [0x4040_0000u32, 0x3f80_0000u32]])
+    );
+    let digest = serde_json::to_value(Sha256Digest::from_bytes([20; 32]))?;
+    assert_eq!(captured["score_evidence"]["compiled_input_digest"], digest);
+    assert_eq!(captured["score_evidence"]["scored_input_digest"], digest);
+    assert_eq!(observer.dropped(), 0);
+
+    observer.offer_with(|| {
+        Record::settled(
+            attempt().request_id,
+            4,
+            &segments,
+            &advice,
+            DecisionMode::Calibrated,
+            ScoreEvidence {
+                compiled_input_digest: Some(Sha256Digest::from_bytes([20; 32])),
+                scored_input_digest: Some(Sha256Digest::from_bytes([21; 32])),
+            },
+        )
+    });
+    assert_eq!(observer.dropped(), 1);
+    assert!(receiver.try_recv().is_err());
+    Ok(())
+}
+
 /// A lane job that compiled `tokens` and completed with `scores`.
 fn completed(tokens: usize, scores: Vec<f32>) -> PendingScore {
     let (compiled_tx, compiled) = tokio::sync::oneshot::channel();

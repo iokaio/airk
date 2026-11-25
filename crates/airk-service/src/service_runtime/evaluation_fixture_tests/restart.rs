@@ -306,15 +306,26 @@ fn work_accepted_between_preflight_and_actual_startup_is_refused() -> Result<()>
     );
     Ok(())
 }
-pub(super) fn from_env(expected: Sha256Digest, prepared: &[Prepared]) -> Result<Option<Saved>> {
+fn env_request() -> Result<Option<Vec<u8>>> {
     let Some(path) = std::env::var_os("AIRK_ARBITER_EVALUATION_RESTART") else {
         return Ok(None);
     };
     let digest: Sha256Digest = std::env::var("AIRK_ARBITER_EVALUATION_RESTART_SHA256")?.parse()?;
-    let request: Request = serde_json::from_slice(&read(&Pinned {
+    read(&Pinned {
         path: PathBuf::from(path),
         sha256: digest,
-    })?)?;
+    })
+    .map(Some)
+}
+
+pub(super) fn from_env(expected: Sha256Digest, prepared: &[Prepared]) -> Result<Option<Saved>> {
+    let Some(raw) = env_request()? else {
+        return Ok(None);
+    };
+    cpu_restart(&serde_json::from_slice(&raw)?, expected, prepared).map(Some)
+}
+
+fn cpu_restart(request: &Request, expected: Sha256Digest, prepared: &[Prepared]) -> Result<Saved> {
     let ready: Ready = serde_json::from_slice(&read(&request.ready)?)?;
     let closed: Closed = serde_json::from_slice(&read(&request.closed)?)?;
     let status: airk_core::arbiter::Status = serde_json::from_slice(&read(&request.status)?)?;
@@ -347,19 +358,500 @@ pub(super) fn from_env(expected: Sha256Digest, prepared: &[Prepared]) -> Result<
                     && old.model == current.profile.model
                     && old.profile_sha256 == current.sha256)
             && (settled(&ready, &closed, &status)
-                || unidle_exception(&request, &ready, &closed, &status)?),
+                || unidle_exception(request, &ready, &closed, &status)?),
         "Restart closure, profiles or saved configuration differ"
     );
     // Actual exclusion is acquired again by normal serve_owned. No caller proof replaces it.
     let lease = airk_store::service::ServiceLease::acquire(&ready.control_root)?;
     EvaluationOwner::verify_restart_settled(&lease)?;
     drop(lease);
-    Ok(Some(Saved {
+    Ok(Saved {
         control: ready.control_root,
         configuration: status.configuration,
         prior_instance: ready.health.instance,
-    }))
+    })
 }
+
+#[cfg(all(windows, target_arch = "x86_64", feature = "gpu-cuda"))]
+mod cuda_restart {
+    use super::*;
+    use airk_core::{
+        arbiter::{Availability, Configuration, Stage, StageStatus, Status, device::GpuBackend},
+        catalog_management::{CatalogEntity, CatalogItem},
+        identity::Incarnation,
+        index_catalog::SourceImportState,
+    };
+    use airk_store::service::{ServiceLease, registry::ServiceRegistry};
+
+    const MAX_SUCCESSORS: usize = 16;
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct CudaRequest {
+        ready: Pinned,
+        closed: Pinned,
+        status: Pinned,
+        cuda_lineage: Vec<Successor>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Successor {
+        ready: Pinned,
+        closed: Pinned,
+        restart_owner: Pinned,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum SameInstallRequest {
+        Cuda(CudaRequest),
+        Cpu(Request),
+    }
+
+    pub(in crate::service_runtime::evaluation_fixture_tests) fn from_same_install_env(
+        expected: Sha256Digest,
+        cpu: &[Prepared],
+        cuda: &[Prepared],
+    ) -> Result<(Option<Saved>, bool)> {
+        let Some(raw) = env_request()? else {
+            return Ok((None, false));
+        };
+        match serde_json::from_slice(&raw)? {
+            SameInstallRequest::Cpu(request) => {
+                Ok((Some(cpu_restart(&request, expected, cpu)?), false))
+            }
+            SameInstallRequest::Cuda(request) => {
+                Ok((Some(checked_restart(&request, expected, cpu, cuda)?), true))
+            }
+        }
+    }
+
+    fn read_lifetime(ready_pin: &Pinned, closed_pin: &Pinned) -> Result<(PathBuf, Ready, Closed)> {
+        let work = ready_pin
+            .path
+            .parent()
+            .context("CUDA Ready parent missing")?
+            .canonicalize()?;
+        ensure!(
+            ready_pin.path.file_name() == Some(OsStr::new("ready.json"))
+                && closed_pin.path.canonicalize()? == work.join("closed.json").canonicalize()?,
+            "CUDA predecessor Ready and Closed must come from the same lifetime"
+        );
+        let ready: Ready = serde_json::from_slice(&read(ready_pin)?)?;
+        let closed: Closed = serde_json::from_slice(&read(closed_pin)?)?;
+        ensure!(
+            ready.schema == "airk.private-arbiter-fixture/1"
+                && ready.evaluation
+                && !ready.release_qualified
+                && ready.health.process_id > 0
+                && closed_matches(ready.health.instance, &ready.control_root, &closed),
+            "CUDA predecessor did not prove complete native shutdown and lease reacquisition"
+        );
+        Ok((work, ready, closed))
+    }
+
+    fn read_roster(
+        work: &Path,
+        ready: &Ready,
+        expected: Sha256Digest,
+        cpu: &[Prepared],
+        historical_cuda: &mut BTreeMap<Sha256Digest, (Profile, Sha256Digest)>,
+    ) -> Result<bool> {
+        ensure!(
+            ready.inputs_sha256 == expected
+                && (cpu.len()..=cpu.len() + 3).contains(&ready.profiles.len())
+                && ready.profiles.iter().zip(cpu).all(|(prior, current)| {
+                    prior.model == current.profile.model
+                        && prior.manifest == current.profile.manifest
+                        && prior.profile_sha256 == current.sha256
+                }),
+            "CUDA predecessor CPU identity or profile roster length differs"
+        );
+        let artifacts = artifact_root()?;
+        let mut models = BTreeSet::new();
+        for (index, binding) in ready.profiles.iter().enumerate().skip(cpu.len()) {
+            let filename = format!("profile-{index}.json");
+            ensure!(
+                binding.snapshot == filename,
+                "CUDA predecessor profile snapshot name differs"
+            );
+            let (_parent, mut file) = source_file(&work.join(filename), &artifacts)?;
+            let raw = bounded(&mut file)?;
+            ensure!(
+                sha(&raw) == binding.profile_sha256,
+                "CUDA predecessor profile snapshot hash differs"
+            );
+            let profile: Profile = serde_json::from_slice(&raw)?;
+            profile.validate()?;
+            ensure!(
+                profile.manifest == binding.manifest
+                    && profile.model == binding.model
+                    && profile.profile_id.starts_with("private-")
+                    && profile.qualification.is_none()
+                    && profile.qualified_targets.is_empty()
+                    && profile.downloads.is_empty()
+                    && profile
+                        .device_execution
+                        .as_ref()
+                        .is_some_and(|device| device.backend == GpuBackend::Cuda)
+                    && cpu.iter().any(|entry| entry.profile.model == profile.model)
+                    && cpu
+                        .iter()
+                        .all(|entry| entry.profile.manifest != profile.manifest)
+                    && models.insert(profile.model)
+                    && historical_cuda
+                        .get(&profile.manifest)
+                        .is_none_or(|(_, old)| *old == binding.profile_sha256),
+                "CUDA predecessor profile binding is malformed, duplicate or crossed"
+            );
+            historical_cuda.insert(profile.manifest, (profile, binding.profile_sha256));
+        }
+        Ok(!models.is_empty())
+    }
+
+    fn linked_configuration(
+        saved: &Saved,
+        prior_instance: Incarnation,
+        configuration: &Configuration,
+        minimum_revision: u64,
+    ) -> bool {
+        saved.prior_instance == prior_instance
+            && saved.configuration.installation == configuration.installation
+            && saved.configuration.catalog == configuration.catalog
+            && (minimum_revision..=configuration.revision).contains(&saved.configuration.revision)
+            && (saved.configuration.revision != configuration.revision
+                || saved.configuration == *configuration)
+    }
+
+    fn linked(
+        prior: &Ready,
+        successor: &Ready,
+        saved: &Saved,
+        configuration: &Configuration,
+        minimum_revision: u64,
+    ) -> bool {
+        let catalog = Some(configuration.catalog);
+        linked_configuration(
+            saved,
+            prior.health.instance,
+            configuration,
+            minimum_revision,
+        ) && prior.health.instance != successor.health.instance
+            && saved.control == successor.control_root
+            && prior.control_root == successor.control_root
+            && prior.health.user == successor.health.user
+            && successor.health.catalog_clock.map(|clock| clock.namespace) == catalog
+    }
+
+    fn disabled_idle(
+        stage: &airk_core::arbiter::StageConfiguration,
+        observed: &StageStatus,
+    ) -> bool {
+        !stage.enabled
+            && observed.availability == Availability::Disabled
+            && observed.active_profile.is_none()
+            && observed.queued == 0
+            && observed.running == 0
+    }
+
+    fn inert_successor(
+        selected: Sha256Digest,
+        stage: Stage,
+        old: &Profile,
+        old_sha: Sha256Digest,
+        current: impl Iterator<Item = (Sha256Digest, ModelChoice, bool, Sha256Digest)>,
+    ) -> bool {
+        if old.model.stage() != Some(stage) {
+            return false;
+        }
+        let mut supported = false;
+        for (manifest, model, same_task_policies, sha) in current {
+            if manifest == selected && sha != old_sha {
+                return false;
+            }
+            supported |= manifest == selected || (model == old.model && same_task_policies);
+        }
+        supported
+    }
+
+    fn profiles_compatible(
+        status: &Status,
+        cpu: &[Prepared],
+        cuda: &[Prepared],
+        historical: &BTreeMap<Sha256Digest, (Profile, Sha256Digest)>,
+    ) -> Result<()> {
+        let current = || cpu.iter().chain(cuda);
+        for (stage, observed) in [
+            (Stage::Focus, &status.focus),
+            (Stage::Context, &status.context),
+        ] {
+            let configuration = status.configuration.stage(stage);
+            ensure!(
+                disabled_idle(configuration, observed),
+                "CUDA predecessor stages must be disabled, inactive and idle"
+            );
+            let Some(selected) = configuration.selected_profile else {
+                continue;
+            };
+            if let Some((old, old_sha)) = historical.get(&selected) {
+                ensure!(
+                    inert_successor(
+                        selected,
+                        stage,
+                        old,
+                        *old_sha,
+                        current().map(|entry| (
+                            entry.profile.manifest,
+                            entry.profile.model,
+                            entry.profile.task_policies == old.task_policies,
+                            entry.sha256,
+                        )),
+                    ),
+                    "Inert CUDA selection has no authenticated compatible successor profile"
+                );
+            } else {
+                ensure!(
+                    cpu.iter().any(|entry| entry.profile.manifest == selected
+                        && entry.profile.model.stage() == Some(stage)),
+                    "CUDA predecessor selected an unknown or wrong-stage profile"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn checked_restart(
+        request: &CudaRequest,
+        expected: Sha256Digest,
+        cpu: &[Prepared],
+        cuda: &[Prepared],
+    ) -> Result<Saved> {
+        ensure!(
+            request.cuda_lineage.len() <= MAX_SUCCESSORS,
+            "CUDA restart lineage bound exceeded"
+        );
+        let (mut work, mut ready, mut closed) = read_lifetime(&request.ready, &request.closed)?;
+        let root = ready.control_root.canonicalize()?;
+        ensure!(
+            ready.control_root.is_absolute()
+                && root == work.join("control").canonicalize()?
+                && ready.health.user == crate::local_ipc::current_user()?,
+            "CUDA restart requires the original private control root and stable owner"
+        );
+        let status: Status = serde_json::from_slice(&read(&request.status)?)?;
+        status.validate()?;
+        let configuration = &status.configuration;
+        ensure!(
+            ready
+                .health
+                .catalog_clock
+                .is_some_and(|clock| clock.namespace == configuration.catalog),
+            "CUDA restart origin catalog differs"
+        );
+        let mut historical = BTreeMap::new();
+        let mut has_cuda = read_roster(&work, &ready, expected, cpu, &mut historical)?;
+        let mut instances = BTreeSet::from([ready.health.instance]);
+        let mut revision = 1;
+        for link in &request.cuda_lineage {
+            let (next_work, next_ready, next_closed) = read_lifetime(&link.ready, &link.closed)?;
+            ensure!(
+                link.restart_owner.path.canonicalize()?
+                    == next_work.join("restart-owner.json").canonicalize()?
+                    && next_ready.control_root.canonicalize()? == root
+                    && instances.insert(next_ready.health.instance),
+                "CUDA successor restart ownership is missing, crossed or repeated"
+            );
+            let saved: Saved = serde_json::from_slice(&read(&link.restart_owner)?)?;
+            saved.configuration.validate()?;
+            ensure!(
+                linked(&ready, &next_ready, &saved, configuration, revision),
+                "CUDA restart lineage is not an exact successor chain"
+            );
+            revision = saved.configuration.revision;
+            has_cuda = read_roster(&next_work, &next_ready, expected, cpu, &mut historical)?;
+            (work, ready, closed) = (next_work, next_ready, next_closed);
+        }
+        let commands = work
+            .parent()
+            .context("CUDA predecessor lifetime missing")?
+            .join("commands");
+        let final_status = request.status.path.canonicalize()?;
+        ensure!(
+            has_cuda
+                && final_status.parent() == Some(commands.canonicalize()?.as_path())
+                && final_status
+                    .file_name()
+                    .and_then(OsStr::to_str)
+                    .is_some_and(|name| name.ends_with("-final-status.stdout"))
+                && settled(&ready, &closed, &status),
+            "CUDA restart requires the actual immediate predecessor final status and idle closure"
+        );
+        profiles_compatible(&status, cpu, cuda, &historical)?;
+        let lease = Arc::new(ServiceLease::acquire(&ready.control_root)?);
+        EvaluationOwner::verify_restart_settled(&lease)?;
+        verify_cuda_enrollments(&lease, configuration)?;
+        let store = airk_store::service::arbiter::ConfigurationStore::open(
+            lease,
+            configuration.installation,
+            configuration.catalog,
+        )?;
+        ensure!(
+            store.load()? == *configuration,
+            "CUDA restart saved configuration has changed on disk"
+        );
+        Ok(Saved {
+            control: ready.control_root,
+            configuration: status.configuration,
+            prior_instance: ready.health.instance,
+        })
+    }
+
+    #[test]
+    fn cuda_restart_inert_selection_requires_compatible_successor_and_no_alias() -> Result<()> {
+        let old = airk_retrieval::arbiter::runtime::catalog_profiles()?
+            .into_iter()
+            .find(|profile| profile.model == ModelChoice::ContextQwenCompact)
+            .context("test Compact profile missing")?;
+        let sha = Sha256Digest::from_bytes([10; 32]);
+        let other = Sha256Digest::from_bytes([11; 32]);
+        let matches = (other, old.model, true, other);
+        let check = |stage, options: Vec<_>| {
+            inert_successor(old.manifest, stage, &old, sha, options.into_iter())
+        };
+        assert!(check(Stage::Context, vec![matches]));
+        assert!(!check(Stage::Focus, vec![matches]));
+        assert!(!check(
+            Stage::Context,
+            vec![(other, old.model, false, other)]
+        ));
+        assert!(!check(
+            Stage::Context,
+            vec![(other, ModelChoice::FocusQwenReranker06B, true, other)]
+        ));
+        assert!(!check(
+            Stage::Context,
+            vec![matches, (old.manifest, old.model, true, other)]
+        ));
+        assert!(check(
+            Stage::Context,
+            vec![(old.manifest, old.model, true, sha)]
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn cuda_restart_refuses_draining_active_and_enabled_predecessors() {
+        let mut stage = airk_core::arbiter::StageConfiguration::default();
+        let mut observed = StageStatus {
+            selected_profile: None,
+            active_profile: None,
+            availability: Availability::Disabled,
+            reason: "test".into(),
+            queued: 0,
+            running: 0,
+            profiles: vec![],
+        };
+        assert!(disabled_idle(&stage, &observed));
+        observed.running = 1;
+        assert!(!disabled_idle(&stage, &observed));
+        observed.running = 0;
+        observed.availability = Availability::Draining;
+        assert!(!disabled_idle(&stage, &observed));
+        observed.availability = Availability::Disabled;
+        observed.active_profile = Some(Sha256Digest::from_bytes([3; 32]));
+        assert!(!disabled_idle(&stage, &observed));
+        observed.active_profile = None;
+        stage.enabled = true;
+        assert!(!disabled_idle(&stage, &observed));
+    }
+
+    #[test]
+    fn cuda_restart_refuses_crossed_successor_lineage_or_changed_same_revision() {
+        let prior = Incarnation::from_bytes([14; 16]);
+        let next = Incarnation::from_bytes([15; 16]);
+        let installation = Sha256Digest::from_bytes([16; 32]);
+        let mut current = Configuration::disabled(installation, prior);
+        current.revision = 4;
+        let mut saved = Saved {
+            control: "original-control".into(),
+            configuration: current.clone(),
+            prior_instance: prior,
+        };
+        assert!(linked_configuration(&saved, prior, &current, 3));
+        assert!(!linked_configuration(&saved, next, &current, 3));
+        saved.configuration.focus.selected_profile = Some(installation);
+        assert!(!linked_configuration(&saved, prior, &current, 3));
+        saved.configuration.revision = 3;
+        assert!(linked_configuration(&saved, prior, &current, 3));
+        assert!(!linked_configuration(&saved, prior, &current, 4));
+        saved.configuration.catalog = next;
+        assert!(!linked_configuration(&saved, prior, &current, 3));
+    }
+
+    #[test]
+    fn cuda_restart_requests_are_distinct_from_legacy_cpu_inputs() -> Result<()> {
+        let pin = serde_json::json!({"path":"private", "sha256":"1".repeat(64)});
+        let mut request = serde_json::json!({"ready":pin, "closed":pin, "status":pin});
+        assert!(matches!(
+            serde_json::from_value(request.clone())?,
+            SameInstallRequest::Cpu(_)
+        ));
+        request["cuda_lineage"] =
+            serde_json::json!([{"ready":pin, "closed":pin, "restart_owner":pin}]);
+        assert!(matches!(
+            serde_json::from_value(request.clone())?,
+            SameInstallRequest::Cuda(_)
+        ));
+        assert!(serde_json::from_value::<Request>(request.clone()).is_err());
+        request["cuda_lineage"][0]
+            .as_object_mut()
+            .context("successor")?
+            .remove("restart_owner");
+        assert!(serde_json::from_value::<SameInstallRequest>(request).is_err());
+        Ok(())
+    }
+
+    pub(in crate::service_runtime::evaluation_fixture_tests) fn verify_cuda_enrollments(
+        lease: &ServiceLease,
+        configuration: &Configuration,
+    ) -> Result<()> {
+        let mut registry = ServiceRegistry::open_saved(lease.root())?;
+        let catalog = registry
+            .catalog_state()?
+            .context("CUDA restart catalog missing")?;
+        let installation =
+            airk_endpoint::http_endpoint::installation_binding(lease.root(), catalog.namespace)?;
+        ensure!(
+            catalog.activated
+                && catalog.namespace == configuration.catalog
+                && installation.installation == configuration.installation,
+            "CUDA restart native installation or catalog changed"
+        );
+        for enrollment in configuration
+            .focus
+            .indexes
+            .iter()
+            .chain(&configuration.context.indexes)
+        {
+            let detail = registry.catalog_detail(
+                &CatalogEntity::Index {
+                    id: enrollment.index_id,
+                },
+                Some(catalog.revision),
+            )?;
+            ensure!(
+                matches!(detail.item, Some(CatalogItem::Index(index)) if !index.tombstone && index.source_import == SourceImportState::Complete),
+                "CUDA restart enrollment must name a live immutable index in the original catalog"
+            );
+        }
+        Ok(())
+    }
+}
+
+#[cfg(all(windows, target_arch = "x86_64", feature = "gpu-cuda"))]
+pub(super) use cuda_restart::{from_same_install_env, verify_cuda_enrollments};
+
 pub(super) fn matches_control(work: &Path, ready: &Ready) -> Result<bool> {
     if ready.control_root == work.join("control") {
         return Ok(true);

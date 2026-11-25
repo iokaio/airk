@@ -11,6 +11,8 @@
 
 use super::*;
 
+mod loop_overlay;
+
 const SEED_VARIABLE: &str = "AIRK_ARBITER_EVALUATION_CUDA_SEED_CPU";
 
 /// How a fresh installation treats the CPU roster. A restart never seeds.
@@ -191,6 +193,7 @@ fn cuda_graphs(
     artifacts: &Path,
     cpu: &[Prepared],
     cuda: &[Prepared],
+    overlay: Option<&loop_overlay::Bound>,
     expires: Instant,
 ) -> Result<Vec<PlannedEntry>> {
     use crate::service_runtime::arbiter::evaluation::PrivateGpuRoute;
@@ -205,6 +208,10 @@ fn cuda_graphs(
     let mut planned = Vec::new();
     match std::env::var_os("AIRK_ARBITER_EVALUATION_CUDA_REVIEWS") {
         None => {
+            ensure!(
+                overlay.is_none(),
+                "private CUDA calibration overlay requires a protected review"
+            );
             require_plan_shape(&models, None)?;
             ensure!(
                 context.len() <= 1 && focus.is_empty(),
@@ -237,15 +244,29 @@ fn cuda_graphs(
             let adapter: [u8; 16] =
                 serde_json::from_str(&std::env::var("AIRK_ARBITER_EVALUATION_CUDA_ADAPTER_UUID")?)?;
             for (review, entry) in reviews.iter().zip(&context) {
-                let input = Input::read_review(
+                let calibration =
+                    overlay.filter(|overlay| overlay.candidate == entry.profile.manifest);
+                let reviewed = calibration.map_or(&entry.profile, |overlay| &overlay.base);
+                let mut input = Input::read_review(
                     artifacts,
                     &review.path,
                     review.sha256,
                     review.profile_sha256,
-                    &entry.profile,
+                    reviewed,
                     adapter,
                     expires,
                 )?;
+                if let Some(overlay) = calibration {
+                    overlay.verify_review(
+                        artifacts,
+                        &review.path,
+                        review.sha256,
+                        review.profile_sha256,
+                        adapter,
+                    )?;
+                    input.manifest = overlay.candidate;
+                    input.graph = input.graph.with_calibration_base(overlay.base.clone());
+                }
                 planned.push(PlannedEntry {
                     manifest: input.manifest,
                     adapter: input.adapter,
@@ -481,7 +502,8 @@ async fn run(
             .context("private fixture work name missing")?,
     );
     let (inputs, mut prepared) = prepare(&input, expected)?;
-    let (cuda_inputs, cuda) = prepare_cuda(&cuda_input, cuda_expected)?;
+    let (cuda_inputs, mut cuda) = prepare_cuda(&cuda_input, cuda_expected)?;
+    let overlay = loop_overlay::Bound::from_env(&artifacts, &mut cuda)?;
     let cpu_facts = prepared
         .iter()
         .map(|entry| Facts::of(&entry.profile))
@@ -509,6 +531,7 @@ async fn run(
         &artifacts,
         &prepared,
         &cuda,
+        overlay.as_ref(),
         started + Duration::from_secs(seconds),
     )?;
     let parent_pin = OpenedDirectory::open(&parent)?;
@@ -516,8 +539,9 @@ async fn run(
         &parent_pin,
         work.file_name().context("private work name missing")?,
     )?;
-    // The CPU roster alone is the restart identity, exactly as for the CPU selector.
-    let restart = restart::from_env(expected, &prepared)?;
+    // CPU-only requests keep the original strict path. A CUDA predecessor
+    // uses a separate lineage proof and verifies every saved enrollment.
+    let (restart, cuda_restart) = restart::from_same_install_env(expected, &prepared, &cuda)?;
     let seed = cpu_seed(
         std::env::var(SEED_VARIABLE).ok().as_deref(),
         restart.is_some(),
@@ -556,6 +580,9 @@ async fn run(
             false,
         )?;
     }
+    if let Some(overlay) = &overlay {
+        write(&work, "loop-calibration-overlay.json", &overlay.receipt())?;
+    }
     write(&work, "context-request.json", &context_request)?;
     write(
         &work,
@@ -588,6 +615,8 @@ async fn run(
     let execution_observer = execution_recorder
         .as_ref()
         .map(|recorder| recorder.observer());
+    let mut card_recorder = super::super::card_capture::Recorder::from_env(&work)?;
+    let card_observer = card_recorder.as_ref().map(|recorder| recorder.observer());
     let mut warm_recorder = warm_journal::Recorder::from_env(&work)?;
     let warm_observer = warm_recorder.as_ref().map(|recorder| recorder.observer());
     let warm_observer_id = warm_recorder.as_ref().map(|recorder| recorder.id());
@@ -604,6 +633,9 @@ async fn run(
         let expected = saved.configuration.clone();
         Box::new(move |lease: &Arc<airk_store::service::ServiceLease>| {
             EvaluationOwner::verify_restart_settled(lease)?;
+            if cuda_restart {
+                restart::verify_cuda_enrollments(lease, &expected)?;
+            }
             let registry =
                 airk_store::service::registry::ServiceRegistry::open_saved(lease.root())?;
             let catalog = registry
@@ -711,6 +743,9 @@ async fn run(
         }
         if let Some(observer) = execution_observer {
             owner = owner.observe_execution(observer);
+        }
+        if let Some(observer) = card_observer {
+            owner = owner.observe_card_calls(observer)?;
         }
         if let Some(observer) = warm_observer {
             owner = owner.observe_warm(observer)?;
@@ -828,6 +863,9 @@ async fn run(
                     Err(failure) => Some(failure.into()),
                 }
             };
+            if let Some(recorder) = card_recorder.take() {
+                let _ = recorder.finish(false).await;
+            }
             if let Some(recorder) = execution_recorder.take() {
                 let _ = recorder.finish().await;
             }
@@ -875,6 +913,9 @@ async fn run(
             .await;
             let _ = (&mut service).await;
         }
+        if let Some(recorder) = card_recorder.take() {
+            let _ = recorder.finish(false).await;
+        }
         if let Some(recorder) = execution_recorder.take() {
             let _ = recorder.finish().await;
         }
@@ -883,12 +924,17 @@ async fn run(
         }
         return Err(error.context("private fixture failed; no successful closure was claimed"));
     }
+    let card_capture_result = match card_recorder.take() {
+        Some(recorder) => recorder.finish(true).await,
+        None => Ok(()),
+    };
     if let Some(recorder) = execution_recorder.take() {
         recorder.finish().await?;
     }
     if let Some(recorder) = warm_recorder.take() {
         recorder.finish().await?;
     }
+    card_capture_result?;
     let original = lease_witness
         .get()
         .context("original private CUDA service lease unobserved")?;

@@ -114,6 +114,19 @@ fn protected_mha_admits(
 }
 
 impl Scorer {
+    /// Verifies the protected recipe of an unqualified loop-calibration base before
+    /// the private fixture attaches it. This check grants no open or GPU authority.
+    #[cfg(all(feature = "test-support", windows, target_arch = "x86_64"))]
+    pub fn validate_private_protected_mha_calibration_base(base: &Profile) -> Result<()> {
+        ensure!(
+            base.model == ModelChoice::ContextQwenCompact
+                && crate::arbiter::runtime::loop_tasks::declares_card_tasks(base)
+                && cuda::evaluation_admits(base, true)?,
+            "private loop calibration requires the reviewed Protected MHA Compact route"
+        );
+        Ok(())
+    }
+
     /// Selects the reviewed phase reservation before the private service probes a device.
     pub fn private_compact_answer_capacity(
         profile: &ExecutionProfile,
@@ -145,9 +158,16 @@ impl Scorer {
             }
             AnswerRecipe::ProtectedMha => {
                 ensure!(
-                    calibration_base.is_none() && reviewed_graph_result.is_empty(),
-                    "the protected MHA Answer recipe admits no graph result or calibration variant"
+                    reviewed_graph_result.is_empty(),
+                    "the protected MHA Answer recipe admits no external graph result"
                 );
+                if let Some(base) = calibration_base.as_ref() {
+                    ensure!(
+                        crate::arbiter::runtime::loop_tasks::declares_card_tasks(base),
+                        "the protected MHA calibration variant requires the loop card tasks"
+                    );
+                    require_calibration_only_variant(base, profile.description())?;
+                }
                 return Self::open_private_protected_mha_answer(
                     profile,
                     source,

@@ -87,5 +87,85 @@ version that named the interpreter in the code (SHA-256
 `86da0c5bd1987f6eedf497f3c77993e1280937857be03f82db1e02bc0d814f0e`); their receipts pin
 that historical version, and the change does not alter the plans it produces.
 
+## Protected corpus for Windows L7
+
+The L7 builder reads a fresh two-repository miner output pinned by
+`stats.json`. Supply the SHA-256 of that receipt and the same complete
+`airk.private.answer-eval.protected-paths/1` whole-file inventory used in
+mining. The receipt binds both pair files and the inventory. The builder
+refuses protected evidence or instructions before opening a checkout. It
+also enforces these exclusions at Git blob reads and in the snapshot
+window pool, including expanded positives and all negative windows.
+It uses the Bookbuilder fixture's exact source denies. Both repositories
+must contribute usable local training positives. Supply the independently
+verified SHA-256 of each general replay input.
+
+```powershell
+& $py -I -B $T\build_examples_cand2.py --pairs $pairs --repo "bookbuilder=$bookbuilder" --repo "munarium=$munarium" --tokenizer $tokenizer --execution-root $executionRoot --output $freshOutput --protected-paths $protected --protected-paths-sha256 $protectedSha --pairs-stats-sha256 $pairStatsSha --replay-sha256 "census=$censusSha" --replay-sha256 "roster=$rosterSha" --replay-sha256 "techqa=$techqaSha"
+```
+
+The replay pins name `native-census.json`,
+`all-original1955-roster.json` and `techqa-software-document-fixed45.json`
+under the existing execution root. The builder still verifies each
+TechQA window and original source against its pinned index. Keep the
+corpus, protection inventory and generated outputs private. Earlier
+research commands continue to use their existing workflow when these
+L7 arguments are omitted.
+
+## Original-weight prompt screen
+
+Use the protected L7 example builder above with `build_examples_cand2.py
+--instruction publisher`. The screen pins the example manifest and verifies
+its evaluation file and statistics. It draws up to 12 complete ranking
+groups per repository and held-out split by default. Both arms have the same
+IDs, queries, documents, labels and group membership. Only the local
+instruction changes. A refusal in either arm removes that whole group from
+both ranking denominators. Builder refusals and screen refusals are disclosed
+separately. The two replay sets retain their existing instructions and are
+scored once with the same original checkpoint.
+
+From the verified human PowerShell, check the fresh plan and run paths under
+the approved private campaign root before writing. The preparation command
+seals the inputs and observes the GPU without loading a model. The second
+command starts one owned scoring job:
+
+```powershell
+& $basePython -I -B "$T\prompt_screen.py" prepare --examples $examples --examples-manifest-sha256 $examplesManifestSha --base-python $basePython --base-python-sha256 $basePythonSha --log-dir $freshScreenRun --output $freshScreenPlan
+$planSha = (Get-FileHash -LiteralPath $freshScreenPlan -Algorithm SHA256).Hash.ToLowerInvariant()
+$screenPlan = Get-Content -LiteralPath $freshScreenPlan -Raw | ConvertFrom-Json
+$env:PYTHONPYCACHEPREFIX = $screenPlan.environment.PYTHONPYCACHEPREFIX
+$env:PYTHONDONTWRITEBYTECODE = '1'
+& $basePython -B -S scripts\arbiter\training\focus_lora_r8\launch_owned.py --plan $freshScreenPlan --plan-sha256 $planSha
+```
+
+Audit the created outputs before reading `$freshScreenRun\execution.json`
+and `$freshScreenRun\worker\result.json`. The first receipt binds the
+worker result and natural Job settlement. The second reports paired AUROC,
+hit@1, MRR, rank changes, margins and unchanged replay metrics. The worker
+scores four width-1024 pairs at a time on Torch CUDA using the authenticated
+original checkpoint. It makes no gradients or checkpoint copies. The guard
+requires 14 GiB free CUDA memory, caps CUDA allocation and host commit at
+12 GiB each, and defaults to a 900-second wall limit. Reserve space for private
+receipts, logs and the driver cache. The worker reports observed memory when
+it runs.
+
+This screen uses FP32 PyTorch and a local compiler. A favorable result still
+needs candidate admission, native compiler/score and decision parity, and
+Windows CUDA Answer replay on the exact profile before judged use.
+
+### Publisher-weight pilot metrics
+
+Use the audit-approved evaluation SHA-256 and the worker result SHA-256
+from the naturally settled owned run. The opt-in report compares the same
+base and candidate rows for Bookbuilder and Munarium, separately for the
+held-out ID and path splits. It discloses the train-minus-held-out gap
+where both cells exist. The general QASPER/TechQA holdout has only positive
+labels. Its report shows counts, mean yes-minus-no margin, and the share
+above zero. AUROC, hit@1 and MRR are undefined for this holdout.
+
+```powershell
+& $py -I -B $T\score.py --l7-publisher-pilot --eval $eval --eval-sha256 $evalSha --result $result --result-sha256 $ownedWorkerResultSha --output $freshScore
+```
+
 All outputs are private and belong under the campaign's `artifacts\` root. Tracked
 files hold code and synthetic tests only; no repository text, pair or weight.

@@ -181,6 +181,8 @@ pub(super) struct CardCall<'a> {
     pub(super) max_sub_needs: usize,
     pub(super) reserved: usize,
     pub(super) deadline: Instant,
+    #[cfg(all(test, feature = "test-support"))]
+    pub(super) score_evidence: Option<&'a mut super::card_capture::ScoreEvidence>,
 }
 
 /// Settle one card call: `pending` is the lane admission (`None` when the
@@ -207,6 +209,8 @@ pub(super) async fn settle_card_call(
         max_sub_needs,
         reserved,
         deadline,
+        #[cfg(all(test, feature = "test-support"))]
+        mut score_evidence,
     } = call;
     let mut pending = match pending {
         Some(Ok(pending)) => pending,
@@ -247,6 +251,10 @@ pub(super) async fn settle_card_call(
         }
     };
     if let Some(receipt) = &compiled {
+        #[cfg(all(test, feature = "test-support"))]
+        if let Some(evidence) = score_evidence.as_deref_mut() {
+            evidence.compiled_input_digest = Some(receipt.input_digest);
+        }
         advice.work.queue_us = Some(receipt.queue_us);
         advice.work.compile_us = Some(receipt.compile_us);
         if receipt.input_tokens <= reserved
@@ -275,6 +283,10 @@ pub(super) async fn settle_card_call(
             let Ok(attribution) = settle(scored.input_tokens) else {
                 return Ok(());
             };
+            #[cfg(all(test, feature = "test-support"))]
+            if let Some(evidence) = score_evidence {
+                evidence.scored_input_digest = Some(scored.input_digest);
+            }
             advice.observed_input_tokens = Some(scored.input_tokens);
             advice.attribution = attribution;
             advice.work.input_tokens = scored.input_tokens;
@@ -554,6 +566,9 @@ impl StageOwner {
                 tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), pending)
                     .await
                     .ok();
+            let mode = self.decision_mode();
+            #[cfg(all(test, feature = "test-support"))]
+            let mut score_evidence = super::card_capture::ScoreEvidence::default();
             settle_card_call(
                 CardCall {
                     ledger: &self.loop_ledger,
@@ -561,10 +576,12 @@ impl StageOwner {
                     stage: card_stage,
                     segments: &request.segments,
                     calibration: &calibration,
-                    mode: self.decision_mode(),
+                    mode,
                     max_sub_needs: request.parent_budget.max_sub_needs,
                     reserved,
                     deadline,
+                    #[cfg(all(test, feature = "test-support"))]
+                    score_evidence: self.card_capture.as_ref().map(|_| &mut score_evidence),
                 },
                 &mut advice,
                 pending,
@@ -593,6 +610,10 @@ impl StageOwner {
                 self.record_model_refusal(code);
             }
             advice.validate()?;
+            #[cfg(all(test, feature = "test-support"))]
+            if let Some(observer) = &self.card_capture {
+                observer.offer(&request, &advice, mode, score_evidence);
+            }
             Ok(Some(advice))
         }
     }

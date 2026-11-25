@@ -1371,7 +1371,84 @@ def attach_verification(handle, life):
                                                "passed": result.get("passed"), "problems": result.get("problems")}
 
 
-def restart_request(fixtures, previous, folder, accept_unidle_close=None):
+def reuse_predecessor(prior, repositories, fixtures):
+    """Authenticate the settled repository set from an idle owned lifetime."""
+    require(prior_settled(prior) and prior["state"] == "closed"
+            and prior.get("final_stage_idle") is True and prior.get("service_exit_code") == 0
+            and prior.get("semantic_ready_utc"), "settled reuse needs a clean, indexed predecessor")
+    status_path = Path(prior["final_status"]["path"])
+    require(sha256(status_path) == prior["final_status"]["sha256"], "settled reuse final status changed")
+    status = read_json(status_path)
+    require(all(not status["configuration"][stage]["enabled"]
+                    and status[stage]["queued"] == status[stage]["running"] == 0
+                    for stage in ("focus", "context")), "settled reuse needs two disabled idle stages")
+    require(len(set(repositories)) == len(repositories) and set(repositories) == set(prior["indexes"]),
+            "settled reuse requires the exact predecessor repository set")
+    for repo in repositories:
+        record = prior["indexes"][repo]
+        state = read_json(fixtures / "indexes" / f"{repo}.state.json")
+        snapshot = record["snapshot"]
+        require(repo in SNAPSHOTS and record["source_commit"] == SNAPSHOTS[repo]
+                and snapshot["commit"] == record["source_commit"]
+                and state["indexed"]["source_commit"] == record["source_commit"]
+                and all(state[key] == record[key] for key in ("root", "data_dir", "index_id", "binding"))
+                and Path(record["root"]).resolve(strict=True).is_relative_to((fixtures / "sources").resolve(strict=True))
+                and Path(record["data_dir"]).resolve(strict=True).is_relative_to((fixtures / "indexes").resolve(strict=True))
+                and prior["semantic"].get(repo) == "ready" and record["publication_token"]
+                and record["pipeline_digest"], f"{repo}: settled index identity or source binding changed")
+
+
+def source_io_jobs(control):
+    return {(project, job, kind) for project, job, kind, _, _ in registry_job_events(control, 0)
+            if kind in ("index", "vectors")}
+
+
+def observe_reused_indexes(commands, prior, repositories, jobs_before):
+    """Use only native reads. Drift refuses readiness without starting a build."""
+    indexes = {}
+    for repo in repositories:
+        record = prior["indexes"][repo]
+        index_id = record["index_id"]
+        status = tool_body(commands.tool(f"reuse-status-{repo}", "airk_status", index_id,
+                                         {"response_mode": "full"})[0])
+        search = probe_search(commands, repo, index_id)
+        token = record["publication_token"]
+        require(all(body["semantic_readiness"]["state"] == "ready"
+                    and body["publication"]["token"] == token for body in (status, search))
+                and search["semantic_readiness"]["pipeline_digest"] == record["pipeline_digest"],
+                f"{repo}: settled publication, embedding pipeline or readiness changed")
+        require(search["execution"]["served_mode"] == record["served_mode"]
+                and search["execution"]["incomplete"] is False
+                and required_denies(commands, repo, index_id) == record["denies"],
+                f"{repo}: the served mode or source denies changed")
+        progress = commands.json(f"reuse-progress-{repo}", "--service-project", record["binding"], "progress")
+        require(not any(job["kind"] in ("index", "vectors") for job in unfinished_jobs(progress)),
+                f"{repo}: an indexing writer is pending or running")
+        indexes[repo] = dict(record)
+    require(jobs_before == source_io_jobs(commands.control),
+            "settled reuse observed new indexing or vector jobs")
+    return indexes
+
+
+def reuse_restart_lineage(fixtures, previous, control_owner):
+    """Build ordered pins from the original control owner to its successor."""
+    lineage = []
+    seen = {control_owner}
+    while previous != control_owner:
+        require(previous not in seen, "settled reuse restart lineage is cyclic")
+        seen.add(previous)
+        work = lifetime_dir(previous, fixtures) / "fixture"
+        handle = read_json(work.parent / "handle.json")
+        require(handle.get("control_owner") == control_owner and prior_settled(handle)
+                and handle.get("restart_from"), "settled reuse restart lineage differs")
+        lineage.append({key: {"path": str(path), "sha256": sha256(path)} for key, path in
+                        (("ready", work / "ready.json"), ("closed", work / "closed.json"),
+                         ("restart_owner", work / "restart-owner.json"))})
+        previous = handle["restart_from"]
+    return lineage[::-1]
+
+
+def restart_request(fixtures, previous, folder, accept_unidle_close=None, *, reuse_settled=False):
     """Pin the original Ready/Closed and the previous lifetime's final stage status.
 
     ``accept_unidle_close`` (``<lifetime>=<closed.json sha256>``) applies a recorded exception from
@@ -1388,6 +1465,9 @@ def restart_request(fixtures, previous, folder, accept_unidle_close=None):
     request = {name: {"path": str(path), "sha256": sha256(path)}
                for name, path in (("ready", origin / "ready.json"), ("closed", origin / "closed.json"),
                                   ("status", status))}
+    if reuse_settled:
+        require(accept_unidle_close is None, "settled reuse has no close exception")
+        request["cuda_lineage"] = reuse_restart_lineage(fixtures, previous, prior["control_owner"])
     pinned = write_json(folder / "restart-request.json", request)
     return prior, pinned
 
@@ -1404,9 +1484,14 @@ def worker(args):
     deadline = time.monotonic() + seconds
     extra = census_extras(args.dispatch_observer, getattr(args, "dispatch_census", None))
     prior = None
+    jobs_before = None
+    reuse_settled = getattr(args, "reuse_settled", False)
     if args.restart_from:
         prior, restart = restart_request(Path(args.fixtures), args.restart_from, life,
-                                         getattr(args, "accept_unidle_close", None))
+                                         getattr(args, "accept_unidle_close", None), reuse_settled=reuse_settled)
+        if reuse_settled:
+            reuse_predecessor(prior, args.repositories, Path(args.fixtures))
+            jobs_before = source_io_jobs(prior["control"])
         control = Path(prior["control"])
         extra.update(AIRK_ARBITER_EVALUATION_RESTART=restart["path"], AIRK_ARBITER_EVALUATION_RESTART_SHA256=restart["sha256"])
         control_owner = prior["control_owner"]
@@ -1459,81 +1544,97 @@ def worker(args):
                 saved = read_json(work / "restart-owner.json")
                 require(Path(saved["control"]).samefile(control) and not (work / "control").exists(),
                         "same-install restart did not bind the saved control")
-            handle.update(state="indexing", service_pid=process.pid, instance=ready["health"]["instance"],
+            handle.update(state="starting" if reuse_settled else "indexing",
+                          service_pid=process.pid, instance=ready["health"]["instance"],
                           ready={"path": str(work / "ready.json"), "sha256": sha256(work / "ready.json")},
                           profiles=ready["profiles"])
             write_json(handle_path, handle, replace=True)
-            states = Path(args.fixtures) / "indexes"
-            states.mkdir(exist_ok=True)
-            # MiniLM is installed once per installation, through the first index's project.
-            installed = states / "minilm.state.json"
-            vectors = None
-            earlier = [read_json(path) for path in sorted(states.glob("*.state.json")) if path != installed]
-            if not installed.is_file() and any(state.get("vectors_installed") for state in earlier):
-                write_json(installed, {"installed_by": "an earlier lifetime (recorded in its repository state)",
-                                       "at": utc(), "minilm": str(MINILM)})
-            if args.repositories and not installed.is_file():
-                vectors = life / "semantic-drafts"
-                nat["run_logged"](
-                    nat["ignored"](images["service"]["path"], "emit_private_selected_vector_configuration"),
-                    logs, "emit-minilm", env | {"AIRK_SELECTED_MINILM_DIRECTORY": str(MINILM),
-                                                "AIRK_SELECTED_VECTOR_DRAFT_OUTPUT": str(vectors)}, deadline)
-            # Phase 0 sets up every repository and brings its denies into force before the launcher queues
-            # any index pass. MiniLM is installed through the first project once its denies are in force;
-            # the install starts that project's index pass, so only the first repository may need a deny
-            # (repository_order_problem). No project then runs index or vectors work while a source policy
-            # changes. On 22 November 2026 a deny applied to the second repository while the first one's
-            # vectors job ran ended with an unknown outcome in two roots, and the index pass queued behind
-            # it was refused.
-            roots = {}
-            problem = repository_order_problem(args.repositories, states)
-            require(problem is None, str(problem))
-            for repo in args.repositories:
-                record = {"repository": repo}
-                handle["indexes"][repo] = record
-                if repo in SNAPSHOTS:
-                    root, snapshot = ensure_snapshot(repo, Path(args.fixtures))
-                    record["snapshot"] = snapshot
-                    commit = snapshot["commit"]
-                else:
-                    root, commit = REPOSITORIES[repo], git_commit(REPOSITORIES[repo])
-                    record["indexed_in_place"] = True
-                roots[repo] = (root, commit)
-                ensure_index(commands, repo, root, states, states / f"{repo}.state.json", vectors, record, commit,
-                             phase="policy", installed=installed)
+            if reuse_settled:
+                handle["indexes"] = observe_reused_indexes(commands, prior, args.repositories, jobs_before)
+                now = utc()
+                handle.update(state="ready", queryable=True, ready_utc=now, semantic_ready_utc=now,
+                              semantic={repo: "ready" for repo in args.repositories}, semantic_resumed=[])
+                handle["reused_indexes"] = write_json(life / "reused-indexes.json", {
+                    "predecessor": prior["lifetime"], "prior_instance": prior["instance"],
+                    "instance": handle["instance"], "control": str(control),
+                    "repositories": {repo: {key: record[key] for key in
+                                      ("source_commit", "index_id", "binding", "publication_token", "pipeline_digest")}
+                                     for repo, record in handle["indexes"].items()},
+                    "preserved_index_and_vector_jobs": len(jobs_before), "new_index_and_vector_jobs": 0,
+                })
+                write_json(handle_path, handle, replace=True)
+            else:
+                states = Path(args.fixtures) / "indexes"
+                states.mkdir(exist_ok=True)
+                # MiniLM is installed once per installation, through the first index's project.
+                installed = states / "minilm.state.json"
                 vectors = None
+                earlier = [read_json(path) for path in sorted(states.glob("*.state.json")) if path != installed]
+                if not installed.is_file() and any(state.get("vectors_installed") for state in earlier):
+                    write_json(installed, {"installed_by": "an earlier lifetime (recorded in its repository state)",
+                                           "at": utc(), "minilm": str(MINILM)})
+                if args.repositories and not installed.is_file():
+                    vectors = life / "semantic-drafts"
+                    nat["run_logged"](
+                        nat["ignored"](images["service"]["path"], "emit_private_selected_vector_configuration"),
+                        logs, "emit-minilm", env | {"AIRK_SELECTED_MINILM_DIRECTORY": str(MINILM),
+                                                    "AIRK_SELECTED_VECTOR_DRAFT_OUTPUT": str(vectors)}, deadline)
+                # Phase 0 sets up every repository and brings its denies into force before the launcher queues
+                # any index pass. MiniLM is installed through the first project once its denies are in force;
+                # the install starts that project's index pass, so only the first repository may need a deny
+                # (repository_order_problem). No project then runs index or vectors work while a source policy
+                # changes. On 22 November 2026 a deny applied to the second repository while the first one's
+                # vectors job ran ended with an unknown outcome in two roots, and the index pass queued behind
+                # it was refused.
+                roots = {}
+                problem = repository_order_problem(args.repositories, states)
+                require(problem is None, str(problem))
+                for repo in args.repositories:
+                    record = {"repository": repo}
+                    handle["indexes"][repo] = record
+                    if repo in SNAPSHOTS:
+                        root, snapshot = ensure_snapshot(repo, Path(args.fixtures))
+                        record["snapshot"] = snapshot
+                        commit = snapshot["commit"]
+                    else:
+                        root, commit = REPOSITORIES[repo], git_commit(REPOSITORIES[repo])
+                        record["indexed_in_place"] = True
+                    roots[repo] = (root, commit)
+                    ensure_index(commands, repo, root, states, states / f"{repo}.state.json", vectors, record, commit,
+                                 phase="policy", installed=installed)
+                    vectors = None
+                    write_json(handle_path, handle, replace=True)
+                handle["source_policy_utc"] = utc()
                 write_json(handle_path, handle, replace=True)
-            handle["source_policy_utc"] = utc()
-            write_json(handle_path, handle, replace=True)
-            # Phase 1 runs every repository's lexical pass in turn; the service keeps building the earlier
-            # repositories' vectors meanwhile. Phase 2 waits for each to be ready.
-            for repo in args.repositories:
-                root, commit = roots[repo]
-                ensure_index(commands, repo, root, states, states / f"{repo}.state.json", None,
-                             handle["indexes"][repo], commit, phase="lexical")
+                # Phase 1 runs every repository's lexical pass in turn; the service keeps building the earlier
+                # repositories' vectors meanwhile. Phase 2 waits for each to be ready.
+                for repo in args.repositories:
+                    root, commit = roots[repo]
+                    ensure_index(commands, repo, root, states, states / f"{repo}.state.json", None,
+                                 handle["indexes"][repo], commit, phase="lexical")
+                    write_json(handle_path, handle, replace=True)
+                # After a restart the service may resume only some projects' embedding series; resume
+                # every idle, not-ready index now so all build concurrently while phase 2 waits in turn.
+                handle["semantic_resumed"] = resume_semantic(commands, states, args.repositories)
+                # Clients may query as soon as every index has a lexical publication: state "ready" and
+                # queryable true; "semantic" says per index whether its MiniLM vectors are complete.
+                handle["semantic"] = {}
+                for repo in args.repositories:
+                    status = tool_body(commands.tool(f"queryable-{repo}", "airk_status",
+                                                     handle["indexes"][repo]["index_id"], {"response_mode": "full"})[0])
+                    handle["indexes"][repo]["lexical_publication_token"] = status["publication"]["token"]
+                    handle["semantic"][repo] = status["semantic_readiness"]["state"]
+                handle.update(state="ready", queryable=True, ready_utc=utc())
                 write_json(handle_path, handle, replace=True)
-            # After a restart the service may resume only some projects' embedding series; resume
-            # every idle, not-ready index now so all build concurrently while phase 2 waits in turn.
-            handle["semantic_resumed"] = resume_semantic(commands, states, args.repositories)
-            # Clients may query as soon as every index has a lexical publication: state "ready" and
-            # queryable true; "semantic" says per index whether its MiniLM vectors are complete.
-            handle["semantic"] = {}
-            for repo in args.repositories:
-                status = tool_body(commands.tool(f"queryable-{repo}", "airk_status",
-                                                 handle["indexes"][repo]["index_id"], {"response_mode": "full"})[0])
-                handle["indexes"][repo]["lexical_publication_token"] = status["publication"]["token"]
-                handle["semantic"][repo] = status["semantic_readiness"]["state"]
-            handle.update(state="ready", queryable=True, ready_utc=utc())
-            write_json(handle_path, handle, replace=True)
-            for repo in args.repositories:
-                root, commit = roots[repo]
-                ensure_index(commands, repo, root, states, states / f"{repo}.state.json", None,
-                             handle["indexes"][repo], commit, phase="semantic")
-                handle["semantic"][repo] = "ready"
-                handle["indexes"][repo]["semantic_ready_utc"] = utc()
+                for repo in args.repositories:
+                    root, commit = roots[repo]
+                    ensure_index(commands, repo, root, states, states / f"{repo}.state.json", None,
+                                 handle["indexes"][repo], commit, phase="semantic")
+                    handle["semantic"][repo] = "ready"
+                    handle["indexes"][repo]["semantic_ready_utc"] = utc()
+                    write_json(handle_path, handle, replace=True)
+                handle.update(semantic_ready_utc=utc())
                 write_json(handle_path, handle, replace=True)
-            handle.update(semantic_ready_utc=utc())
-            write_json(handle_path, handle, replace=True)
             stop = life / "STOP"
             try:
                 nat["wait_observed"](life, lambda: True if stop.is_file() else None, process,
@@ -1592,6 +1693,9 @@ def worker(args):
             settlement[name] = {"path": str(work / name), "sha256": sha256(work / name)}
     require(handle["service_exit_code"] == 0 and handle.get("final_stage_idle") is True,
             "fixture exit or stage settlement failed")
+    if reuse_settled:
+        require(jobs_before == source_io_jobs(control), "settled reuse queued an indexing or vector job")
+        settlement["reused_indexes"] = handle["reused_indexes"]
     handle.update(state="closed", closed_utc=utc(), settlement=settlement)
     write_json(handle_path, handle, replace=True)
 

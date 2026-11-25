@@ -1264,5 +1264,45 @@ class Scenarios(unittest.TestCase):
             fixture.attach_verification(handle, life)
             self.assertEqual(handle["post_restart_verification"]["passed"], True)
 
+
+class SettledIndexReuseTests(unittest.TestCase):
+    def test_read_only_reuse_requires_identical_publication_and_no_new_jobs(self):
+        from unittest.mock import Mock, patch
+
+        repository = "munarium"
+        record = {"index_id": "id", "binding": "binding", "publication_token": "existing",
+                  "pipeline_digest": "pipeline", "served_mode": "hybrid", "denies": []}
+        prior = {"indexes": {repository: record}}
+        status = {"semantic_readiness": {"state": "ready"}, "publication": {"token": "existing"}}
+        search = {**status, "semantic_readiness": {"state": "ready", "pipeline_digest": "pipeline"},
+                  "execution": {"served_mode": "hybrid", "incomplete": False}}
+        commands = Mock(control="same-root")
+        commands.tool.return_value = [None]
+        saved = {("binding", "old-vector-job", "vectors")}
+        cases = (
+            (search, saved, None),
+            ({**search, "publication": {"token": "changed"}}, saved, "settled publication"),
+            (search, saved | {("binding", "another-vector-job", "vectors")}, "new indexing or vector jobs"),
+        )
+        for observed, jobs, error in cases:
+            with (
+                self.subTest(error=error),
+                patch.object(fixture, "tool_body", return_value=status),
+                patch.object(fixture, "probe_search", return_value=observed),
+                patch.object(fixture, "unfinished_jobs", return_value=[]),
+                patch.object(fixture, "source_io_jobs", return_value=jobs),
+            ):
+                commands.reset_mock()
+                if error:
+                    with self.assertRaisesRegex(ValueError, error):
+                        fixture.observe_reused_indexes(commands, prior, [repository], saved)
+                else:
+                    self.assertEqual(fixture.observe_reused_indexes(commands, prior, [repository], saved),
+                                     {repository: record})
+                self.assertEqual([call.args[1] for call in commands.tool.call_args_list], ["airk_status"])
+                self.assertTrue(all(call.args[-1] == "progress" for call in commands.json.call_args_list))
+                self.assertFalse(commands.lines.called)
+
+
 if __name__ == "__main__":
     unittest.main()

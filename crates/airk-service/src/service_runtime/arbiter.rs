@@ -9,6 +9,8 @@ use airk_core::{
 use anyhow::Context;
 #[cfg(feature = "local-inference")]
 mod assets;
+#[cfg(all(test, feature = "local-inference", feature = "test-support"))]
+pub(super) mod card_capture;
 mod card_scoring;
 #[cfg(all(feature = "local-inference", feature = "test-support"))]
 pub(super) mod catalog_only;
@@ -83,6 +85,8 @@ impl Owner {
             context_observer: None,
             #[cfg(all(feature = "local-inference", feature = "test-support"))]
             execution_observer: None,
+            #[cfg(all(test, feature = "local-inference", feature = "test-support"))]
+            card_capture: None,
             configuration: context.configuration.clone(),
             #[cfg(feature = "local-inference")]
             assets: context.assets.clone(),
@@ -533,6 +537,8 @@ struct StageOwner {
     #[cfg(all(feature = "local-inference", feature = "test-support"))]
     execution_observer:
         Option<airk_inference::inference_engine::pool::arbiter::execution_observer::Observer>,
+    #[cfg(all(test, feature = "local-inference", feature = "test-support"))]
+    card_capture: Option<card_capture::Observer>,
     configuration: Arc<airk_store::service::arbiter::ConfigurationStore>,
     #[cfg(feature = "local-inference")]
     assets: Arc<airk_store::service::arbiter_assets::AssetStore>,
@@ -575,6 +581,8 @@ impl StageOwner {
             context_observer: None,
             #[cfg(all(feature = "local-inference", feature = "test-support"))]
             execution_observer: None,
+            #[cfg(all(test, feature = "local-inference", feature = "test-support"))]
+            card_capture: None,
             ownership: ownership.clone(),
             configuration: Arc::new(configuration),
             #[cfg(feature = "local-inference")]

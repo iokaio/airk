@@ -18691,6 +18691,181 @@ D: retained 390,341,746,688 free bytes. The next work measures
 the actual Focus ranking and Arbiter decision losses on the
 development scenarios.
 
+### 25 November 2026 — Windows L7 change set 2
+
+Start from the signed and remotely verified change-set-1 commit
+`d963c1898c2a31a9599955e1604272542a377cc8`.
+The native fixture stopped cleanly before this set takes the GPU.
+The development set stays pinned and no sealed evaluation runs.
+
+A separate custodian validated ten new Munarium held-out scenarios at
+`9948345d1d148525f644bc4b8bc5e6da9cf73ca0`. The private proof covers
+all 40 scenarios and has SHA-256
+`51eeae2bd42e5169f3fadbadeb198d6724213d10fe3206d8763aa48ee8076cec`.
+Its machine-only protected-path inventory has SHA-256
+`1ed46e79a75c8217516616f95e8855568128992addc3069aa585a75796a94d71`.
+The inventory excludes whole files and historical aliases before
+source access, including reference alternatives. No held-out
+content was admitted to training. The original developed scenarios
+and the Bookbuilder sealed set retain their original hashes. The
+current development freeze SHA-256 remains
+`26338d09a2d7a7a76d59444e2baf279bd43d5b361fdc81ba6cea04a50639190e`.
+
+The initial safeguarded pair miner refused invalid UTF-8 and created
+no corpus. A structural metadata audit covered both pinned trees and
+all 417,074 raw change frames with zero invalid UTF-8 path frames.
+The original diagnostic did not identify its content operation.
+The corrected miner keeps path decoding strict, counts and skips
+unreadable commit messages, and preserves raw admitted patch bytes
+for exact hunk boundaries. A focused regression covered both cases.
+
+The guarded candidate miner used the exact Bookbuilder and Munarium
+commits and UTC cutoff `2026-11-22T23:42:00Z`. A separate Git
+metadata check found zero reachable Bookbuilder commits after its
+earlier 21 November development freeze, and zero Munarium commits
+after its 22 November freeze. The R2 run completed in 256.585 seconds
+and produced 8,877,718 private bytes total. It admitted 7,453 / 1,326
+training / pair-held-out rows from Bookbuilder and 1,429 / 244 from
+Munarium. The stats SHA-256 is
+`fcaf216b79038430a488a0698a0e38ba0b09d855f85d65041f4e0ec19acb2801`.
+
+The first publisher example run exposed an implementation gap at
+review. The checks rejected protected paths but had not enabled the
+miner's sanitized Git object-reading mode. The reviewed R2 builder
+verifies admitted regular Git blobs and exact source commit tokens,
+using the same sanitized configuration. No consumer used the R1
+examples. The R2 publisher and software-evidence variants completed
+in 86.498 and 86.804 seconds using the existing local tokenizer.
+Their manifest SHA-256 values are
+`1420cd10c5f32ad309ccc3feedff9af89c922fd2533649b6ef91cba0bf376fbd`
+and
+`166b425fcfcaaf09c69e66be0c2c0b92bfbe18cbf0af2c670a596a6178ad822b`.
+Both contain the same 6,999 training and 3,637 evaluation identities,
+labels, query and document digests. The 460 general replay training
+rows and 115 general replay evaluation rows are identical. No model
+has scored or trained on either prompt variant.
+
+The first diagnostic compare reuses the three authentic CS1 canonical
+replays. Adding Focus to Arbiter left all ten Bookbuilder cases
+identical in essential coverage and displaced one Munarium note
+(C1 N6). The first nine record arguments and full-result digests
+are identical in the two C1 replies. The remaining Context and
+References calls differ. Only the Arbiter-only Context result
+covered N6, which neither arm's five Search results covered.
+Each reply has seven decisions in its summary and zero decision
+details. The missing note establishes a downstream difference
+and motivates capturing actual admitted Arbiter rosters and choices
+before attributing that loss to the stage's reranker.
+
+Next run the controlled original-weight prompt comparison and finish
+the private native-card capture preflight. Keep one CUDA owner.
+No candidate is ready for judging.
+
+The first original-weight prompt screen used the approved offline
+PyTorch CUDA owner with the protected publisher example manifest.
+It scored 48 matched groups and 198 local rows per arm without a
+screen refusal. The ID-held-out AUROC moved from 0.6031 to 0.5846,
+hit@1 from 25.0% to 20.8%, and MRR from 0.5833 to 0.5660 with the
+software-evidence instruction. Path-held-out AUROC moved from 0.5643
+to 0.5388, hit@1 stayed at 16.7% and MRR moved 0.5521 to 0.5451.
+Ranks improved in five groups, worsened in six and tied in 37.
+All 115 unchanged replay rows were scored once. The narrower screen
+does not establish native FP16 score parity. Keep the publisher
+instruction for the next experiment.
+
+The screen owned one local worker for 100.694 seconds and ended
+naturally with no active job members. Peak host commit was
+9,042,759,680 bytes. Plan SHA-256
+`433549584249799b4a044ce3d160f6295772f0678ab336dd7ad37551f1a68cdb`,
+result SHA-256
+`d7bf0754f38c001622243066ba95d92f56943b287e56c78997041c7c32ece25b`,
+and execution receipt SHA-256
+`7628a99d2e01d96fa4e0c8278fcdcb1492ffe5607edAAF5ce54ab3d8e9e6ca89`.
+The fixture, protected miner and Focus toolkit ran 13, 16, and 26
+focused script tests respectively. The reviewed native capture now
+has its scoped Windows Clippy, regression and matched-image build
+under one Cargo owner. A bounded two-update Focus training probe
+measures cost before deciding how much fitting is practical.
+
+The publisher training timing probe completed two updates over 64
+rows. The training interval was 21.098 seconds and the owned job
+finished in 35.442 seconds. Peak reserved CUDA memory was
+6,390,022,144 bytes and peak host commit was 12,311,601,152
+bytes. The probe discarded its adapter, with no full checkpoint.
+The execution receipt SHA-256 is
+`e9692c00b9ce82c86f75c3579e9c75561ebd99e40d651b47088fc90629c55322`.
+The full 6,999-row option needs 219 optimizer updates plus its
+two evaluation passes. The exact timing probe informs that budget.
+
+The first native Clippy attempt selected a legacy bundle parent that
+did not contain the exact FP16 assets. Its failed Cargo release receipt
+is `851541da330833a2c4431d2066dbca815c57c51bfc8cf4fcc7b3787e3d5d0208`.
+The corrected batch verified the same bundled model manifest that CS1
+used and compiled with its exact approved CUDA embedding admission.
+Clippy passed in 33.92 seconds. Scoped Nextest ran four tests and
+passed all four, with 465 skipped. Service and CLI both compiled,
+and 1,203 changed Cargo/cache outputs passed the owner checks.
+The release receipt SHA-256 is
+`79fac5ab10cdbadfe980d78b5a203645091bfd90d82775d7926dd39a985a0ee7`.
+
+The private capture image is `win-l7-cs2-card-capture-9163e82d`,
+service SHA-256
+`9163e82de98fa4f3f8e1d310b47c7f32256d594e190e4e89938a06c64db04a2b`
+and manifest SHA-256
+`81e2655813d9ead93fabf81fde6c8662e986ce96639f2396640d381b29653145`.
+The previous CS1 native replays used 89 Arbiter-only and 102
+combined card calls, supporting a bounded first capture within the
+512-offer native recorder. Admit one native GPU owner and confirm
+actual CUDA indexing and settled source publications before replay.
+D: retained 386,311,311,360 free bytes after image staging.
+
+The private capture lifetime `win-l7-cs2-card-capture-r1` is
+running as service PID 31116 under the verified human. Its launch
+admission SHA-256 is
+`65608976ec3eccf3290ca914440628b66545fcc4e490526941c92e18a92041af`.
+The checked native service marked the source publications queryable
+and reported a completed CUDA embedding with no fallback during
+vector growth. That early probe does not establish settled inputs.
+The first progress sample observed Bookbuilder at 26,134 vectors
+and Munarium at 11,504. Both remained in progress. Continue the
+settlement and source-owner audits, then recheck the final CUDA route
+before opening the serial Arbiter-only and combined replays.
+
+A comparison of the authenticated architecture-session coverage
+receipts found a later-turn loss in change set 1. Across six
+architecture cases the combined arm gathered six essentials on
+the first call, up from five. Later calls added one, down from
+seven in the baseline. Baseline later Answer calls added two
+and direct file reads added five. Change set 1 later Answer calls
+added zero and direct file reads added one, despite 16 file reads
+against 13. Final combined architecture coverage moved from
+12 to 7 of 36 while Search moved from 12 to 13. Differences in
+agent calls limit the comparison to locating the loss. Use it to
+prioritize captured downstream card choices and later
+evidence-use measurements.
+
+Both capture indexes reached settled semantic publications.
+Bookbuilder published 156,255 vectors and Munarium 40,536. The
+settlement watcher exited zero with log SHA-256
+`0eabd253be77312dc1bdfb4b7f7b3fba53d8f1b97a06525a57a4b2db50c5ead7`.
+The final exact-service embedding receipt confirmed CUDA with no
+fallback, SHA-256
+`edf11eafc30202d176629ea1d1e4efb3634846f2acc1bb3aaed32d62a6716015`.
+The source audit matched both original archives and checked 10,107
+entries, SHA-256
+`89f38f098d61309698ddff2bf3b39c9e4c7eb17260fd61aae9d6d1cad0ca8437`.
+D: retained 380,241,850,368 free bytes. The Arbiter-only replay begins
+with the two pinned publications and the original model profile.
+
+The current fixture lexical durations were 112.882 seconds for
+Bookbuilder and 17.116 seconds for Munarium. Native registry
+`job_running` to final `job_succeeded` for vectors was 13:09:24.482
+to 13:31:10.335 UTC on Bookbuilder and 13:09:42.700 to 13:20:29.481
+UTC on Munarium. Every one of Munarium's five vector jobs ran
+within Bookbuilder's 32-job vector window. Fixture start to both
+settled publications was 24 minutes 11 seconds, including setup
+and terminal observation.
+
 ### 25 November 2026 — Reuse settled development indexes
 
 Answer-only and optional-model changes do not invalidate the existing
@@ -19209,3 +19384,75 @@ offline inputs and timings. The production build receipt
 `365d05bc61a015a6d2c26e95dd228205942bce2478d9a2df93a620404494ecc3`
 records the exact commands and 2,635 checked outputs. D retained
 348,377,763,840 free bytes after validation.
+
+### 25 November 2026 — Answer planning and index quality review
+
+The user directed that research and testing of the indexing algorithms come
+first. The completion plan now compares individual index-backed reads and
+agent-driven combinations on matched sources, including better representations
+for a faithful index. Select the publications before baselining Answer.
+A full rebuild remains a user discussion. The subsequent Windows plan tests
+native multi-round gathering, Focus passage selection and Context/Arbiter
+gap-directed follow-ups, with agent work and repeated context measured.
+Implementation awaits the user's plan review.
+[First milestone](../arbiter/completion-plan.md#how-to-test-indexing-for-agent-tasks) · [Search interpretation](../arbiter/search-improvement-plan.md#what-the-search-results-say-about-the-index)
+
+The historical Search 55/113 was a session total, comprising 14 first-reply
+essentials, 19 first recovered by later searches and 22 by file reads. The
+Step 8 first-reply result was 20/113 versus 14/113 on the original Search
+diagnostic. Bookbuilder fell from 5/61 to 3/61 when the Step 1 ranking changed
+on identical publications. The reviewed plan collects current whole sessions
+and replays the old calls before attributing a session loss. A surviving
+legacy-format Bookbuilder depth run used a different query for every one
+of its ten tasks and a different embedding pipeline and limits.
+
+**Read-only comparison on Windows.** The effective desktop identity and
+default owner were TYAI\tdotn, SID ending in 1002, matched to interactive
+Explorer. Under the private answer-eval-r1 root, the authenticated handles
+were `fixture-win-minilm-cuda-l7-cs1-bundle-cuda-r2/win-l7-cs1-bundle-cuda-r2/handle.json`
+(SHA-256 `4deb2ab72388e415deaf14a6d131d91b3075187de84449ec187dee389d7b5377`)
+and `fixture-win-minilm-cuda-l7-cs2-card-capture-r1/win-search-step8-preserve-r1/handle.json`
+(`119c3a9ec8b158cb5a2bb17d8ce6ff6a6fb97116094bc663af6fe55453270c91`).
+Both pairs postdate the plain-store refactor. Source archive receipts and
+pipeline identities matched. The authenticated closed databases had empty
+WALs. SQLite 3.50.4 used a memory connection, memory temp storage,
+`trusted_schema=OFF`, read-only immutable URIs and `query_only=ON`. For
+each projection compare both counts and both SQL EXCEPT directions. Verify
+the database and sidecar hashes and timestamps again after reading.
+
+| Compared projection, with zero rows unique to either publication | Bookbuilder | Munarium |
+| --- | ---: | ---: |
+| File path, source hash, language, extraction payload digest and vector state | 8,116 | 1,023 |
+| Chunk path, ordinal, stable identity and citation | 65,236 | 5,380 |
+| FTS-linked chunk identities, also checked against raw FTS counts | 65,236 | 5,380 |
+| Lookup selector path, kind and value | 1,469,048 | 414,996 |
+| Committed unit path, ordinal, embedding key and member spans | 167,368 | 43,772 |
+| Committed embedding key to physical matrix row | 156,255 | 40,536 |
+
+The complete old and new matrix files had equal SHA-256 per repository:
+Bookbuilder `46cc6b1b6c074f1529dbec9cf046f39d5178386b94bbe506d9b8e356567d96c7`,
+Munarium `2dc3b1d60b9c2fb484e52cd107fdc533c0f4e70c6ce12392bf376e91621ad279`.
+Independent index incarnations have different handles. FTS row identity
+does not compare individual postings, BM25 scores or a query's candidate
+admission. A matching matrix does not measure relevance or prove parity
+with the pre-refactor producer.
+
+A second check used the Step 8 Focus-off arm
+`2b394fc67e75ad88281df825fbe7612cd88ce8425a48a971c5b2e88979c3663c`.
+Its first three distinct eligible UTF-8 line-cited files per repo reproduced
+all six delivered hit fingerprints from the pinned revisions (4,356 excerpt
+bytes). The three Munarium file hashes matched raw Git bytes. Bookbuilder's
+three matched after LF-to-CRLF checkout conversion. This sample excludes
+other formats and unreturned files.
+
+The independent agent-use review added a blind first-delivery-only exercise,
+task-origin discoverability checks, a debugging/reproduction case, and a
+measure for repeated source bytes. The user requested the pending maintained
+code and plans be committed for review. This is a checkpoint of partly
+evaluated fixture, capture and training work. No new judged series or product
+qualification is claimed. Isolated Python unittest discovery passed 2 replay,
+6 capture-verifier and 4 L7 score tests. The selected patterns were
+`test_replay.py`, `test_verify_card_capture.py` and `test_score_l7.py`
+under their respective source directories with Python 3.13 `-I -B`.
+The next campaign action after the user's review is the first indexing
+experiment on verified pinned sources and settled publications.

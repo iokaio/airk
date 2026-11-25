@@ -540,7 +540,7 @@ $G   = "$R\passes\06-gate-lg"
 
 ### What can go wrong, first
 
-- **A root gives one CUDA lifetime.** A restart needs the root's saved
+- **Sealed roots give one CUDA lifetime.** A restart needs the root's saved
   configuration unchanged, and a CUDA lifetime changes it. Once an arm's
   lifetime has started, even if it then fails, that root is spent. So every
   input is checked before the launch (`lg_preflight.py`), nothing but the
@@ -840,7 +840,7 @@ root. `R\fixture-s1-shakedown` has spent its CUDA lifetime (23 November), so
 the next shakedown and trial need a new root. Such a root needs its own
 closed CPU base first (`fixture.py start --repositories munarium`, about
 6 min of indexing and 35 min of embedding on the CPU, 24 GB), and it too
-gives one CUDA lifetime: run the shakedown and the trial in the same one. A
+gives one CUDA lifetime by default: run the shakedown and the trial in the same one. A
 pair with both Context entries and the Focus entry is built with three
 `--entry` options of `cuda_pair.py pair` (`lg-inputs\pair-CL-shakedown`).
 
@@ -876,3 +876,30 @@ and `-p test_cuda_pair.py` (synthetic data only; they start no service and use n
 or up to two Context profiles and one CUDA Focus profile with `--model pair` (see above). Large on CUDA needs about 40 GiB of host reservation and
 a 44 GiB device envelope. Results describe this private
 image, driver and adapter, not the installed product.
+
+## Private Arbiter decision capture
+
+For a development-only CUDA pair, add `--card-capture` to the launch and
+keep the native dispatch observer enabled. The normal default leaves
+capture off. The checked native fixture writes
+`development-card-calls.jsonl` and a matching
+`development-card-calls.closed.json` in its ignored work directory.
+Use settled development indexes and a bounded, serial Answer replay
+so each call can be matched to its native admission and score receipt.
+Verify native shutdown, the recorder closure, exact result ownership,
+record counts, and the final digest before using the capture. Any
+explicit loss or writer failure makes the capture incomplete.
+The private card roster is evaluation custody and grants no read
+or dispatch authority.
+
+## Reuse settled development indexes
+
+Pass --restart-from and --reuse-settled together for a development-only
+same-install CUDA pair. The previous lifetime must have closed cleanly
+with Focus and Arbiter disabled. The restart must reacquire the native
+lease and prove the same source commits, index registrations, settled
+publications and semantic pipeline. It compares Index and Vectors job
+identities during startup and closure. Any observed drift fails the run
+without a fresh build fallback. The new lifetime retains the original
+control root and records its reuse evidence in reused-indexes.json.
+Sealed gate roots keep their separate lifetime policy.

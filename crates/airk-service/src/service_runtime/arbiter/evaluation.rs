@@ -604,6 +604,18 @@ impl EvaluationOwner {
         self.owner.context.execution_observer = Some(observer);
         self
     }
+    #[cfg(all(test, windows, target_arch = "x86_64", feature = "gpu-cuda"))]
+    pub(in crate::service_runtime) fn observe_card_calls(
+        mut self,
+        observer: super::card_capture::Observer,
+    ) -> Result<Self> {
+        ensure!(
+            self.owner.context.evaluation.is_some(),
+            "Private card capture requires the actual native evaluation catalog"
+        );
+        self.owner.context.card_capture = Some(observer);
+        Ok(self)
+    }
     #[cfg(test)]
     pub(in crate::service_runtime) fn observe_warm(
         self,

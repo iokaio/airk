@@ -144,6 +144,56 @@ claims release qualification.
   catalog-only extra. The bounded-hybrid gate checks graph, placement and
   adapter against the base.
 
+### Reuse a closed CUDA installation
+
+The ignored Windows same-install fixture accepts a separate CUDA restart
+proof through the existing SHA-pinned restart request. Keep the origin
+`ready` and `closed` pins from the installation's own control root, and pin
+the immediate predecessor's native `commands/*-final-status.stdout` as
+`status`. Add `cuda_lineage` in oldest-to-newest order. Each successor
+requires its own `ready`, `closed`, and `restart_owner` pins, the last
+naming its `fixture/restart-owner.json`. Use an empty list when the CUDA
+predecessor is itself the original control owner. The legacy three-pin
+CPU restart keeps its existing checks.
+
+Native admission checks the stable owner, original control root, exact CPU
+prefix and the independently pinned CUDA profile snapshots in every Ready.
+The immediate predecessor must be genuinely closed, with both stages
+disabled, inactive and idle. A retained selection can name a former CUDA
+profile in verified lineage when the successor has a matching model and
+task policies. A reused manifest must keep its exact profile bytes. Under
+the actual lease, the native owner checks pending work, current immutable
+enrollments, catalog and installation, and the exact canonical configuration
+before startup. No stage selection, reset or copy happens during restart.
+The successor selects its candidate only after genuine Ready. Harness
+checks still compare the existing indexed source and publication receipts
+before reusing them or accepting the restarted fixture.
+
+### Private development card-call capture
+
+Only the ignored Windows same-install CUDA fixture accepts
+`AIRK_ARBITER_EVALUATION_CARD_CAPTURE=true`. Use a fresh checked work directory
+and an isolated development-only replay cohort. Captured rosters may include
+indexed source text. Keep both outputs private and exclude sealed prompts,
+requests and source evidence from the cohort. No capture is mounted on
+production startup, ordinary Search, or the public response.
+
+The same evaluation owner offers a typed row after native card reservation
+and final advice validation, including known fallback and unavailable
+outcomes in that path. The row binds the original attempt, exact ordered
+segments and roster digests, final native advice, and raw f32 bits.
+The compiled and scored input digests come from the inference receipts when
+observed. An absent receipt remains unknown. Early refusals before the
+settlement path and failed advice validation do not yield rows.
+
+The nonblocking queue holds up to 16 rows and admits at most 512 offers.
+The out-of-gate recorder writes `development-card-calls.jsonl` with a 512 KiB
+per-row and 64 MiB total limit. Accept a nonempty capture only with its
+`development-card-calls.closed.json` receipt binding the exact bytes, zero
+loss and a completed service, and the native `closed.json` lease proof.
+Missing or failed closure is incomplete evidence. Capture preserves model
+decisions, native reservations, deadlines, and source scope.
+
 ## Actual private Large storage/control regression
 
 The ignored `actual_large_finalization_and_cached_verification_keep_native_control_and_lease_custody`

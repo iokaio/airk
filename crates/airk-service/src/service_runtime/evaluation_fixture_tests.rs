@@ -20,6 +20,8 @@ use std::{
 mod acquisition;
 #[cfg(all(windows, target_arch = "x86_64", feature = "gpu-cuda"))]
 mod cuda_answer;
+#[cfg(all(windows, target_arch = "x86_64", feature = "gpu-cuda"))]
+mod card_capture;
 mod execution_observer;
 mod restart;
 mod warm_journal;

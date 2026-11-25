@@ -82,6 +82,50 @@ $env:AIRK_PAIRS_TEST_ROOT = "$R\training\pairs-test-tmp"
 python -I -B scripts\arbiter\training\answer_eval_pairs\test_mine_pairs.py
 ```
 
+## L7 development input admission
+
+Use the explicit L7 mode for the Bookbuilder and Munarium corpus. Supply one
+full lowercase Git commit ID per repository and a timezone-aware cutoff.
+Both pinned commits must already exist locally and must be no later than the
+cutoff. Doc and test pairs use those exact commits, and commit pairs use only
+their non-merge ancestry within the cutoff. Moving a branch or HEAD cannot
+change the corpus.
+
+The protected-path custodian supplies one SHA-pinned JSON file under the
+private artifacts root. The schema is
+airk.private.answer-eval.protected-paths/1 with a paths object containing
+nonempty bookbuilder and munarium arrays of normalized repository-relative
+POSIX file paths. The lists cover development and sealed references,
+alternatives, and historical aliases identified by the custodian. Keep the
+inventory machine-only. The miner never opens scenario prompts, notes, or
+sealed material in this mode.
+
+    python -I -B scripts/arbiter/training/answer_eval_pairs/mine_pairs.py mine --l7 --repo "bookbuilder=<repo root>" --repo "munarium=<repo root>" --revision "bookbuilder=<full commit>" --revision "munarium=<full commit>" --before "<cutoff UTC>" --protected-paths "<private inventory>" --protected-paths-sha256 "<64 lowercase hex digits>" --out "<fresh private directory>"
+
+The output parent must already exist. Preflight it and the input inventory
+with the checked human-execution guard. The miner screens tree metadata
+before requesting numstat, a patch, or a snapshot blob. It excludes whole
+protected paths regardless of line numbers or case. It applies the same
+exact Bookbuilder-v2 denies as the indexing fixture. A commit mixing denied
+content and ordinary files is excluded before its message is read. Path
+metadata must be valid UTF-8. L7 counts and skips commits whose admitted
+messages cannot be decoded as UTF-8. Legacy bytes in an admitted patch do
+not affect its path and line-range checks. L7 does not emit an unfiltered
+copy or support re-filtering. The private stats bind
+the supplied revisions, protected inventory SHA-256, effective Bookbuilder
+deny-policy SHA-256, and both pair output hashes.
+
+Pairs are candidate labels. A separate Focus builder must authenticate
+positive and negative windows against their exact native query/window
+recipe, replay provenance, and the same protected-path policy. Whole-file
+exclusion is conservative across revisions at known paths. Renames absent
+from the supplied inventory and unrelated files with similar contents are
+outside this path proof.
+
+Run the focused synthetic boundary tests without a Git repository or writes.
+
+    python -I -B scripts/arbiter/training/answer_eval_pairs/test_l7_mine_pairs.py
+
 ## Limits
 
 The definition index and span detection use line regexes and brace counting,

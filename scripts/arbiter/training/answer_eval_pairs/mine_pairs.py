@@ -27,6 +27,11 @@ from pathlib import Path, PurePosixPath
 
 SCHEMA = "airk.private.answer-eval-pairs/1"
 HERE = Path(__file__).resolve().parent
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+
+import l7_policy
+
 ROOT = next((p for p in HERE.parents if (p / "Cargo.toml").is_file() and (p / "AGENTS.md").is_file()), None)
 
 # Paths that describe the Answer evaluation itself (plan section 3.1). They apply to the airk repository.
@@ -122,17 +127,30 @@ def path_exclusion(repo: str, path: str) -> str | None:
 # ---------------------------------------------------------------- git access (read-only plumbing)
 
 class Git:
-    def __init__(self, repo_dir: Path):
+    def __init__(self, repo_dir: Path, *, l7: bool = False):
         self.repo_dir = Path(repo_dir)
+        self.l7 = l7
         self.env = dict(os.environ, GIT_OPTIONAL_LOCKS="0", GIT_TERMINAL_PROMPT="0", LC_ALL="C")
+        if l7:
+            self.env = {key: value for key, value in self.env.items() if not key.upper().startswith("GIT_")}
+            self.env.update(GIT_OPTIONAL_LOCKS="0", GIT_TERMINAL_PROMPT="0", GIT_NO_REPLACE_OBJECTS="1",
+                            GIT_NO_LAZY_FETCH="1", GIT_ALLOW_PROTOCOL="", GIT_CONFIG_NOSYSTEM="1",
+                            GIT_CONFIG_GLOBAL=os.devnull)
         self._cat = None
 
     def run(self, *args: str) -> str:
-        cmd = ["git", "-c", "core.quotepath=off", "-C", str(self.repo_dir), *args]
+        try:
+            return self.run_bytes(*args).decode("utf-8", "strict" if self.l7 else "replace")
+        except UnicodeDecodeError:
+            die(f"L7 git {args[0]} metadata must be valid UTF-8")
+
+    def run_bytes(self, *args: str) -> bytes:
+        literal = ["--literal-pathspecs"] if self.l7 else []
+        cmd = ["git", *literal, "-c", "core.quotepath=off", "-C", str(self.repo_dir), *args]
         proc = subprocess.run(cmd, capture_output=True, env=self.env, check=False)
         if proc.returncode != 0:
             die(f"git {' '.join(args[:3])} failed: {proc.stderr.decode('utf-8', 'replace').strip()[:400]}")
-        return proc.stdout.decode("utf-8", "replace")
+        return proc.stdout
 
     def blob(self, commit: str, path: str) -> bytes | None:
         if self._cat is None:
@@ -228,9 +246,65 @@ def iter_commits(git: Git, before: str):
         yield sha, date, parents.split(), body, files
 
 
-def mine_commits(repo: str, git: Git, args, stats: Stats):
+REGULAR_MODES = {"100644", "100755"}
+
+
+def iter_l7_commits(git: Git, before: str, revision: str, max_files: int, exclude, stats: Stats):
+    """Inspect tree metadata before requesting any content, including numstat."""
+    revisions = git.run("log", "--no-merges", f"--before={before}", "--format=%H", revision, "--")
+    for sha in revisions.splitlines():
+        raw = git.run("diff-tree", "--root", "-r", "--no-commit-id", "--no-renames",
+                      "--no-ext-diff", "--no-textconv", "--raw", "-z", sha, "--")
+        fields = raw.split("\0")
+        if fields[-1] != "" or (len(fields) - 1) % 2:
+            die("malformed L7 changed-path metadata")
+        paths, denied = [], False
+        for header, path in zip(fields[:-1:2], fields[1:-1:2], strict=True):
+            mode, new_mode, *_ = header.removeprefix(":").split()
+            reason = exclude(path)
+            if reason is None and (
+                mode not in REGULAR_MODES | {"000000"} or new_mode not in REGULAR_MODES | {"000000"}
+            ):
+                reason = "nonregular_path"
+            if reason:
+                denied |= reason in {"protected_path", "bookbuilder_index_deny", "credential_path",
+                                     "unsafe_path", "nonregular_path"}
+                stats.drop("commit_file", reason)
+            else:
+                paths.append(path)
+        if denied:
+            # The message of a mixed commit can describe protected evidence too.
+            stats.drop("commit", "protected_or_unsafe_change")
+            continue
+        if not paths:
+            stats.drop("commit", "no_evidence_after_path_filter")
+            continue
+        if (len(fields) - 1) // 2 > max_files:
+            stats.drop("commit", "too_many_files")
+            continue
+        raw_stats = git.run("show", "--format=", "--numstat", "-z", "--no-renames",
+                            "--no-ext-diff", "--no-textconv", sha, "--", *paths)
+        files = []
+        for line in raw_stats.split("\0"):
+            if not line:
+                continue
+            added, deleted, path = line.split("\t", 2)
+            if path not in paths:
+                die("L7 numstat returned an unapproved path")
+            files.append((path, added, deleted))
+        try:
+            body = git.run_bytes("show", "-s", "--encoding=UTF-8", "--format=%B", sha, "--").decode("utf-8")
+        except UnicodeDecodeError:
+            stats.drop("commit", "invalid_message_encoding")
+            continue
+        yield sha, "", [], body, files
+
+
+def mine_commits(repo: str, git: Git, args, stats: Stats, *, revision: str | None = None, exclude=None):
     pairs = []
-    for sha, date, parents, body, files in iter_commits(git, args.before):
+    rows = (iter_l7_commits(git, args.before, revision, args.max_files, exclude, stats)
+            if revision is not None else iter_commits(git, args.before))
+    for sha, date, parents, body, files in rows:
         if len(parents) > 1:
             stats.drop("commit", "merge"); continue
         message = clean_message(body)
@@ -268,7 +342,13 @@ def mine_commits(repo: str, git: Git, args, stats: Stats):
         added_total = sum(int(a) for p, a, _ in files if p in kept and a.isdigit())
         if added_total > args.max_added_lines:
             stats.drop("commit", "too_many_lines"); continue
-        diff = git.run("show", "--format=", "--no-color", "--no-renames", "--no-ext-diff", "-U0", sha, "--", *kept)
+        diff_args = ("show", "--format=", "--no-color", "--no-renames", "--no-ext-diff")
+        if revision is None:
+            diff = git.run(*diff_args, "-U0", sha, "--", *kept)
+        else:
+            # Only exact admitted path headers and ASCII hunk ranges survive this parse.
+            patch = git.run_bytes(*diff_args, "--no-textconv", "-U0", sha, "--", *kept)
+            diff = patch.decode("utf-8", "surrogateescape")
         ranges = {}
         current = None
         for line in diff.split("\n"):
@@ -380,14 +460,21 @@ def rust_test_regions(lines):
 class Snapshot:
     """Tracked files at one commit and a definition index of non-test source."""
 
-    def __init__(self, repo: str, git: Git, commit: str, stats: Stats):
+    def __init__(self, repo: str, git: Git, commit: str, stats: Stats, *, exclude=None):
         self.repo, self.git, self.commit = repo, git, commit
         self.paths = []
         self.texts = {}
-        for path in git.run("ls-tree", "-r", "--name-only", commit).split("\n"):
+        if exclude is None:
+            tree = ((None, path) for path in git.run("ls-tree", "-r", "--name-only", commit).split("\n"))
+        else:
+            raw = git.run("ls-tree", "-r", "--full-tree", "-z", commit, "--")
+            tree = (row.split("\t", 1) for row in raw.split("\0") if row)
+        for metadata, path in tree:
             if not path:
                 continue
-            reason = path_exclusion(repo, path)
+            reason = path_exclusion(repo, path) if exclude is None else exclude(path)
+            if metadata is not None and metadata.split()[0] not in REGULAR_MODES:
+                reason = reason or "nonregular_path"
             if reason:
                 stats.drop("snapshot_file", reason)
                 continue
@@ -407,6 +494,8 @@ class Snapshot:
             self._index(path, text, lang)
 
     def text(self, path: str) -> str | None:
+        if self.git.l7 and path not in self.path_set:
+            return None
         if path not in self.texts:
             self.texts[path] = text_of(self.git.blob(self.commit, path))
         return self.texts[path]
@@ -798,7 +887,11 @@ def finish(out: Path, repos, unfiltered, args, stats: Stats, mine_record) -> dic
         for p in pairs:
             p["split"] = split_of(p["id"], args.heldout_percent)
         pairs.sort(key=lambda p: p["id"])
-        write_jsonl(out / f"{repo}.jsonl", pairs)
+        pair_path = out / f"{repo}.jsonl"
+        write_jsonl(pair_path, pairs)
+        if mine_record.get("mode") == "l7":
+            with pair_path.open("rb") as source:
+                summary.setdefault("pair_sha256", {})[repo] = hashlib.file_digest(source, "sha256").hexdigest()
         counts = Counter()
         for p in pairs:
             counts[f"{p['kind']}:{p['split']}"] += 1
@@ -819,12 +912,74 @@ def parse_repo(value: str):
     return name, Path(path)
 
 
+def revision_arg(value: str) -> tuple[str, str]:
+    repo, sep, oid = value.partition("=")
+    if not sep or repo not in l7_policy.REPOS or not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", oid):
+        raise argparse.ArgumentTypeError("expected bookbuilder or munarium and a full lowercase Git commit ID")
+    return repo, oid
+
+
+def l7_excluder(repo: str, protected: dict, bookbuilder_denies):
+    def exclude(path: str) -> str | None:
+        if not l7_policy.safe_relative_path(path):
+            return "unsafe_path"
+        if l7_policy.normalized_path(path) in protected[repo]:
+            return "protected_path"
+        if repo == "bookbuilder" and l7_policy.denied_by_fixture(path, bookbuilder_denies):
+            return "bookbuilder_index_deny"
+        return path_exclusion(repo, path)
+
+    return exclude
+
+
+def check_l7_inputs(args, out: Path):
+    repos = dict(args.repo)
+    revisions = dict(args.revision)
+    if set(repos) != l7_policy.REPOS or len(args.repo) != len(repos):
+        die("L7 requires exactly one repository each for Bookbuilder and Munarium")
+    if set(revisions) != l7_policy.REPOS or len(args.revision) != len(revisions):
+        die("L7 requires one exact revision for each repository")
+    if args.exclude_notes or args.overlap_margin or not args.protected_paths:
+        die("L7 requires a pinned whole-path inventory instead of legacy note inputs")
+    if out.exists() or not out.parent.is_dir():
+        die("L7 requires a fresh output directory under an existing private parent")
+    roots = {name: path.resolve(strict=True) for name, path in args.repo}
+    if len(set(roots.values())) != len(roots) or any(out.is_relative_to(path) for path in roots.values()):
+        die("L7 needs separate source trees and an output outside both repositories")
+    inventory = args.protected_paths.resolve(strict=True)
+    if not inventory.is_relative_to((ROOT / "artifacts").resolve()):
+        die("L7 protected path inventory must be private")
+    try:
+        protected = l7_policy.load_protected_paths(inventory, args.protected_paths_sha256)
+        denies = l7_policy.bookbuilder_denies()
+    except (OSError, ValueError, SyntaxError):
+        die("invalid pinned L7 path inventory or Bookbuilder deny policy")
+    for name, path in roots.items():
+        git = Git(path, l7=True)
+        oid = revisions[name]
+        if git.run("rev-parse", "--show-prefix").strip():
+            die("L7 repository path must name the repository root")
+        if git.run("rev-parse", "--is-shallow-repository").strip() != "false":
+            die("L7 requires complete repository history")
+        if git.run("rev-parse", "--verify", f"{oid}^{{commit}}").strip() != oid:
+            die("L7 revision must be an exact commit, not a tag or ref")
+        at = datetime.fromisoformat(git.run("show", "-s", "--format=%cI", oid, "--").strip())
+        if at > datetime.fromisoformat(args.before):
+            die("L7 revision is after the cutoff")
+    args.repo = list(roots.items())
+    return revisions, protected, denies
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("command", choices=["mine", "filter"], help="mine: read repositories and filter; filter: re-apply the note filter to unfiltered/")
     ap.add_argument("--repo", action="append", type=parse_repo, default=[], help="NAME=PATH (repeatable)")
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--before", help="ISO date; commits after it are not used (required for mine)")
+    ap.add_argument("--l7", action="store_true", help="pin the two L7 histories and exclude protected whole files")
+    ap.add_argument("--revision", action="append", type=revision_arg, default=[], help="NAME=FULL_GIT_COMMIT (L7 only)")
+    ap.add_argument("--protected-paths", type=Path, help="private machine-readable path inventory (L7 only)")
+    ap.add_argument("--protected-paths-sha256", help="exact hash of the path inventory bytes (L7 only)")
     ap.add_argument("--exclude-notes", action="append", default=[], help="glob of scenario JSON files (repeatable)")
     ap.add_argument("--overlap-margin", type=int, default=0)
     ap.add_argument("--heldout-percent", type=int, default=15)
@@ -841,6 +996,9 @@ def main(argv=None) -> int:
     ap.add_argument("--max-instruction-chars", type=int, default=2000)
     ap.add_argument("--kinds", default="commit,doc,test")
     args = ap.parse_args(argv)
+    l7_options = args.revision or args.protected_paths is not None or args.protected_paths_sha256 is not None
+    if (l7_options and not args.l7) or (args.l7 and args.command != "mine"):
+        die("the L7 options require mine --l7")
 
     out = require_private_output(args.out)
     unf_dir = out / "unfiltered"
@@ -852,26 +1010,33 @@ def main(argv=None) -> int:
         if before.tzinfo is None:
             die("--before must carry a time zone")
         args.before = before.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
-        out.mkdir(parents=True, exist_ok=True)
-        unf_dir.mkdir(exist_ok=True)
         kinds = set(args.kinds.split(","))
         record = {"before": args.before, "kinds": sorted(kinds), "repos": {}}
+        if args.l7:
+            revisions, protected, denies = check_l7_inputs(args, out)
+            record.update(mode="l7", protected_paths_sha256=args.protected_paths_sha256,
+                          bookbuilder_deny_policy_sha256=l7_policy.deny_policy_sha256(denies))
+        else:
+            out.mkdir(parents=True, exist_ok=True)
+            unf_dir.mkdir(exist_ok=True)
         unfiltered = {}
         for name, path in args.repo:
             stats.repo = name
-            git = Git(path)
+            git = Git(path, l7=args.l7)
             try:
-                head = git.run("rev-parse", "HEAD").strip()
-                snap_commit = git.run("rev-list", "-1", f"--before={args.before}", "HEAD").strip()
+                revision = revisions[name] if args.l7 else "HEAD"
+                exclude = l7_excluder(name, protected, denies) if args.l7 else None
+                head = revision if args.l7 else git.run("rev-parse", "HEAD").strip()
+                snap_commit = revision if args.l7 else git.run("rev-list", "-1", f"--before={args.before}", revision).strip()
                 if not snap_commit:
                     die(f"{name}: no commit before {args.before}")
-                merges = int(git.run("rev-list", "--count", "--merges", f"--before={args.before}", "HEAD").strip())
-                after = int(git.run("rev-list", "--count", f"--since={args.before}", "HEAD").strip())
+                merges = int(git.run("rev-list", "--count", "--merges", f"--before={args.before}", revision).strip())
+                after = int(git.run("rev-list", "--count", f"--since={args.before}", revision).strip())
                 pairs = []
                 if "commit" in kinds:
-                    pairs += mine_commits(name, git, args, stats)
+                    pairs += mine_commits(name, git, args, stats, revision=revision if args.l7 else None, exclude=exclude)
                 if kinds & {"doc", "test"}:
-                    snap = Snapshot(name, git, snap_commit, stats)
+                    snap = Snapshot(name, git, snap_commit, stats, exclude=exclude)
                     if "doc" in kinds:
                         pairs += mine_docs(name, snap, args, stats)
                     if "test" in kinds:
@@ -884,12 +1049,16 @@ def main(argv=None) -> int:
                     seen.add(p["id"]); unique.append(p)
             unique.sort(key=lambda p: p["id"])
             unfiltered[name] = unique
-            write_jsonl(unf_dir / f"{name}.jsonl", unique)
+            if not args.l7:
+                write_jsonl(unf_dir / f"{name}.jsonl", unique)
             record["repos"][name] = {"head": head, "snapshot_commit": snap_commit, "unfiltered": len(unique),
                                      "merges_skipped": merges, "commits_after_cutoff_skipped": after}
-        (unf_dir / "mine.json").write_text(json.dumps({"record": record, "exclusions": dict(stats.excluded),
-                                                       "notes_on_kept": dict(stats.pairs)}, indent=2, sort_keys=True) + "\n",
-                                           encoding="utf-8", newline="\n")
+        if args.l7:
+            out.mkdir()
+        else:
+            (unf_dir / "mine.json").write_text(json.dumps({"record": record, "exclusions": dict(stats.excluded),
+                                                           "notes_on_kept": dict(stats.pairs)}, indent=2, sort_keys=True) + "\n",
+                                               encoding="utf-8", newline="\n")
     else:
         meta = json.loads((unf_dir / "mine.json").read_text(encoding="utf-8"))
         record = meta["record"]

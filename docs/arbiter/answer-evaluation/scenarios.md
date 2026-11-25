@@ -6,8 +6,11 @@ Windows L7 uses ten development scenarios each from munarium at
 `9948345d1d148525f644bc4b8bc5e6da9cf73ca0` and bookbuilder-v2 at
 `238b22a722ceb78447d72e39585fd6a7d4d3dd0c`. The maintained harness reads
 their individual hashes from the private development freeze. The current
-freeze also lists the bookbuilder sealed set. The munarium sealed set is
-due before the first L7 change set is fitted. See the
+freeze also lists the Bookbuilder sealed set. A separate custodian prepared
+and authenticated the ten Munarium sealed scenarios after Change Set 1
+was frozen, before model fitting. The active development freeze is
+unchanged. The private custody proof authenticates all 40 inputs.
+The sealed evaluation remains closed. See the
 [Answer loop plan](../final-plan-fp16.md#128-work-order) for the work order.
 
 ## Original one-turn inventory, 21 November 2026

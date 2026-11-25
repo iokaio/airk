@@ -249,6 +249,15 @@ def emitter_environment(handle, scopes, stage, enabled, manifest, prefix, roots)
 # --- lifetime -----------------------------------------------------------------------------------
 
 
+def card_capture_environment(enabled, model, dispatch_observer):
+    """Only the explicit private CUDA pair may record admitted loop cards."""
+    if not enabled:
+        return {}
+    require(model == PAIR and dispatch_observer,
+            "--card-capture requires the CUDA pair and its native dispatch observer")
+    return {"AIRK_ARBITER_EVALUATION_CARD_CAPTURE": "true"}
+
+
 def worker(args):
     """fixture.py's worker with the CUDA selector and its pinned inputs in the service environment."""
     # fixture.py's worker launches SELECTORS[args.selector] and adds the change-set
@@ -271,6 +280,7 @@ def worker(args):
             FX.ENVIRONMENT.update(cuda_environment(args.model, seed))
     FX.ENVIRONMENT.update(math_environment())
     FX.ENVIRONMENT.update(DECISION_ENVIRONMENT)
+    FX.ENVIRONMENT.update(card_capture_environment(args.card_capture, args.model, args.dispatch_observer))
     if args.synthetic_root:
         FX.REPOSITORIES[SYNTHETIC] = Path(args.synthetic_root)
         FX.EXCLUSIONS[SYNTHETIC] = []
@@ -281,7 +291,7 @@ GATE_ROOT = re.compile(r"^fixture-(?P<series>\d+-gate-[a-z0-9]+)-(?P<arm>[A-Z][A
 GATE_ARMS = ("C", "L", "F", "C32", "L32")
 
 
-def gate_root_problem(fixtures, lifetime, restart_from):
+def gate_root_problem(fixtures, lifetime, restart_from, *, reuse_settled=False):
     """Why a CUDA lifetime may not start in this root, or None.
 
     A root restarts only while its saved configuration is unchanged, and a CUDA lifetime changes it, so a
@@ -292,6 +302,10 @@ def gate_root_problem(fixtures, lifetime, restart_from):
     message."""
     fixtures = Path(fixtures)
     spent = sorted(path.parent.name for path in fixtures.glob("*/gpu.json"))
+    if reuse_settled:
+        if not restart_from or not spent or GATE_ROOT.match(fixtures.name):
+            return "settled reuse requires a prior CUDA lifetime outside a sealed gate root"
+        return None
     if restart_from and spent:
         return (f"{fixtures.name} has already had a CUDA lifetime ({', '.join(spent)}); a root restarts only "
                 "with its saved configuration unchanged, so use another root")
@@ -312,8 +326,14 @@ def start(args):
     fixtures = Path(args.fixtures)
     life = FX.lifetime_dir(args.lifetime, fixtures)
     require(fixtures.is_dir() and not life.exists(), "a fresh lifetime folder under an existing fixtures root is required")
-    problem = gate_root_problem(fixtures, args.lifetime, args.restart_from)
+    problem = gate_root_problem(fixtures, args.lifetime, args.restart_from,
+                                reuse_settled=args.reuse_settled)
     require(problem is None, str(problem))
+    if args.reuse_settled:
+        require(args.model == PAIR and not args.change_set_inputs,
+                "settled reuse requires the same-install CUDA pair")
+        prior = read_json(FX.lifetime_dir(args.restart_from, fixtures) / "handle.json")
+        FX.reuse_predecessor(prior, args.repositories, fixtures)
     require(0 < args.seconds <= FX.MAX_SECONDS, f"the lifetime is at most {FX.MAX_SECONDS} s")
     require(bool(args.restart_from) != bool(args.seed_cpu), "a fresh lifetime names --seed-cpu; a restart never seeds")
     for repo in args.repositories:
@@ -322,6 +342,7 @@ def start(args):
     require(problem is None, str(problem))
     images = FX.image_pins(Path(args.image))
     math_environment()
+    capture = card_capture_environment(args.card_capture, args.model, args.dispatch_observer)
     # Pins checked before launch.
     pair = None
     if args.model == PAIR:
@@ -341,6 +362,8 @@ def start(args):
         "schema": "airk.private.answer-eval-gpu-lifetime/1", "at": utc(), "model": args.model,
         "selector": CS1_SELECTOR if cs1 else SELECTOR, "change_set": cs1,
         "image": images, "seed_cpu": args.seed_cpu, "restart_from": args.restart_from,
+        **({"card_capture": True} if capture else {}),
+        **({"reuse_settled": True} if args.reuse_settled else {}),
         **({"search": args.search} if args.search is not None else {}),
         "cuda": ({"pair": str(args.pair), "pair_sha256": args.pair_sha256} if pair
                  else {k: str(v) for k, v in MODELS[args.model].items()}),
@@ -355,6 +378,8 @@ def start(args):
         argv += ["--pair", str(Path(args.pair).resolve()), "--pair-sha256", args.pair_sha256]
     if args.restart_from:
         argv += ["--restart-from", args.restart_from]
+    if args.reuse_settled:
+        argv.append("--reuse-settled")
     if args.search is not None:
         argv += ["--search", args.search]
     if args.seed_cpu:
@@ -365,6 +390,8 @@ def start(args):
         argv += ["--change-set-inputs", args.change_set_inputs, "--change-set-inputs-sha256",
                  args.change_set_inputs_sha256, "--cuda-variant-inputs", args.cuda_variant_inputs,
                  "--cuda-variant-inputs-sha256", args.cuda_variant_inputs_sha256, "--layers", args.layers]
+    if capture:
+        argv.append("--card-capture")
     if not args.dispatch_observer:
         argv.append("--no-dispatch-observer")
     FX.census_extras(args.dispatch_observer, args.dispatch_census)  # refused before launch, not in the worker
@@ -617,11 +644,14 @@ def main():
                          default=list(FX.DEFAULT_REPOSITORIES))
         sub.add_argument("--restart-from")
         sub.add_argument("--search", choices=FX.SEARCH_SWITCHES)
+        sub.add_argument("--reuse-settled", action="store_true",
+                         help="require unchanged settled indexes on a same-install CUDA restart")
         sub.add_argument("--seed-cpu", choices=SEEDS)
         sub.add_argument("--synthetic-root")
         sub.add_argument("--no-dispatch-observer", dest="dispatch_observer", action="store_false")
         # The native dispatch census of the lifetime (fixture.py census_bound); make_loop_spec sets it from the plan.
         sub.add_argument("--dispatch-census", type=FX.census_bound)
+        sub.add_argument("--card-capture", action="store_true", help="record private Arbiter loop-card advice")
         sub.add_argument("--image", required=True)
         # Change set 1 with a CUDA provisional-read variant (all four or none).
         sub.add_argument("--change-set-inputs")
