@@ -248,7 +248,7 @@ impl FileStore {
         super::gate::check_writer(self, writer)?;
         // The plain index reclaims unreferenced payloads inside each batch;
         // there are no object files to collect.
-        if self.plain_index_present()? {
+        if crate::current::plain_writer::is_plain_index(self.directory()) {
             let _ = scope;
             return Ok(ReclamationReport::default());
         }

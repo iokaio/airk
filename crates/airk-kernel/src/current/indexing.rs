@@ -82,6 +82,8 @@ struct ProgressiveBase<'a> {
     force_all: bool,
     /// Path-scoped scans publish once at the end.
     intermediate: bool,
+    /// Scheduled scans publish their start and failure as discovery coverage.
+    record_progress: bool,
     last_flush: std::time::Instant,
     flush_interval: std::time::Duration,
     last_pause_check: std::time::Instant,
@@ -299,7 +301,9 @@ impl ProgressiveBase<'_> {
     }
 
     fn fail(&mut self, error: &anyhow::Error) -> Result<()> {
-        if !self.intermediate {
+        // A direct index call reports its failure to the caller and leaves the
+        // last publication as it was; a scheduled scan records it as coverage.
+        if !self.intermediate || !self.record_progress {
             return Ok(());
         }
         self.scan_work.advanced(self.processed, self.committed)?;
@@ -653,6 +657,7 @@ impl Kernel {
         let intermediate = paths.is_none();
         let force_all = full || (configuration_changed && applied.is_some());
         let publish_scan_start = intermediate
+            && defer_completion
             && previous.artifacts.is_empty()
             && prior_scan_work.as_ref().is_none_or(|work| !work.complete());
         let mut stats = EmbeddingCacheStats {
@@ -681,6 +686,7 @@ impl Kernel {
             batch_bytes: 0,
             force_all,
             intermediate,
+            record_progress: defer_completion,
             last_flush: std::time::Instant::now(),
             flush_interval: std::time::Duration::from_secs(2),
             last_pause_check: std::time::Instant::now(),

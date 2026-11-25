@@ -1215,14 +1215,29 @@ impl FileStore {
             ));
         }
         let _stage = airk_core::stage_timing::scope("blob.load");
-        let bytes = read_object(
-            self.directory(),
-            "artifacts",
-            &reference.object,
-            reference.payload_encoding.as_ref(),
-            MAX_ARTIFACT_BYTES.min(maximum),
-        )
-        .with_context(|| format!("load retained extraction for indexed path {:?}", entry.path))?;
+        // The plain index keeps payloads in its database, not object files.
+        let bytes = if crate::current::plain_writer::is_plain_index(self.directory()) {
+            ensure!(
+                reference.object_bytes as u64 <= MAX_ARTIFACT_BYTES.min(maximum),
+                "artifact exceeds request byte limit"
+            );
+            crate::index::IndexReader::open(self.directory())?
+                .payload(&reference.object.parse()?)
+                .with_context(|| {
+                    format!("load retained extraction for indexed path {:?}", entry.path)
+                })?
+        } else {
+            read_object(
+                self.directory(),
+                "artifacts",
+                &reference.object,
+                reference.payload_encoding.as_ref(),
+                MAX_ARTIFACT_BYTES.min(maximum),
+            )
+            .with_context(|| {
+                format!("load retained extraction for indexed path {:?}", entry.path)
+            })?
+        };
         ensure!(
             bytes.len() == reference.object_bytes,
             "retained artifact length does not match pinned inventory"
@@ -1539,6 +1554,24 @@ impl FileStore {
             entry.retained.as_ref().is_some_and(|r| r.raw_source),
             "original source bytes unavailable in legacy retained state; reindex from source"
         );
+        if crate::current::plain_writer::is_plain_index(self.directory()) {
+            // Q5: only a UTF-8 file's source is kept, as its payload text.
+            ensure!(
+                entry.extraction_method == "utf8",
+                "the index does not keep the source of {:?} (extraction {:?}); read the file itself",
+                entry.path,
+                entry.extraction_method
+            );
+            let payload = self.load_extraction_payload(entry)?;
+            let bytes = payload.text.into_bytes();
+            ensure!(
+                bytes.len() == entry.bytes
+                    && format!("{:x}", Sha256::digest(&bytes)) == entry.content_hash,
+                "stored source of {:?} does not match its content hash; rebuild the index",
+                entry.path
+            );
+            return Ok(bytes);
+        }
         let bytes = read_object(
             self.directory(),
             "sources",

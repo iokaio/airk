@@ -478,12 +478,70 @@ fn timed_cold_index_of_a_private_tree() -> Result<()> {
     let report = kernel.index()?;
     let elapsed = started.elapsed();
     let reader = reader(Path::new(&state))?;
+    let directory = index_directory(Path::new(&state))?;
+    let mut index_bytes = 0u64;
+    for entry in fs::read_dir(&directory)? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with("index.sqlite3") || name.starts_with("vectors-") {
+            index_bytes += entry.metadata()?.len();
+        }
+    }
     println!(
-        "plain cold index: {:.1} s, {} files indexed, {} stored, {} skipped",
+        "plain cold index: {:.1} s, {} indexed, {} reused, {} stored, {} skipped, {} chunks, {} index bytes, sequence {}",
         elapsed.as_secs_f64(),
         report.indexed,
+        report.reused,
         reader.file_count()?,
-        report.skipped.len()
+        report.skipped.len(),
+        reader.chunk_count()?,
+        index_bytes,
+        reader.sequence()
+    );
+    let sequence = reader.sequence();
+    drop(reader);
+    let started = std::time::Instant::now();
+    kernel.index()?;
+    let rescan = started.elapsed();
+    let after = self::reader(Path::new(&state))?;
+    println!(
+        "no-change rescan: {:.2} s, sequence {} -> {}",
+        rescan.as_secs_f64(),
+        sequence,
+        after.sequence()
+    );
+    let text = std::env::var("AIRK_PLAIN_TIMING_QUERY").unwrap_or_else(|_| "index".into());
+    let started = std::time::Instant::now();
+    let hits = kernel.search(&airk_core::SearchQuery {
+        text: text.clone(),
+        path_prefix: None,
+        limit: 10,
+        max_bytes: 16_384,
+    })?;
+    println!(
+        "lexical search {text:?}: {:.1} ms, {} hits, truncated {}",
+        started.elapsed().as_secs_f64() * 1000.0,
+        hits.hits.len(),
+        hits.truncated
+    );
+    let name = std::env::var("AIRK_PLAIN_TIMING_SYMBOL").unwrap_or_else(|_| "main".into());
+    let started = std::time::Instant::now();
+    let facts = kernel.facts(&airk_core::code::FactQuery {
+        path_prefix: String::new(),
+        name: Some(name.clone()),
+        kind: None,
+        language: None,
+        exact_name: true,
+        limit: 50,
+        max_bytes: 65_536,
+        path_exact: false,
+        document_only: false,
+    })?;
+    println!(
+        "symbol lookup {name:?}: {:.1} ms, {} facts, truncated {}",
+        started.elapsed().as_secs_f64() * 1000.0,
+        facts.facts.len(),
+        facts.truncated
     );
     Ok(())
 }
