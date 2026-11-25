@@ -233,8 +233,9 @@ pub enum EvidenceCommand {
         semantic: bool,
         #[arg(long)]
         path_prefix: Option<String>,
-        #[arg(long, default_value_t = 10)]
-        limit: usize,
+        /// Maximum number of results. Omit to let Search choose the count.
+        #[arg(long)]
+        limit: Option<usize>,
         #[arg(long, default_value_t = 8192)]
         max_bytes: usize,
     },
@@ -522,13 +523,12 @@ pub fn query(command: EvidenceCommand) -> Result<(&'static str, Value)> {
                     SearchMode::Hybrid => "hybrid",
                 })
             };
-            (
-                "airk_search",
-                query_options(
-                    json!({"query":query,"mode":mode,"path_prefix":path_prefix,"limit":limit,"max_bytes":max_bytes}),
-                    filters,
-                )?,
-            )
+            let mut arguments =
+                json!({"query":query,"mode":mode,"path_prefix":path_prefix,"max_bytes":max_bytes});
+            if let Some(limit) = limit {
+                arguments["limit"] = json!(limit);
+            }
+            ("airk_search", query_options(arguments, filters)?)
         }
         EvidenceCommand::Files {
             cursor,

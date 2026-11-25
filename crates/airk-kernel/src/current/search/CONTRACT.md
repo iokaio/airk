@@ -156,3 +156,31 @@ two omitted from the response. Keep that receipt in the private
 `AIRK_SEARCH_CUTOFF` trace and verify its exact projection against the
 returned response. The experiment does not change the public Focus
 receipt contract.
+
+## Adaptive result count
+
+Product Search varies only an omitted result limit for a hybrid snippet
+response. The ordinary typed default is ten.
+Explicit limits, combined member allocations, complete chunks, and
+lexical-only or vector-only responses retain their fixed selection.
+An omitted limit reaches the same Kernel route from MCP and native
+Workbench. The CLI leaves the limit absent unless the caller supplied
+one.
+
+Broad queries can extend through credible candidates from new files.
+Consider at most twenty positions and reserve at least 256 text bytes
+per position when deciding whether to extend. A candidate's score must
+be at least two thirds of the normal cutoff score to extend the limit.
+For shorter precise queries, a lead score more than 1.75 times the
+second can reduce the target to four. Existing scoped materialization
+and byte budgets still apply. When expanding, preserve the original
+first ten excerpts. Limit the extra count by the residual bytes, with
+at least 128 bytes per additional result, and omit overlapping
+duplicates from the extra tail. Compute each excerpt's citation after
+its final snippet selection. Test-support exposes the selected policy
+as `adaptive_preserve`. The `adaptive_results` profile reproduces the initial
+trial which protected the first four allowances and balanced the rest.
+
+Ordinary Focus takes the exact resulting evidence and retains its
+normal scoring cap, budget and receipt. The private trace records the
+selection target, actual result count, text bytes and distinct paths.

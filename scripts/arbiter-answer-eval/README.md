@@ -763,3 +763,15 @@ Focus receipt on those four and checks the final two returned positions
 against the permitted projection. The comparison reports accepted
 CUDA applications and cutoff replacements. A failed or partial score
 keeps the deterministic picks and cannot count as an accepted trial.
+
+### Adaptive Search result count
+
+Launch the private `adaptive_results` profile and use the same
+`search_focus_ab.py collect`, `compare`, and `cumulative --step 8`
+commands. The frozen 20 wire requests already omit `limit`; the
+ten-hit compatibility field is the baseline cutoff. The harness admits
+up to 20 hits only for a verified adaptive lifetime and an omitted limit.
+It checks the returned text bytes, unique paths and complete ordinary
+Focus permutation. The cumulative report keeps separate measures at
+rank three, rank ten and across the full response. The original cohort
+and accepted Step 5 pair keep their original identities.

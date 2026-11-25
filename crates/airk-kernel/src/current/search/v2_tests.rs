@@ -70,6 +70,7 @@ fn with_profile(
         SearchOptions {
             requested_mode: None,
             snippet_bytes: None,
+            automatic_limit: false,
             filters: &SearchFilters::default(),
             structural_hits: &[],
         },
@@ -111,7 +112,7 @@ fn product_search_uses_the_expected_profile() -> Result<()> {
         v2::SearchProfile::Baseline
     };
     #[cfg(not(feature = "test-support"))]
-    let expected = v2::SearchProfile::KeywordPassages;
+    let expected = v2::SearchProfile::AdaptivePreserve;
     let (_owner, kernel) = fixture()?;
     for text in [PROSE, "provider", "class code"] {
         let product = kernel.hybrid_search(&query(text))?;

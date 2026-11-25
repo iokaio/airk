@@ -108,7 +108,7 @@ impl Reader<'_> {
                     &airk_core::SearchQuery {
                         text: args.query,
                         path_prefix: args.path_prefix,
-                        limit: args.limit,
+                        limit: args.limit.unwrap_or(10),
                         max_bytes: args.max_bytes,
                     },
                     airk_kernel::current::CurrentSearchMode::Default,

@@ -19136,3 +19136,76 @@ tests (551 skipped, 55.67 s including compile), 52.92 s fixture build and
 four restart tests (471 skipped). Its exact receipt is
 `ee8c488747bcfcf4e72c8b4f0a368021862c654b2fb266dc2d94c597d8768ff4`.
 Nineteen Search-comparison and five vector-audit Python controls passed.
+
+### 25 November 2026 — Search step 8 adaptive result count
+
+The 20 original requests already omitted `limit`. Both matched CUDA
+trials retained the exact frozen wire arguments, 113 essential notes,
+8,192-byte text budget, source publications and normal Focus scoring.
+The first trial found 20 essentials in both arms, gaining four and
+losing two relative to Step 5. Shorter windows removed qualifying lines
+at Munarium W1 ranks five and seven. Its first ten covered 16.
+
+The selected revision preserved the first ten hit hashes and ordering
+for all 20 requests in both arms. Its full responses found 20/113
+essentials with zero lost versus Step 5 and six more net than the
+original. The two additions are Munarium T2/N5 at 17 and C3/N2 at 19.
+The top-ten count is 18 in each arm and top-three counts are 9/10.
+CUDA Focus applied 20/20 times and moved six notes higher without
+changing membership. Full responses held 16–20 hits (median 19) and
+12–19 paths (median 15.5), with 7,969–8,192 text bytes (median 8,192).
+Both lifetimes preserved 41 historical jobs and started zero index or
+vector jobs. They settled with zero owned descendants. D had
+349,696,483,328 free bytes after the selected replay.
+
+Private receipts under `answer-loop/L5C`:
+
+- `win-search-step8-adaptive-r1` pair
+  `9177c58c0dac50aa69b067fd7f288a6ef648a4a8e12878380c33f164fbc98c60`,
+  cumulative `613fe83ca257dbfcc8e7456b89c8cefa7c98aeaaed2fd272f0989fd20d3b43f4`,
+  closed trace `22bff17f7e63b00c73a0443cd24148a95d0c4911bc62f5c1f0c53452f232fd5d`.
+  The live explicit 1, 10 and 100 controls returned exactly 1, 10 and
+  100 hits. Corresponding `depth.json` hashes
+  `feb09adad655276113d170579f5153ac0777079f56dba0919ddc389b31bdd0b7`,
+  `30f0a8ae734d62e6d2bdf3542aee815a59346d43d9a5eb2047fed39c535848d2`,
+  `fef3dbd461232ca703b061f61326ef21c9b3c53303e0f0b619f00e3d2022f525`.
+- `win-search-step8-preserve-r1` pair
+  `7c683d4e2fe48b8131b70db66e72bcd7f36dca9d15e0f1169015bcc9af25e935`,
+  cumulative `f583952b54a5d7984f64079f47f0369ceb67f3eb0658fbe44895b3b2583b884b`,
+  closed trace `c9cdf375f6beddc6f7bcedad94b225f67263c207525e532050ca798471b010d0`,
+  closed handle `119c3a9ec8b158cb5a2bb17d8ce6ff6a6fb97116094bc663af6fe55453270c91`.
+  The individual arm receipts are
+  `2b394fc67e75ad88281df825fbe7612cd88ce8425a48a971c5b2e88979c3663c`
+  off and
+  `f4e4f4147572c8afa933dea5e6d0960b7b24c2c9d1073c88d3323e3be7f37beb`
+  on. The exact first-ten comparison uses Step 5 arm hashes
+  `57c0efacc7dd8667f83c584db692386c9c90623644207f5b8931ad31bb3166ce`
+  and `ef2d94c45b90c7686b838b652ccd373a7da48a5cc5a6da9249401adf1b227a4c`.
+
+The matched development build used checked Windows Cargo 1.98.0 and
+Nextest 0.9.148, `answer-loop/target-cuda`, incremental 1, offline,
+locked and with timing receipts. The initial compile found fixed-limit
+supervisor consumers. The corrected transport build receipt
+`83576f39066c029ad1e3c0fbd70d83217d6c590213bb00adba8002710312cf1a`
+records three scoped Clippy scopes, 21 Search tests (556 skipped),
+two MCP schema/admission tests (236 skipped, 214.23 s including
+compile), 173.44 s fixture build, 12 service tests (463 skipped)
+and 43.14 s CLI build. The selected revision reused the unchanged
+MCP/CLI boundary controls, passed 21 Search tests (47.42 s including
+compile) and 12 service tests, and built the fixture in 51.79 s.
+Exact commands and results are in receipt
+`e2b7e05202b250d92c23bebf5f117e673fcf3b3c9f32b9590be4af4794ee8fc0`.
+The final harness passed 22 Focus comparison and five vector-audit
+tests. Precise-query contraction was exercised by the sizing unit
+controls. The live quality replay covers broad tasks.
+
+Selected the tested prefix-preserving policy as the product default
+for omitted hybrid snippet limits. Production no-default Kernel
+Clippy passed in 3.41 s and the four focused product/sizing tests
+passed (477 skipped, 45.76 s including compile). The three selected
+real Windows CLI/MCP/Workbench transport tests passed (61 skipped,
+229.71 s including compile) in the same warmed target with locked
+offline inputs and timings. The production build receipt
+`365d05bc61a015a6d2c26e95dd228205942bce2478d9a2df93a620404494ecc3`
+records the exact commands and 2,635 checked outputs. D retained
+348,377,763,840 free bytes after validation.

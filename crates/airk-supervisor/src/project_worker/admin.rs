@@ -52,9 +52,10 @@ pub(super) fn validate_request(purpose: SessionPurpose, request: &protocol::Quer
             );
             let args: airk_mcp::SearchArgs =
                 serde_json::from_value(serde_json::Value::Object(request.arguments.clone()))?;
-            airk_core::validate_budget(args.limit, args.max_bytes)?;
+            let limit = args.limit.unwrap_or(10);
+            airk_core::validate_budget(limit, args.max_bytes)?;
             ensure!(
-                partition.resources.candidates <= args.limit,
+                partition.resources.candidates <= limit,
                 "Focus-only partition exceeds original Search candidate allowance"
             );
         } else {

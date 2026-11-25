@@ -2831,7 +2831,7 @@ impl Kernel {
                 json!({"adapters":Kernel::extraction_adapters().iter().map(|a|json!({"id":a.profile.adapter_id})).collect::<Vec<_>>(),"workbench":operation_catalog(),"read_guidance":airk_core::guidance::catalog(),"source_verification_capability":airk_core::verification::catalog()})
             }
             "search" => serde_json::to_value(
-                self.search_response_with_navigation(
+                self.search_response_with_adaptive_limit(
                     &SearchQuery {
                         text: string(args, "query")?.into(),
                         path_prefix: Some(prefix.into()),
@@ -2850,6 +2850,7 @@ impl Kernel {
                         .unwrap_or(false))
                     .then_some(768),
                     &search_filters(args)?,
+                    !args.contains_key("limit"),
                 )
                 .map_err(retain_search_failure)?,
             )?,

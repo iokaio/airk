@@ -262,14 +262,23 @@ pub struct SearchArgs {
     pub evidence_kind: Option<EvidenceKind>,
     /// Optional literal collection-relative prefix to exclude; does not change source authorization.
     pub exclude_path_prefix: Option<String>,
-    #[serde(default = "default_limit")]
-    #[schemars(range(min = 1, max = 100))]
-    pub limit: usize,
+    /// Maximum number of results. Omission lets Search choose the count.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "airk_core::verification::present_value"
+    )]
+    #[schemars(schema_with = "search_limit_schema")]
+    pub limit: Option<usize>,
     #[serde(default = "default_budget")]
     #[schemars(range(min = 1, max = 65536))]
     pub max_bytes: usize,
     /// Return complete indexed chunks instead of focused snippets.
     pub full_chunks: Option<bool>,
+}
+
+fn search_limit_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({"type":"integer","minimum":1,"maximum":100})
 }
 
 #[derive(Clone, Copy, Deserialize, schemars::JsonSchema)]
@@ -1063,7 +1072,7 @@ impl AirkServer {
                 let query = SearchQuery {
                     text: args.query,
                     path_prefix: args.path_prefix,
-                    limit: args.limit,
+                    limit: args.limit.unwrap_or(10),
                     max_bytes: args.max_bytes,
                 };
                 use airk_kernel::current::CurrentSearchMode;
@@ -1074,7 +1083,7 @@ impl AirkServer {
                     None if args.semantic => CurrentSearchMode::Vector,
                     None => CurrentSearchMode::Default,
                 };
-                kernel.search_response_with_navigation(
+                kernel.search_response_with_adaptive_limit(
                     &query,
                     mode,
                     (!args.full_chunks.unwrap_or(false)).then_some(768),
@@ -1083,6 +1092,7 @@ impl AirkServer {
                         evidence_kind: args.evidence_kind.map(Into::into),
                         exclude_path_prefix: args.exclude_path_prefix,
                     },
+                    args.limit.is_none(),
                 )
             },
         )
@@ -1984,10 +1994,40 @@ mod tests {
             serde_json::from_value(serde_json::json!({"query":"fixture"})).unwrap();
         assert!(default.mode.is_none());
         assert!(!default.semantic);
+        assert_eq!(default.limit, None);
         let hybrid: SearchArgs =
             serde_json::from_value(serde_json::json!({"query":"fixture", "mode":"hybrid"}))
                 .unwrap();
         assert!(matches!(hybrid.mode, Some(SearchMode::Hybrid)));
+        for limit in [1, 10, 100] {
+            let args: SearchArgs =
+                serde_json::from_value(serde_json::json!({"query":"fixture", "limit":limit}))
+                    .unwrap();
+            assert_eq!(args.limit, Some(limit));
+        }
+        for invalid in [
+            serde_json::Value::Null,
+            serde_json::json!("10"),
+            serde_json::json!(1.5),
+        ] {
+            assert!(
+                serde_json::from_value::<SearchArgs>(
+                    serde_json::json!({"query":"fixture", "limit":invalid})
+                )
+                .is_err()
+            );
+        }
+        let schema = serde_json::to_value(schemars::schema_for!(SearchArgs)).unwrap();
+        let limit = &schema["properties"]["limit"];
+        assert_eq!(limit["type"], "integer");
+        assert_eq!(limit["minimum"], 1);
+        assert_eq!(limit["maximum"], 100);
+        assert!(
+            !schema["required"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!("limit"))
+        );
         assert!(
             serde_json::from_value::<SearchArgs>(
                 serde_json::json!({"query":"fixture", "mode":"remote"})

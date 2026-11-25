@@ -20,6 +20,7 @@ use std::{
     sync::Arc,
 };
 
+mod adaptive;
 mod shortlist;
 pub(crate) mod v2;
 #[cfg(test)]
@@ -130,6 +131,7 @@ pub(crate) struct SearchOptions<'a> {
     /// Retain Default when a saved opt-out has already selected lexical search.
     pub requested_mode: Option<RequestedMode>,
     pub snippet_bytes: Option<usize>,
+    pub automatic_limit: bool,
     pub structural_hits: &'a [Hit],
     pub filters: &'a SearchFilters,
 }
@@ -205,6 +207,7 @@ pub(crate) fn search_current_read_with_snippets(
         SearchOptions {
             requested_mode: None,
             snippet_bytes,
+            automatic_limit: false,
             filters: &SearchFilters::default(),
             structural_hits: &[],
         },
@@ -236,6 +239,7 @@ fn search_with_switch(
     let SearchOptions {
         requested_mode,
         snippet_bytes,
+        automatic_limit,
         filters,
         structural_hits,
     } = options;
@@ -530,7 +534,24 @@ fn search_with_switch(
         && contextual_passages
         && query.limit == 10
         && query.max_bytes >= query.limit;
-    let gather_limit = if wide { query.limit * 4 } else { query.limit };
+    let automatic = automatic_limit
+        && profile.adaptive_results()
+        && snippet_bytes.is_some()
+        && matches!(mode, CurrentSearchMode::Hybrid);
+    let result_limit = if automatic {
+        adaptive::limit(
+            ranked
+                .iter()
+                .map(|(_, (score, candidate))| (*score, candidate.path())),
+            query.limit,
+            query.max_bytes,
+            plan.as_ref().is_some_and(|plan| plan.key.len() >= 8),
+        )
+    } else {
+        query.limit
+    };
+    let preserve = automatic && profile.preserves_adaptive_prefix() && result_limit > query.limit;
+    let mut gather_limit = if wide { query.limit * 4 } else { result_limit };
     let mut emitted = BTreeSet::new();
     let mut hits = Vec::new();
     let mut shortlist: Vec<(Hit, bool)> = Vec::new();
@@ -541,6 +562,10 @@ fn search_with_switch(
             && !emitted.insert(pointer.occurrence_id)
         {
             continue;
+        }
+        if preserve && hits.len() == query.limit {
+            const MIN_EXTRA_PASSAGE_BYTES: usize = 128;
+            gather_limit = result_limit.min(query.limit + remaining / MIN_EXTRA_PASSAGE_BYTES);
         }
         if hits.len() + shortlist.len() == gather_limit || remaining == 0 {
             incomplete = true;
@@ -554,7 +579,7 @@ fn search_with_switch(
             query,
             candidate,
             &mut read_bytes,
-            shortlist.len() >= query.limit,
+            shortlist.len() >= query.limit || (automatic && hits.len() >= query.limit),
         )?
         else {
             incomplete = true;
@@ -565,14 +590,28 @@ fn search_with_switch(
                 hit.citation.location,
                 airk_core::DocumentLocation::Lines { .. }
             );
+        let allocation_limit = if preserve {
+            if hits.len() < query.limit {
+                query.limit
+            } else {
+                gather_limit
+            }
+        } else {
+            result_limit
+        };
         let allowance = passage_allowance(
             snippet_bytes,
             remaining,
-            query.limit - hits.len(),
+            allocation_limit - hits.len(),
             contextual_hit,
         );
         let allowance = if wide {
             allowance.min(query.max_bytes / query.limit)
+        } else if automatic && !preserve && result_limit > query.limit && hits.len() < 4 {
+            let reserve = (result_limit - hits.len() - 1) * adaptive::TAIL_BYTES;
+            snippet_bytes
+                .unwrap_or(allowance)
+                .min(remaining.saturating_sub(reserve))
         } else {
             allowance
         };
@@ -613,6 +652,14 @@ fn search_with_switch(
             shortlist.push((hit, semantic));
             continue;
         }
+        if automatic
+            && hits.len() >= query.limit
+            && hits
+                .iter()
+                .any(|seen: &Hit| shortlist::duplicate(&seen.citation, &hit.citation))
+        {
+            continue;
+        }
         let (text, cut) = truncate_utf8(&hit.text, remaining);
         remaining -= text.len();
         hit.text = text;
@@ -644,6 +691,24 @@ fn search_with_switch(
             .map(|index| shortlist[index].0.clone())
             .collect();
         incomplete |= hits.iter().any(|hit| hit.truncated);
+    }
+    #[cfg(feature = "test-support")]
+    if automatic {
+        use sha2::{Digest, Sha256};
+        let paths: BTreeSet<_> = hits.iter().map(|hit| &hit.citation.path).collect();
+        eprintln!(
+            "AIRK_SEARCH_ADAPTIVE {}",
+            serde_json::json!({
+                "query_sha256": format!("{:x}", Sha256::digest(query.text.as_bytes())),
+                "publication": token,
+                "default_limit": query.limit,
+                "candidate_limit": result_limit,
+                "target": gather_limit,
+                "hits": hits.len(),
+                "text_bytes": hits.iter().map(|hit| hit.text.len()).sum::<usize>(),
+                "unique_paths": paths.len(),
+            })
+        );
     }
     Ok(CurrentSearchEvidence {
         token,

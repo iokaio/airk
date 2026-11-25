@@ -58,6 +58,11 @@ pub(crate) fn envelope(read: &CurrentRead) -> Result<RevisionEnvelope> {
     ))
 }
 
+struct SearchPresentation {
+    navigation: bool,
+    automatic_limit: bool,
+}
+
 #[cfg(feature = "test-support")]
 fn search_hit_hashes(hits: &[airk_core::Hit]) -> Result<Vec<String>> {
     use sha2::{Digest, Sha256};
@@ -314,7 +319,10 @@ impl Kernel {
             snippet_bytes,
             filters,
             self.current_reader()?,
-            false,
+            SearchPresentation {
+                navigation: false,
+                automatic_limit: false,
+            },
         )?;
         if cutoff.is_empty() {
             self.focus_search(query, response.evidence)
@@ -331,13 +339,28 @@ impl Kernel {
         snippet_bytes: Option<usize>,
         filters: &airk_core::SearchFilters,
     ) -> Result<super::SearchWithDefinitionsResponse> {
+        self.search_response_with_adaptive_limit(query, mode, snippet_bytes, filters, false)
+    }
+
+    /// Carries the caller's omitted result limit into the canonical Search selection.
+    pub fn search_response_with_adaptive_limit(
+        &self,
+        query: &SearchQuery,
+        mode: super::CurrentSearchMode,
+        snippet_bytes: Option<usize>,
+        filters: &airk_core::SearchFilters,
+        automatic_limit: bool,
+    ) -> Result<super::SearchWithDefinitionsResponse> {
         let (mut result, cutoff) = self.search_response_on_read(
             query,
             mode,
             snippet_bytes,
             filters,
             self.current_reader()?,
-            true,
+            SearchPresentation {
+                navigation: true,
+                automatic_limit,
+            },
         )?;
         let metadata_bytes = if result.definitions.is_empty() {
             0
@@ -346,10 +369,16 @@ impl Kernel {
                 .len()
                 .saturating_add(16)
         };
+        let automatic_query =
+            (automatic_limit && result.evidence.hits.len() > query.limit).then(|| SearchQuery {
+                limit: result.evidence.hits.len(),
+                ..query.clone()
+            });
+        let focus_query = automatic_query.as_ref().unwrap_or(query);
         result.evidence = if cutoff.is_empty() {
-            self.focus_search_with_metadata(query, result.evidence, metadata_bytes)?
+            self.focus_search_with_metadata(focus_query, result.evidence, metadata_bytes)?
         } else {
-            self.focus_at_search_cutoff(query, result.evidence, cutoff, metadata_bytes)?
+            self.focus_at_search_cutoff(focus_query, result.evidence, cutoff, metadata_bytes)?
         };
         Ok(result)
     }
@@ -417,7 +446,7 @@ impl Kernel {
         snippet_bytes: Option<usize>,
         filters: &airk_core::SearchFilters,
         read: Arc<CurrentRead>,
-        navigation: bool,
+        presentation: SearchPresentation,
     ) -> Result<(super::SearchWithDefinitionsResponse, Vec<airk_core::Hit>)> {
         let disclose_readiness = !read.selected_scope_restricts_paths();
         if matches!(
@@ -489,6 +518,7 @@ impl Kernel {
             super::search::SearchOptions {
                 requested_mode: Some(requested_mode),
                 snippet_bytes,
+                automatic_limit: presentation.automatic_limit,
                 filters,
                 structural_hits: &structure,
             },
@@ -507,7 +537,7 @@ impl Kernel {
             hits: evidence.hits,
             truncated: evidence.truncated,
         };
-        let definitions = if navigation {
+        let definitions = if presentation.navigation {
             match early_definitions {
                 Some(hints) => hints,
                 None => super::search::definition_hints(&self.store, &read, query, filters)?,

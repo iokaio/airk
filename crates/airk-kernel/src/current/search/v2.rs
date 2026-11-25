@@ -40,6 +40,9 @@ pub(crate) enum SearchProfile {
     #[cfg(any(test, feature = "test-support"))]
     WideCutoff,
     #[cfg(any(test, feature = "test-support"))]
+    AdaptiveResults,
+    AdaptivePreserve,
+    #[cfg(any(test, feature = "test-support"))]
     Fusion {
         weighted: bool,
         diverse: bool,
@@ -59,9 +62,9 @@ impl SearchProfile {
             #[cfg(any(test, feature = "test-support"))]
             Self::Keywords => (true, false),
             Self::StructuralDefinitions => (true, false),
-            Self::KeywordPassages => (true, false),
+            Self::KeywordPassages | Self::AdaptivePreserve => (true, false),
             #[cfg(any(test, feature = "test-support"))]
-            Self::WideShortlist | Self::WideCutoff => (true, false),
+            Self::WideShortlist | Self::WideCutoff | Self::AdaptiveResults => (true, false),
             #[cfg(any(test, feature = "test-support"))]
             Self::SemanticSubqueries => (true, false),
             #[cfg(any(test, feature = "test-support"))]
@@ -77,9 +80,9 @@ impl SearchProfile {
     pub(crate) fn uses_semantic_subqueries(self) -> bool {
         match self {
             Self::StructuralDefinitions => true,
-            Self::KeywordPassages => true,
+            Self::KeywordPassages | Self::AdaptivePreserve => true,
             #[cfg(any(test, feature = "test-support"))]
-            Self::WideShortlist | Self::WideCutoff => true,
+            Self::WideShortlist | Self::WideCutoff | Self::AdaptiveResults => true,
             #[cfg(any(test, feature = "test-support"))]
             Self::SemanticSubqueries => true,
             #[cfg(any(test, feature = "test-support"))]
@@ -89,7 +92,7 @@ impl SearchProfile {
     }
 
     pub(crate) fn keyword_passages(self) -> bool {
-        self == Self::KeywordPassages || self.wide_shortlist()
+        self == Self::KeywordPassages || self.wide_shortlist() || self.adaptive_results()
     }
 
     pub(crate) fn wide_shortlist(self) -> bool {
@@ -114,6 +117,19 @@ impl SearchProfile {
         }
     }
 
+    pub(crate) fn adaptive_results(self) -> bool {
+        match self {
+            Self::AdaptivePreserve => true,
+            #[cfg(any(test, feature = "test-support"))]
+            Self::AdaptiveResults => true,
+            _ => false,
+        }
+    }
+
+    pub(crate) fn preserves_adaptive_prefix(self) -> bool {
+        self == Self::AdaptivePreserve
+    }
+
     pub(crate) fn branch_weight(self, branch: BranchKind) -> f64 {
         match (self, branch) {
             #[cfg(any(test, feature = "test-support"))]
@@ -126,9 +142,9 @@ impl SearchProfile {
         match self {
             Self::LegacyV2 => Some(PER_FILE),
             Self::StructuralDefinitions => Some(2),
-            Self::KeywordPassages => Some(2),
+            Self::KeywordPassages | Self::AdaptivePreserve => Some(2),
             #[cfg(any(test, feature = "test-support"))]
-            Self::WideShortlist | Self::WideCutoff => Some(2),
+            Self::WideShortlist | Self::WideCutoff | Self::AdaptiveResults => Some(2),
             #[cfg(any(test, feature = "test-support"))]
             Self::Fusion { diverse: true, .. } => Some(2),
             #[cfg(any(test, feature = "test-support"))]
@@ -152,6 +168,8 @@ fn parse(value: Result<String, std::env::VarError>) -> Option<SearchProfile> {
             "keyword_passages" => Some(SearchProfile::KeywordPassages),
             "wide_shortlist" => Some(SearchProfile::WideShortlist),
             "wide_cutoff" => Some(SearchProfile::WideCutoff),
+            "adaptive_results" => Some(SearchProfile::AdaptiveResults),
+            "adaptive_preserve" => Some(SearchProfile::AdaptivePreserve),
             "fusion_weights" => Some(SearchProfile::Fusion {
                 weighted: true,
                 diverse: false,
@@ -207,7 +225,7 @@ pub(crate) fn active() -> anyhow::Result<SearchProfile> {
     }
     #[cfg(not(feature = "test-support"))]
     {
-        Ok(SearchProfile::KeywordPassages)
+        Ok(SearchProfile::AdaptivePreserve)
     }
 }
 

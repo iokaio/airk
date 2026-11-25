@@ -331,6 +331,42 @@ the original publications with zero indexing jobs. The true cutoff
 receipt stayed private because it includes candidates omitted from
 the public response.
 
+### Step 8 result — Adaptive result count
+
+| Policy | Full coverage off / on | Top ten off / on | Top three off / on | Median off / on | p95 off / on |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Original | 14 / 14 | 14 / 14 | 6 / 8 | 1,066.5 / 1,556 ms | 1,718 / 2,477 ms |
+| Step 5, retained through Step 7 | 18 / 18 | 18 / 18 | 9 / 10 | 1,155.5 / 1,662 ms | 2,197 / 3,491 ms |
+| Adaptive, shorter early excerpts | 20 / 20 | 16 / 16 | 9 / 10 | 1,151 / 1,757 ms | 2,293 / 3,083 ms |
+| Adaptive, preserve early excerpts | 20 / 20 | 18 / 18 | 9 / 10 | 1,094 / 1,654 ms | 2,230 / 3,117 ms |
+
+All 20 frozen wire requests omitted the limit. The first adaptive trial
+gained four notes and lost two because shorter excerpts removed
+qualifying lines at ranks five and seven. The selected revision packs
+the original first ten, then uses the remaining bytes for extra hits.
+For every request in both arms, the first ten hit identities, text and
+order exactly match Step 5. Two new Munarium essentials at ranks 17 and
+19 raise full coverage by two over Step 5 and six over the original.
+Neither profile changes the published indexes.
+
+The selected run returned 16 to 20 hits per request, median 19, and
+12 to 19 distinct paths, median 15.5. Returned text was 7,969 to 8,192
+bytes, median 8,192. The original and Step 5 receipts did not retain
+individual hit text byte counts. The byte budget stayed at 8,192.
+Ordinary CUDA Focus applied on all 20 requests and moved six essentials
+up while leaving membership unchanged. It did not score the extra
+tail. Observed median request time was 61.5 ms lower with Focus off
+and 8 ms lower with it on than Step 5. Run order and this small cohort
+limit the latency comparison.
+
+The explicit 1, 10 and 100 controls each returned their requested
+count on the same native fixture. Scoped tests exercise the byte ceiling,
+duplicate paths and clear score separation for precise queries. Broad
+requests supplied the live quality cohort. Select the prefix-preserving
+policy for omitted hybrid snippet limits. Keep explicit limits and
+fixed combined member allocations. The agent can choose which returned
+passages to use.
+
 ## Evidence and implementation references
 
 - [Matched Focus comparison and first-Search miss attribution](../simplify/one-process-ledger.md#25-november-2026--matched-ordinary-search-with-and-without-cuda-focus)

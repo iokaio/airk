@@ -30,6 +30,8 @@ CUDA = "onnxruntime-cuda/1.30.0/device-execution/"
 SHA = re.compile(r"[a-f0-9]{64}")
 DEFAULT_LIMIT = 10
 DEFAULT_MAX_BYTES = 8192
+ADAPTIVE_PROFILES = {"adaptive_results", "adaptive_preserve"}
+ADAPTIVE_MAX_HITS = 20
 CUTOFF_PROFILE = "wide_cutoff"
 CUTOFF_MARKER = b"AIRK_SEARCH_CUTOFF "
 CUTOFF_LOG_LIMIT = 32 * 2**20
@@ -242,7 +244,18 @@ def compare_cutoff(left, right):
     return len(set(right["hit_sha256s"]) - set(left["hit_sha256s"]))
 
 
-def measure(request: dict, outcome, profile, publication, index_id, revision, cutoff=None) -> dict:
+def check_adaptive_response(limit, max_bytes, omitted, hit_count, response):
+    common.require(type(omitted) is bool and (not omitted or limit == DEFAULT_LIMIT),
+                   "adaptive count requires an omitted caller limit")
+    cap = ADAPTIVE_MAX_HITS if omitted else limit
+    text_bytes, paths = response["text_bytes"], response["unique_paths"]
+    common.require(type(hit_count) is int and 0 <= hit_count <= cap
+                   and type(text_bytes) is int and 0 <= text_bytes <= max_bytes
+                   and type(paths) is int and int(hit_count > 0) <= paths <= hit_count,
+                   "adaptive response exceeded its count or byte budget or has invalid path coverage")
+
+
+def measure(request: dict, outcome, profile, publication, index_id, revision, cutoff=None, *, adaptive=False) -> dict:
     row = {k: request[k] for k in ("repo", "slot", "key", "request_sha256", "limit", "max_bytes", "response_mode")}
     row.update(ok=outcome.ok, elapsed_ms=outcome.elapsed_ms, stdout_bytes=len(outcome.stdout),
                stdout_sha256=common.sha256_bytes(outcome.stdout), stderr_sha256=common.sha256_bytes(outcome.stderr))
@@ -254,7 +267,20 @@ def measure(request: dict, outcome, profile, publication, index_id, revision, cu
                    and body["execution"]["served_mode"] == "hybrid",
                    "Search did not return the pinned hybrid publication")
     hits = [hit_identity(hit) for hit in body["hits"]]
-    common.require(len(hits) <= request["limit"], "Search returned more than its original limit")
+    if adaptive:
+        args = request["arguments"]
+        common.require(request["limit"] == args.get("limit", DEFAULT_LIMIT)
+                       and request["max_bytes"] == args.get("max_bytes", DEFAULT_MAX_BYTES),
+                       "adaptive Search changed frozen request settings")
+        omitted = "limit" not in args
+        paths = {hit["citation"]["path"] for hit in body["hits"]}
+        common.require(all(isinstance(path, str) and path for path in paths), "adaptive Search has an invalid hit path")
+        response = {"text_bytes": sum(len(hit["text"].encode("utf-8")) for hit in body["hits"]),
+                    "unique_paths": len(paths)}
+        check_adaptive_response(request["limit"], request["max_bytes"], omitted, len(hits), response)
+        row.update(adaptive_limit_omitted=omitted, adaptive_response=response)
+    else:
+        common.require(len(hits) <= request["limit"], "Search returned more than its original limit")
     spans = [evidence.extract(hit) for hit in body["hits"]]
     if cutoff is None:
         receipt = focus_receipt(body.get("focus"), profile, publication, index_id, revision, hits)
@@ -308,6 +334,7 @@ def collect(args) -> dict:
                        for repo in repos), "Search starting publication or readiness differs")
     rows = []
     cutoff_path = handle.path.parent / "service.log" if identity["search_profile"] == CUTOFF_PROFILE else None
+    adaptive = identity["search_profile"] in ADAPTIVE_PROFILES
     for request in cohort["rows"]:
         repo = request["repo"]
         common.require(request["request_sha256"] == digest([repo, request["arguments"], list(common.AGENT_STRIPPED_ENV)])
@@ -318,7 +345,8 @@ def collect(args) -> dict:
                                   strip_env=common.AGENT_STRIPPED_ENV)
         event = cutoff_event(before, cutoff_log(cutoff_path), request["arguments"]["query"], tokens[repo]) \
             if cutoff_path else None
-        rows.append(measure(request, result, profile, tokens[repo], handle.index_id(repo), pre["revision"], event))
+        rows.append(measure(request, result, profile, tokens[repo], handle.index_id(repo), pre["revision"], event,
+                            adaptive=adaptive))
     end = {repo: settled.snapshot(handle, repo, args.timeout) for repo in repos}
     post = stage(handle, profile, args.timeout)
     common.require(pre["revision"] == post["revision"] and common.sha256_file(handle.path) == handle.sha256
@@ -328,12 +356,27 @@ def collect(args) -> dict:
             "stage_before": pre, "stage_after": post, "rows": rows}
 
 
+def response_sizes(rows):
+    result = {}
+    for arm in ("off", "focus"):
+        hits = [row[f"{arm}_hits"] for row in rows]
+        values = {key: [row[f"{arm}_adaptive_response"][key] for row in rows]
+                  for key in ("text_bytes", "unique_paths")}
+        result[arm] = {"hits": {"min": min(hits), "median": median(hits), "max": max(hits),
+                                "below_ten": sum(count < 10 for count in hits),
+                                "at_ten": hits.count(10), "above_ten": sum(count > 10 for count in hits)},
+                       **{key: {"min": min(series), "median": median(series), "max": max(series)}
+                          for key, series in values.items()}}
+    return result
+
+
 def compare(off: dict, focus: dict) -> dict:
     common.require(off["schema"] == focus["schema"] == SCHEMA and off["kind"] == "off" and focus["kind"] == "focus"
                    and off["cohort_sha256"] == focus["cohort_sha256"] and off["identity"] == focus["identity"]
                    and roster(off["rows"]) == roster(focus["rows"]), "arms differ in cohort, fixture, publication or order")
     rows = []
     cutoff = off["identity"].get("search_profile") == CUTOFF_PROFILE
+    adaptive = off["identity"].get("search_profile") in ADAPTIVE_PROFILES
     for left, right in zip(off["rows"], focus["rows"], strict=True):
         common.require(all(left[k] == right[k] for k in ("key", "request_sha256", "limit", "max_bytes", "response_mode")),
                        "arm request identity differs")
@@ -351,6 +394,19 @@ def compare(off: dict, focus: dict) -> dict:
                        else receipt["original_hit_sha256s"] == left["hit_sha256s"])
             if cutoff:
                 row.update(cutoff_replacements=compare_cutoff(left, right), unranked_order_matches_off=True)
+            if adaptive:
+                common.require(left["adaptive_limit_omitted"] == right["adaptive_limit_omitted"]
+                               and left["adaptive_response"] == right["adaptive_response"]
+                               and row["same_hit_multiset"]
+                               and (row["unranked_order_matches_off"] if receipt["state"] == "cuda_applied"
+                                    else left["hit_sha256s"] == right["hit_sha256s"]),
+                               "adaptive Focus changed the selected evidence or deterministic input order")
+                for arm, item in (("off", left), ("focus", right)):
+                    common.require(len(item["hit_sha256s"]) == item["hits_returned"], "adaptive hit count differs")
+                    check_adaptive_response(row["limit"], row["max_bytes"], item["adaptive_limit_omitted"],
+                                            item["hits_returned"], item["adaptive_response"])
+                    row[f"{arm}_adaptive_response"] = item["adaptive_response"]
+                row["adaptive_limit_omitted"] = left["adaptive_limit_omitted"]
             common.require(left["focus"]["state"] == "absent" and [x["id"] for x in left["notes"]] ==
                            [x["id"] for x in right["notes"]], "off Focus or compared note identity differs")
             row["notes"] = [{"id": a["id"], "off_rank": a["rule2"], "focus_rank": b["rule2"]}
@@ -366,6 +422,7 @@ def compare(off: dict, focus: dict) -> dict:
     return {"schema": SCHEMA, "kind": "comparison", "cohort_sha256": off["cohort_sha256"], "identity": off["identity"],
             **({"focus_profile": focus_profile} if focus_profile else {}),
             "complete": len(matched) == len(rows) and len(applied) == len(eligible) and bool(applied),
+            **({"adaptive_responses": response_sizes(matched)} if adaptive and matched else {}),
             "counts": {"planned": len(rows), "matched": len(matched), "focus_eligible": len(eligible),
                        "cuda_applied": len(applied),
                        **({"cutoff_applied": len(applied),
@@ -374,6 +431,9 @@ def compare(off: dict, focus: dict) -> dict:
                        "applied_original_order_matches_off": sum(r["unranked_order_matches_off"] for r in applied),
                        "essential_matched_pool": len(notes), "essential_off_covered": sum(n["off_rank"] is not None for n in notes),
                        "essential_focus_covered": sum(n["focus_rank"] is not None for n in notes),
+                       **({f"essential_{arm}_top{cap}": sum(valid_rank(n[f"{arm}_rank"], cap) and n[f"{arm}_rank"] is not None
+                                                            for n in notes)
+                           for arm in ("off", "focus") for cap in (3, 10)} if adaptive else {}),
                        "off_only": sum(n["off_rank"] is not None and n["focus_rank"] is None for n in notes),
                        "focus_only": sum(n["off_rank"] is None and n["focus_rank"] is not None for n in notes),
                        "both_ranked_higher_with_focus": sum(n["focus_rank"] < n["off_rank"] for n in shared),
@@ -400,13 +460,21 @@ def report_rows(report: dict) -> list[dict]:
                    and set(report["arm_sha256"]) == {"off", "focus"}
                    and all(SHA.fullmatch(pin) for pin in report["arm_sha256"].values()),
                    "expected an authenticated complete Focus off/on comparison")
+    adaptive = report["identity"].get("search_profile") in ADAPTIVE_PROFILES
     for row in rows:
         limit = row["limit"]
         ids = [note["id"] for note in row["notes"]]
+        arms = ("off", "focus")
+        rank_limits = dict.fromkeys(arms, limit)
+        if adaptive:
+            for arm in arms:
+                check_adaptive_response(limit, row["max_bytes"], row["adaptive_limit_omitted"],
+                                        row[f"{arm}_hits"], row[f"{arm}_adaptive_response"])
+                rank_limits[arm] = row[f"{arm}_hits"]
         common.require(type(limit) is int and limit > 0 and ids and len(ids) == len(set(ids))
-                       and all(type(row[f"{arm}_ms"]) is int and row[f"{arm}_ms"] >= 0 for arm in ("off", "focus"))
-                       and all(valid_rank(note[f"{arm}_rank"], limit)
-                               for note in row["notes"] for arm in ("off", "focus")),
+                       and all(type(row[f"{arm}_ms"]) is int and row[f"{arm}_ms"] >= 0 for arm in arms)
+                       and all(valid_rank(note[f"{arm}_rank"], rank_limits[arm])
+                               for note in row["notes"] for arm in arms),
                        "invalid matched rank, essential roster or elapsed time")
     return rows
 
@@ -418,7 +486,7 @@ def arm_metrics(ranks: list[int | None], times: list[int]) -> dict:
             "median_ms": median(times), "p95_ms": sorted(times)[math.ceil(0.95 * len(times)) - 1]}
 
 
-def matched_effects(reference: list[dict], current: list[dict]) -> dict:
+def matched_effects(reference: list[dict], current: list[dict], *, adaptive=False) -> dict:
     groups = {"all": (reference, current)}
     groups.update({repo: ([r for r in reference if r["repo"] == repo],
                           [r for r in current if r["repo"] == repo]) for repo in common.REPOS})
@@ -429,6 +497,9 @@ def matched_effects(reference: list[dict], current: list[dict]) -> dict:
             ranks = [[note[f"{arm}_rank"] for row in rows for note in row["notes"]] for rows in (before, after)]
             times = [[row[f"{arm}_ms"] for row in rows] for rows in (before, after)]
             old, new = [arm_metrics(r, t) for r, t in zip(ranks, times, strict=True)]
+            if adaptive:
+                for metrics, depth_ranks in zip((old, new), ranks, strict=True):
+                    metrics["top10"] = sum(rank is not None and rank <= 10 for rank in depth_ranks)
             pairs = list(zip(*ranks, strict=True))
             shared = [(a, b) for a, b in pairs if a is not None and b is not None]
             arms[arm] = {"reference": old, "current": new,
@@ -439,8 +510,8 @@ def matched_effects(reference: list[dict], current: list[dict]) -> dict:
                          "rank_same": sum(a == b for a, b in shared),
                          "delta": {key: new[key] - old[key] for key in old},
                          "median_paired_ms_delta": median(b - a for a, b in zip(*times, strict=True))}
-        focus_delta = {key: arms["focus"]["delta"][key] - arms["off"]["delta"][key]
-                       for key in ("covered", "top3", "mean_inverse_rank")}
+        focus_keys = ("covered", "top3", "mean_inverse_rank", "top10") if adaptive else ("covered", "top3", "mean_inverse_rank")
+        focus_delta = {key: arms["focus"]["delta"][key] - arms["off"]["delta"][key] for key in focus_keys}
         focus_delta["median_paired_ms_delta"] = median(
             (b["focus_ms"] - b["off_ms"]) - (a["focus_ms"] - a["off_ms"])
             for a, b in zip(before, after, strict=True))
@@ -464,6 +535,9 @@ def cumulative(step: int, reports: dict, pins: dict, experimental_index: bool, o
     common.require(1 <= step <= 8 and (not experimental_index or step == 6), "experimental indexes are allowed only at step 6")
     common.require((step == 1) == (pins["prior"] == pins["original"]) and pins["current"] not in (pins["prior"], pins["original"]),
                    "step 1 reuses the original as its prior; later steps require a distinct prior and current")
+    adaptive = {name for name, report in reports.items() if report["identity"].get("search_profile") in ADAPTIVE_PROFILES}
+    common.require(not adaptive or (step == 8 and adaptive == {"current"}),
+                   "adaptive Search results require the Step 8 current comparison")
     rows = {name: report_rows(report) for name, report in reports.items()}
     original = reports["original"]
     profile = original.get("focus_profile")
@@ -501,7 +575,8 @@ def cumulative(step: int, reports: dict, pins: dict, experimental_index: bool, o
     return {"schema": SCHEMA, "kind": "cumulative", "step": step, "cohort_sha256": original["cohort_sha256"],
             "focus_profile": profile, "experimental_index": experimental_index, "index_changes": index_changes,
             "input_sha256": pins, "run_identities": {name: r["identity"] for name, r in reports.items()},
-            "comparisons": {name: {"metrics": matched_effects(rows[name], rows["current"]),
+            **({"adaptive_responses": response_sizes(rows["current"])} if adaptive else {}),
+            "comparisons": {name: {"metrics": matched_effects(rows[name], rows["current"], adaptive=bool(adaptive)),
                                    "changed_notes": changed_notes(rows[name], rows["current"])}
                             for name in ("original", "prior")},
             "scope": "Matched first Search replies. Focus interaction is the Focus-on change minus the Focus-off change. "

@@ -47,7 +47,8 @@ fn admit_resolved(
     else {
         return Ok(context);
     };
-    if airk_core::validate_budget(args.limit, args.max_bytes).is_err() {
+    let limit = args.limit.unwrap_or(10);
+    if airk_core::validate_budget(limit, args.max_bytes).is_err() {
         return Ok(context);
     }
     let Some(limits) = limits_for(*index).ok().flatten() else {
@@ -57,7 +58,7 @@ fn admit_resolved(
         context,
         selection,
         *index,
-        args.limit,
+        limit,
         airk_core::service::MAX_FRAME_BYTES,
         &limits,
     )

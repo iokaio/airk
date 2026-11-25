@@ -255,6 +255,71 @@ class CumulativeSearch(unittest.TestCase):
             ab.cumulative(1, reports, pins, False)
 
 
+class AdaptiveSearch(unittest.TestCase):
+    def test_only_omitted_limit_with_adaptive_profile_can_exceed_ten(self):
+        request = {"repo": "bookbuilder", "slot": "C1", "key": "case", "request_sha256": "a" * 64,
+                   "limit": 10, "max_bytes": 8192, "response_mode": "terse (product default)",
+                   "arguments": {"query": "search"}, "essential": []}
+        hits = [hit(f"src/{index}.rs", 1) | {"text": "\u00e9"} for index in range(12)]
+        body = {"publication": {"token": TOKEN}, "execution": {"served_mode": "hybrid", "incomplete": False},
+                "truncated": False, "hits": hits}
+        outcome = common.CallOutcome(True, 0, b"private bytes", b"", 14, {"structuredContent": body}, None)
+        result = ab.measure(request, outcome, None, TOKEN, INDEX, REVISION, adaptive=True)
+        self.assertEqual(result["hits_returned"], 12)
+        self.assertEqual(result["adaptive_response"], {"text_bytes": 24, "unique_paths": 12})
+        self.assertTrue(result["adaptive_limit_omitted"])
+        with self.assertRaisesRegex(common.HarnessError, "original limit"):
+            ab.measure(request, outcome, None, TOKEN, INDEX, REVISION)
+        explicit = request | {"arguments": request["arguments"] | {"limit": 10}}
+        with self.assertRaisesRegex(common.HarnessError, "count or byte budget"):
+            ab.measure(explicit, outcome, None, TOKEN, INDEX, REVISION, adaptive=True)
+        body["hits"][0]["text"] = "\u00e9" * 4096
+        with self.assertRaisesRegex(common.HarnessError, "count or byte budget"):
+            ab.measure(request, outcome, None, TOKEN, INDEX, REVISION, adaptive=True)
+        body["hits"] = hits[1:] * 2
+        with self.assertRaisesRegex(common.HarnessError, "count or byte budget"):
+            ab.measure(request, outcome, None, TOKEN, INDEX, REVISION, adaptive=True)
+
+    def test_pair_checks_native_permutation_and_records_response_sizes(self):
+        off, focus = SearchFocusAB().arms()
+        off["identity"]["search_profile"] = "adaptive_preserve"
+        for arm in (off, focus):
+            for row in arm["rows"]:
+                row.update(adaptive_limit_omitted=True, adaptive_response={"text_bytes": 22, "unique_paths": 2})
+        value = ab.compare(off, focus)
+        self.assertTrue(value["complete"])
+        self.assertEqual(value["adaptive_responses"]["off"]["hits"]["below_ten"], 20)
+        self.assertEqual(value["adaptive_responses"]["focus"]["text_bytes"]["median"], 22)
+        self.assertEqual(value["counts"]["essential_focus_top10"], 20)
+        focus["rows"][0]["focus"]["original_hit_sha256s"].reverse()
+        with self.assertRaisesRegex(common.HarnessError, "adaptive Focus changed"):
+            ab.compare(off, focus)
+
+    def test_cumulative_splits_full_coverage_from_top_ten_and_checks_actual_depth(self):
+        reports, pins = CumulativeSearch().first()
+        pins["prior"] = "c" * 64
+        current = reports["current"]
+        current["identity"]["search_profile"] = "adaptive_results"
+        for row in current["rows"]:
+            row.update(off_hits=12, focus_hits=12, adaptive_limit_omitted=True,
+                       off_adaptive_response={"text_bytes": 24, "unique_paths": 9},
+                       focus_adaptive_response={"text_bytes": 24, "unique_paths": 9})
+        current["rows"][0]["notes"][0]["off_rank"] = 12
+        result = ab.cumulative(8, reports, pins, False)
+        for reference in ("original", "prior"):
+            metrics = result["comparisons"][reference]["metrics"]["all"]["off"]
+            self.assertEqual(metrics["delta"]["covered"], 0)
+            self.assertEqual(metrics["delta"]["top10"], -1)
+            self.assertEqual(metrics["delta"]["top3"], -1)
+        self.assertEqual(result["adaptive_responses"]["off"]["hits"]["above_ten"], 20)
+        with self.assertRaisesRegex(common.HarnessError, "Step 8 current"):
+            ab.cumulative(7, reports, pins, False)
+        current["rows"][0]["notes"][0]["off_rank"] = 13
+        with self.assertRaisesRegex(common.HarnessError, "invalid matched rank"):
+            ab.cumulative(8, reports, pins, False)
+
+
+
 class PrivateCutoff(unittest.TestCase):
     def event(self, applied):
         held = [f"{i:064x}" for i in range(8)]
