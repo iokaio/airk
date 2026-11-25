@@ -71,6 +71,7 @@ fn with_profile(
             requested_mode: None,
             snippet_bytes: None,
             filters: &SearchFilters::default(),
+            structural_hits: &[],
         },
         profile,
     )
@@ -258,6 +259,54 @@ fn fusion_trials_separate_keyword_weight_and_file_order() {
         vec!["a", "a", "b", "b", "c", "a", "a"],
     );
     assert!(weighted.uses_semantic_subqueries() && diverse.uses_semantic_subqueries());
+}
+
+#[test]
+fn structure_requires_unique_complete_match_and_full_span() -> Result<()> {
+    let (_owner, kernel) = fixture()?;
+    let read = kernel.current_reader()?;
+    let file = read.artifact("notes.txt")?.context("test source missing")?;
+    let target = DefinitionPointer {
+        citation: airk_core::Citation {
+            path: file.path,
+            content_hash: file.content_hash,
+            start_line: 1,
+            end_line: 1,
+            location: airk_core::DocumentLocation::Lines { start: 1, end: 1 },
+        },
+        symbol_id: None,
+    };
+    let mut hint = DefinitionHint {
+        name: "notes".into(),
+        total_matches: Some(1),
+        lower_bound: 1,
+        complete: true,
+        evidence_scope: "native_definition_records",
+        suggested_tool: "symbols",
+        matches: vec![target],
+    };
+    let hits = kernel.structural_search_hits(&read, std::slice::from_ref(&hint), 768)?;
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].text.trim(), "provider provider");
+    assert!(
+        kernel
+            .structural_search_hits(&read, std::slice::from_ref(&hint), 3)?
+            .is_empty()
+    );
+    hint.total_matches = Some(2);
+    assert!(
+        kernel
+            .structural_search_hits(&read, std::slice::from_ref(&hint), 768)?
+            .is_empty()
+    );
+    hint.total_matches = Some(1);
+    hint.complete = false;
+    assert!(
+        kernel
+            .structural_search_hits(&read, &[hint], 768)?
+            .is_empty()
+    );
+    Ok(())
 }
 
 fn groups(words: &[&str]) -> Vec<TermGroup> {

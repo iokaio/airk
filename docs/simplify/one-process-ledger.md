@@ -18963,3 +18963,39 @@ same historical job set, with zero new Index or Vectors jobs.
 D: retained 366,852,390,912 bytes after the third closure. Continue
 with exact structural evidence and verify whether the settled
 publications can support a provider-asserted reference hop.
+
+### 25 November 2026 — Search step 4 exact structural evidence
+
+The user added [a wider shortlist and adaptive result count](../arbiter/search-improvement-plan.md#7-rank-a-wider-shortlist-before-selecting-ten-results)
+as sequential Steps 7 and 8. The retained original pair still serves
+as the cumulative reference. Step 7 holds ten returned hits. Step 8
+varies the automatic hit count and preserves explicit caller limits.
+
+The Step 4 image SHA-256 is
+`c530c1fbc0a9047af955c61b459ddc7976bb1e6d33ed4d03a2a11165ed121578`.
+The successful Cargo receipt is
+`1e37dc7d5c6696df5dd598f26afb8152016686bcb8391d80b0f09d6bdbc67550`,
+with passing Clippy, 17 Search tests (551 filtered) and four CUDA
+restart tests (471 filtered). Earlier scoped compile attempts caught
+Citation equality and production profile exhaustiveness, both corrected.
+
+The matched run found 16/113 essentials and six in the top three in
+each setting. It changed zero essential ranks versus Step 3. Focus
+applied to all 20 requests, moving two essentials up, one down and
+thirteen unchanged within the paired run. Native traces agreed
+across arms. Three requests admitted one verified definition apiece
+and none overlapped a qualifying essential. No publication exposed
+the imported analysis resource needed for a provider-resolved
+reference hop. None of the 83 symbol-annotated essentials was
+explicitly named in its question. That evidence rules out repeating
+this exact-name mechanism for the frozen cohort.
+
+Keep the tested structural candidate code in its private profile.
+The production and analytical baseline remain Step 3. The trial
+pair SHA-256 is
+`e0a4ee29cebf18698961077204fce83c1ea2a2bba52119ed8087d9ccc2cdfc69`
+and the comparison to prior and original is
+`54821801e401a7db9d4bd5b59438fb471ec10604fef6eae25fc1ca342bdf4429`.
+The reused fixture settled with zero new Index or Vectors jobs,
+and D: retained 364,183,412,736 bytes. Start Step 5 from the
+selected file-diversity pair.

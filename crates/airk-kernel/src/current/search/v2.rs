@@ -31,7 +31,9 @@ pub(crate) enum SearchProfile {
     Baseline,
     #[cfg(any(test, feature = "test-support"))]
     Keywords,
+    #[cfg(any(test, feature = "test-support"))]
     SemanticSubqueries,
+    StructuralDefinitions,
     Fusion {
         weighted: bool,
         diverse: bool,
@@ -50,7 +52,10 @@ impl SearchProfile {
             Self::Baseline => (false, false),
             #[cfg(any(test, feature = "test-support"))]
             Self::Keywords => (true, false),
-            Self::SemanticSubqueries | Self::Fusion { .. } => (true, false),
+            Self::StructuralDefinitions => (true, false),
+            #[cfg(any(test, feature = "test-support"))]
+            Self::SemanticSubqueries => (true, false),
+            Self::Fusion { .. } => (true, false),
             #[cfg(any(test, feature = "test-support"))]
             Self::Identifiers => (false, true),
             #[cfg(any(test, feature = "test-support"))]
@@ -60,7 +65,13 @@ impl SearchProfile {
     }
 
     pub(crate) fn uses_semantic_subqueries(self) -> bool {
-        self == Self::SemanticSubqueries || matches!(self, Self::Fusion { .. })
+        match self {
+            Self::StructuralDefinitions => true,
+            #[cfg(any(test, feature = "test-support"))]
+            Self::SemanticSubqueries => true,
+            Self::Fusion { .. } => true,
+            _ => false,
+        }
     }
 
     pub(crate) fn branch_weight(self, branch: BranchKind) -> f64 {
@@ -73,6 +84,7 @@ impl SearchProfile {
     pub(crate) fn file_limit(self) -> Option<usize> {
         match self {
             Self::LegacyV2 => Some(PER_FILE),
+            Self::StructuralDefinitions => Some(2),
             Self::Fusion { diverse: true, .. } => Some(2),
             _ => None,
         }
@@ -90,6 +102,7 @@ fn parse(value: Result<String, std::env::VarError>) -> Option<SearchProfile> {
             "none" => Some(SearchProfile::Baseline),
             "ranked_keywords" => Some(SearchProfile::Keywords),
             "semantic_subqueries" => Some(SearchProfile::SemanticSubqueries),
+            "structural_definitions" => Some(SearchProfile::StructuralDefinitions),
             "fusion_weights" => Some(SearchProfile::Fusion {
                 weighted: true,
                 diverse: false,
@@ -170,6 +183,7 @@ pub(crate) enum BranchKind {
     Vector,
     Key,
     Named,
+    Structure,
 }
 
 impl Plan {
@@ -232,6 +246,7 @@ impl Plan {
             BranchKind::Vector => VECTOR_WEIGHT,
             BranchKind::Key => KEY_WEIGHT,
             BranchKind::Named => NAMED_WEIGHT,
+            BranchKind::Structure => 1.0,
         }
     }
 }

@@ -73,6 +73,20 @@ Product Search applies file deferral with equal branch votes. The baseline
 profile keeps equal votes and its original file order. Short queries
 and lexical fallback, lexical-only or vector-only searches keep their order.
 
+## Exact structural candidates
+
+The private structural profile can include up to two excerpts from complete, unambiguous
+native definition lookups. The navigation lookup and excerpt read use
+the same current reader, request path prefix and Search filters. Each
+excerpt is at most seven original lines from its native definition and
+must fit its snippet budget in full. It competes as a ranked branch in
+the same hit and byte budgets and keeps its verified original citation.
+Search drops identical citations within this result. Ambiguous and
+incomplete definitions remain navigation hints. These excerpts use the
+same final Focus path as lexical and semantic hits. The test-support
+profile is structural_definitions. Textual and syntax-only references
+do not supply resolved one-hop targets.
+
 ## Private evaluation switch `search_v2` (22 November 2026)
 
 The historical Search v2 profile is selectable only in test-support builds. It is read once per process from

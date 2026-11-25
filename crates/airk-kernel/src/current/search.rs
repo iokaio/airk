@@ -97,6 +97,7 @@ enum Candidate {
     Vector(Arc<OccurrencePointer>),
     /// A ranked any-term match of these groups.
     LexicalAny(CurrentLexicalCandidate, Arc<Vec<TermGroup>>),
+    Structure(Hit),
 }
 
 impl Candidate {
@@ -104,6 +105,7 @@ impl Candidate {
         match self {
             Self::Lexical(candidate) | Self::LexicalAny(candidate, _) => &candidate.citation.path,
             Self::Vector(pointer) => &pointer.path,
+            Self::Structure(hit) => &hit.citation.path,
         }
     }
 }
@@ -125,6 +127,7 @@ pub(crate) struct SearchOptions<'a> {
     /// Retain Default when a saved opt-out has already selected lexical search.
     pub requested_mode: Option<RequestedMode>,
     pub snippet_bytes: Option<usize>,
+    pub structural_hits: &'a [Hit],
     pub filters: &'a SearchFilters,
 }
 
@@ -200,6 +203,7 @@ pub(crate) fn search_current_read_with_snippets(
             requested_mode: None,
             snippet_bytes,
             filters: &SearchFilters::default(),
+            structural_hits: &[],
         },
     )
 }
@@ -230,6 +234,7 @@ fn search_with_switch(
         requested_mode,
         snippet_bytes,
         filters,
+        structural_hits,
     } = options;
     let requested_mode = requested_mode.unwrap_or_else(|| mode.into());
     let semantic_requested = !matches!(mode, CurrentSearchMode::Lexical);
@@ -441,6 +446,26 @@ fn search_with_switch(
             });
         }
     }
+    if profile == v2::SearchProfile::StructuralDefinitions
+        && matches!(mode, CurrentSearchMode::Hybrid)
+        && !structural_hits.is_empty()
+    {
+        use sha2::{Digest, Sha256};
+        let values = structural_hits
+            .iter()
+            .enumerate()
+            .map(|(rank, hit)| {
+                let encoded = serde_json::to_vec(&("airk.search.structure", &hit.citation))?;
+                let id = Sha256Digest::from_bytes(Sha256::digest(encoded).into());
+                Ok((id, rank, Candidate::Structure(hit.clone())))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        branches.push(Branch {
+            values,
+            incomplete: false,
+            kind: v2::BranchKind::Structure,
+        });
+    }
     let mut incomplete = branches.iter().any(|branch| branch.incomplete)
         || scoped_paths.as_ref().is_some_and(|scope| scope.incomplete)
         || discovery_readiness.state != airk_core::readiness::DiscoveryState::Ready;
@@ -509,10 +534,22 @@ fn search_with_switch(
             break;
         }
         let semantic = matches!(candidate, Candidate::Vector(_));
+        let structural = matches!(candidate, Candidate::Structure(_));
         let mut hit = materialize(store, &read, query, candidate, &mut read_bytes)?;
         let allowance = snippet_bytes.unwrap_or(remaining).min(remaining);
-        if snippet_bytes.is_some() || semantic {
+        if structural && hit.text.len() > allowance {
+            incomplete = true;
+            continue;
+        }
+        if !structural && (snippet_bytes.is_some() || semantic) {
             focus_hit(&mut hit, focus_text, allowance);
+        }
+        if !structural_hits.is_empty()
+            && hits
+                .iter()
+                .any(|seen: &Hit| same_citation(&seen.citation, &hit.citation))
+        {
+            continue;
         }
         let (text, cut) = truncate_utf8(&hit.text, remaining);
         remaining -= text.len();
@@ -839,9 +876,11 @@ fn trace_semantic_queries(
     results: &[(Vec<OccurrencePointer>, bool)],
 ) -> Result<()> {
     use sha2::{Digest, Sha256};
-    if !std::env::var("AIRK_ARBITER_EVALUATION_SEARCH")
-        .is_ok_and(|profile| profile == "semantic_subqueries" || profile.starts_with("fusion_"))
-    {
+    if !std::env::var("AIRK_ARBITER_EVALUATION_SEARCH").is_ok_and(|profile| {
+        profile == "semantic_subqueries"
+            || profile == "structural_definitions"
+            || profile.starts_with("fusion_")
+    }) {
         return Ok(());
     }
     let ranks: Vec<_> = results
@@ -868,6 +907,14 @@ fn trace_semantic_queries(
         })
     );
     Ok(())
+}
+
+pub(super) fn same_citation(left: &airk_core::Citation, right: &airk_core::Citation) -> bool {
+    left.path == right.path
+        && left.content_hash == right.content_hash
+        && left.start_line == right.start_line
+        && left.end_line == right.end_line
+        && left.location == right.location
 }
 
 fn materialize(
@@ -903,6 +950,13 @@ fn materialize(
         "current search evidence read budget exceeded"
     );
     match candidate {
+        Candidate::Structure(hit) => {
+            ensure!(
+                hit.citation.content_hash == compact.content_hash,
+                "structural Search citation changed after collection"
+            );
+            Ok(hit)
+        }
         Candidate::Vector(pointer) => read.vector_unit_hit(&compact, &pointer),
         Candidate::Lexical(candidate) => {
             let wanted = terms(&query.text);

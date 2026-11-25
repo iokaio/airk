@@ -303,8 +303,9 @@ impl Kernel {
             snippet_bytes,
             filters,
             self.current_reader()?,
+            false,
         )?;
-        self.focus_search(query, response)
+        self.focus_search(query, response.evidence)
     }
 
     /// Search and automatic definition pointers retain the same sealed reader.
@@ -315,23 +316,24 @@ impl Kernel {
         snippet_bytes: Option<usize>,
         filters: &airk_core::SearchFilters,
     ) -> Result<super::SearchWithDefinitionsResponse> {
-        let read = self.current_reader()?;
-        let evidence =
-            self.search_response_on_read(query, mode, snippet_bytes, filters, read.clone())?;
-        let definitions = super::search::definition_hints(&self.store, &read, query, filters)?;
-        let evidence = self.focus_search_with_metadata(
+        let mut result = self.search_response_on_read(
             query,
-            evidence,
-            if definitions.is_empty() {
-                0
-            } else {
-                serde_json::to_vec(&definitions)?.len().saturating_add(16)
-            },
+            mode,
+            snippet_bytes,
+            filters,
+            self.current_reader()?,
+            true,
         )?;
-        Ok(super::SearchWithDefinitionsResponse {
-            evidence,
-            definitions,
-        })
+        let metadata_bytes = if result.definitions.is_empty() {
+            0
+        } else {
+            serde_json::to_vec(&result.definitions)?
+                .len()
+                .saturating_add(16)
+        };
+        result.evidence =
+            self.focus_search_with_metadata(query, result.evidence, metadata_bytes)?;
+        Ok(result)
     }
 
     fn search_response_on_read(
@@ -341,7 +343,8 @@ impl Kernel {
         snippet_bytes: Option<usize>,
         filters: &airk_core::SearchFilters,
         read: Arc<CurrentRead>,
-    ) -> Result<SearchResponse> {
+        navigation: bool,
+    ) -> Result<super::SearchWithDefinitionsResponse> {
         let disclose_readiness = !read.selected_scope_restricts_paths();
         if matches!(
             mode,
@@ -359,9 +362,52 @@ impl Kernel {
             } else {
                 mode
             };
+        let allow_structure = super::search::v2::active()?
+            == super::search::v2::SearchProfile::StructuralDefinitions
+            && matches!(
+                mode,
+                super::CurrentSearchMode::Default | super::CurrentSearchMode::Hybrid
+            );
+        let early_definitions = if allow_structure {
+            query.validate()?;
+            filters.validate()?;
+            Some(super::search::definition_hints(
+                &self.store,
+                &read,
+                query,
+                filters,
+            )?)
+        } else {
+            None
+        };
+        let structure = match &early_definitions {
+            Some(hints) => self.structural_search_hits(
+                &read,
+                hints,
+                snippet_bytes.unwrap_or(768).min(query.max_bytes),
+            )?,
+            None => Vec::new(),
+        };
+        #[cfg(feature = "test-support")]
+        if allow_structure
+            && std::env::var("AIRK_ARBITER_EVALUATION_SEARCH").as_deref()
+                == Ok("structural_definitions")
+        {
+            use sha2::{Digest, Sha256};
+            let citations: Vec<_> = structure.iter().map(|hit| &hit.citation).collect();
+            eprintln!(
+                "AIRK_SEARCH_STRUCTURE {}",
+                serde_json::json!({
+                    "query_sha256": format!("{:x}", Sha256::digest(query.text.as_bytes())),
+                    "publication": read.token()?,
+                    "analysis_available": read.resource_reference("analysis")?.is_some(),
+                    "citations": citations,
+                })
+            );
+        }
         let evidence = super::search::search_current_read_with_filters(
             &self.store,
-            read,
+            read.clone(),
             None,
             mode,
             query,
@@ -370,6 +416,7 @@ impl Kernel {
                 requested_mode: Some(requested_mode),
                 snippet_bytes,
                 filters,
+                structural_hits: &structure,
             },
         )?;
         let response = SearchResponse {
@@ -386,7 +433,66 @@ impl Kernel {
             hits: evidence.hits,
             truncated: evidence.truncated,
         };
-        Ok(response)
+        let definitions = if navigation {
+            match early_definitions {
+                Some(hints) => hints,
+                None => super::search::definition_hints(&self.store, &read, query, filters)?,
+            }
+        } else {
+            Vec::new()
+        };
+        Ok(super::SearchWithDefinitionsResponse {
+            evidence: response,
+            definitions,
+        })
+    }
+
+    pub(super) fn structural_search_hits(
+        &self,
+        read: &CurrentRead,
+        definitions: &[super::DefinitionHint],
+        max_bytes: usize,
+    ) -> Result<Vec<airk_core::Hit>> {
+        let mut hits: Vec<airk_core::Hit> = Vec::new();
+        for hint in definitions {
+            if !hint.complete || hint.total_matches != Some(1) {
+                continue;
+            }
+            let [target] = hint.matches.as_slice() else {
+                continue;
+            };
+            let citation = &target.citation;
+            if !matches!(citation.location, airk_core::DocumentLocation::Lines { .. }) {
+                continue;
+            }
+            let start = citation.start_line;
+            let end = citation.end_line.min(start.saturating_add(6));
+            let result = self.current_read_lines(
+                read,
+                &citation.path,
+                LineSelection::Range { start, end },
+                max_bytes,
+            )?;
+            let Some(hit) = result.hits.into_iter().next().filter(|hit| {
+                !hit.truncated
+                    && !hit.text.is_empty()
+                    && hit.citation.content_hash == citation.content_hash
+                    && hit.citation.start_line == start
+                    && hit.citation.end_line == end
+            }) else {
+                continue;
+            };
+            if !hits
+                .iter()
+                .any(|existing| super::search::same_citation(&existing.citation, &hit.citation))
+            {
+                hits.push(hit);
+                if hits.len() == 2 {
+                    break;
+                }
+            }
+        }
+        Ok(hits)
     }
 
     pub(crate) fn current_artifact(

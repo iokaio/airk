@@ -2,7 +2,7 @@
 
 **Status:** Approved for sequential implementation and matched Search testing.
 
-Improve the evidence returned by ordinary AIRK Search on Bookbuilder and Munarium. Test every proposal with Focus off and on. Keep Arbiter disabled in every run. The first five proposals reuse the settled indexes. The sixth needs a small experimental index only if the coverage audit justifies it.
+Improve the evidence returned by ordinary AIRK Search on Bookbuilder and Munarium. Test every proposal with Focus off and on. Keep Arbiter disabled in every run. The first five proposals reuse the settled indexes. The sixth needs a small experimental index only if the coverage audit justifies it. Steps 7 and 8 reuse the publications selected at the end of Step 6.
 
 ## What we know
 
@@ -61,9 +61,46 @@ Use the same MiniLM weights and the same source sample for both builds. Compare 
 
 **Focus comparison.** Within each isolated index, test the same queries with Focus off and on. Record whether changed vector units improve the candidates supplied to Focus and whether the reranker preserves or reduces the gain.
 
+### 7. Rank a wider shortlist before selecting ten results
+
+Collect a wider internal shortlist from the retained lexical, vector and
+structural branches. Deduplicate identical or substantially overlapping
+passages and reduce repeated files before scoring. Measure a deterministic
+selection and a selection that uses the same deterministic shortlist plus
+Focus on a bounded prefix. Select the final ten only after the second stage,
+under the same 8,192-byte budget. Keep each candidate bound to the same
+publication, source span and read scope throughout the request.
+
+Test against Step 6 and the original with Focus off and on. Compare
+shortlist recall, final top-three and top-ten coverage, newly admitted
+essentials, displaced hits and latency. For each gain, record whether
+deterministic selection or Focus moved a passage across the response
+cutoff. Record how many candidates were scored and what happened when
+Focus was unavailable. Keep a deterministic result within the original
+request budget on that path.
+
+### 8. Size automatic responses to the evidence
+
+On top of Step 7, test an automatic result count for requests that omit an
+explicit limit. Keep the response byte budget and the tool's validated
+ceilings fixed. Use measurable signals such as distinct source paths,
+passage overlap, agreement between retrieval branches and score separation
+to test when a smaller or larger response helps. Keep an explicit caller
+limit as a hard cap. Report the selected count and any truncation using
+the existing Search response contract. The caller or agent decides which
+returned evidence to use.
+
+Compare adaptive sizing with Step 7's fixed ten, Focus off and on, and
+retain the original comparison. Report coverage in the first three and
+first ten as well as across the entire response, along with result count,
+bytes, unique paths, displaced notes and latency. Include short precise
+queries, broad tasks and repeated evidence. Verify that explicit limits
+and response byte budgets hold in all cases. This isolates the effect
+of result count from Step 7's reranking change.
+
 ## Comparison method
 
-1. Pin both existing publications and freeze the original 20 queries and 113 note locations. Use the same ten-hit and 8,192-byte limits in each main comparison. Keep the note labels out of query construction and ranking.
+1. Pin both existing publications and freeze the original 20 queries and 113 note locations. Use the same ten-hit target and 8,192-byte limit through Step 7. Step 8 varies the automatic hit count and also reports coverage at the original ten-hit cutoff. Keep the note labels out of query construction and ranking.
 2. Keep one original baseline pair. Add each proposal to the preceding implementation and collect one Focus-off and one Focus-on result. Retain that pair as the baseline for the next step. Compare each step with both the preceding pair and the original. Keep the Focus profile, device and scoring limits fixed. For the two isolated indexes in step 6, pin each publication and use identical source revisions.
 s’s effect with Focus off, its effect with Focus on, the on/off difference within each version, and whether Focus changes the size or direction of the proposal’s benefit. For each run, report top-three and top-ten essential coverage, gains and losses by repository and scenario, elapsed median and p95, and response bytes. Record differences in publications or served modes. Alternate measurement order when assessing latency.
 4. Trace each note from branch candidates through fused rank, the candidates presented to Focus, and the returned source lines. Use the existing overlap rule consistently. Retain Focus receipts with the active profile and runtime, original and final order, scored candidates and scores when available, and any reason Focus did not apply. Explain each material on/off difference using the trace, and label explanations that remain hypotheses. Keep each measured result and its receipt with the corresponding implementation milestone.
@@ -168,6 +205,33 @@ The selected pair SHA-256 is `745e4a7a37327bfcc1ce28be12cef31e34eebd313289ca5633
 Its incremental and cumulative report SHA-256 is `a201464d3d1a0a3bafbaec68f30f0c0660cdad566db587f8974b179cc2a0f2d8`.
 The fixtures shut down idle on the same publications with zero new
 indexing jobs. Timings represent this fixed-order Windows CUDA run.
+
+### Step 4 result — Exact structural evidence
+
+| Reference or candidate | Essentials off / on | Top 3 off / on | Median CLI ms off / on | p95 CLI ms off / on |
+| --- | ---: | ---: | ---: | ---: |
+| Original | 14 / 14 | 6 / 8 | 1,066.5 / 1,556 | 1,718 / 2,477 |
+| Step 3 | 16 / 16 | 6 / 6 | 1,139.5 / 1,727.5 | 2,316 / 3,261 |
+| Exact definitions | 16 / 16 | 6 / 6 | 1,165 / 1,717.5 | 2,260 / 3,097 |
+
+Relative to Step 3, exact definitions added and lost zero essentials
+and moved none of their ranks with Focus off or on. Relative to the
+original, it gained five and lost three in both settings. Focus
+applied on all 20 requests. Its within-pair movement was identical
+to Step 3: two essentials rose, one fell and thirteen stayed put.
+
+Three distinct requests admitted one verified definition excerpt
+each. None overlapped a qualifying essential span. Of the 83
+essentials annotated with a symbol, none had that symbol explicitly
+named in its scenario query. Neither pinned publication exposed an
+imported analysis resource, so the provider-resolved reference hop
+was unavailable. This explains the lack of benefit from the tested
+exact mechanism on this cohort. Keep it as a private evaluation
+profile and use Step 3 as the reference for Step 5.
+
+The measured pair SHA-256 is `e0a4ee29cebf18698961077204fce83c1ea2a2bba52119ed8087d9ccc2cdfc69`.
+Its comparison to Step 3 and the original is `54821801e401a7db9d4bd5b59438fb471ec10604fef6eae25fc1ca342bdf4429`.
+The reused fixture closed cleanly with zero new indexing jobs.
 
 ## Evidence and implementation references
 
