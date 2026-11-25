@@ -7,6 +7,10 @@ endpoint`, cross-checked with the owner-private `<control>/http-1/endpoint.json`
 and the AIRK CA, and every read names the fixture index (`index_ids`). CLI
 results compared against HTTPS take the same open read path (`airkctl tools
 call <tool> --index <id>`). The report has no credential fields.
+
+On Windows, AIRK_PRIVATE_CENSUS_EXPECTED_SID opts an explicit
+AIRK_PRIVATE_CENSUS_BASE into inherited permissions for a fresh fixture.
+The directory must already be private and pass the checked execution guard.
 """
 import argparse
 from concurrent.futures import ThreadPoolExecutor
@@ -39,10 +43,123 @@ TOOLS = {"airk_" + name for name in (
     "list_files", "outline", "parse", "query_scope", "read_file", "references", "relationships", "search", "status", "diagnostics", "symbols")}
 
 
+WINDOWS_CLIENT_FIXTURE_CHECK = r"""
+$ErrorActionPreference = 'Stop'
+[Console]::InputEncoding = [Text.UTF8Encoding]::new($false, $true)
+$request = [Console]::In.ReadToEnd() | ConvertFrom-Json
+. $request.guard
+$identity = Assert-AirkHumanExecution -ExpectedSid $request.sid
+$check = Assert-AirkOutputPathObservation -Path $request.path -Root $request.base -Identity $identity
+$allowed = @($identity.UserSid, 'S-1-5-18', 'S-1-5-32-544')
+$directories = @($check.Parent)
+if ($request.created) {
+    if (-not (Test-Path -LiteralPath $check.Path -PathType Container)) { throw 'Created fixture directory is absent' }
+    # Also check the new directory as the parent of future native fixture files.
+    $null = Assert-AirkOutputPathObservation -Path (Join-Path $check.Path 'future-output') -Root $request.base -Identity $identity
+    $directories += $check.Path
+} elseif (Test-Path -LiteralPath $check.Path) {
+    throw 'Random fixture directory already exists'
+}
+function Assert-PrivateFixtureDirectory($directory) {
+    $acl = Get-Acl -LiteralPath $directory
+    $rules = $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])
+    if (@($rules | Where-Object { $_.AccessControlType -eq 'Allow' -and $_.IdentityReference.Value -notin $allowed }).Count) {
+        throw 'Windows client fixture directories must grant access only to the human, SYSTEM, and Administrators'
+    }
+}
+foreach ($directory in $directories) { Assert-PrivateFixtureDirectory $directory }
+
+if ($request.prepare_git) {
+    $directory = $check.Path
+    foreach ($name in @('fixture-git-config', 'xdg')) {
+        $path = Join-Path $directory $name
+        $next = Assert-AirkOutputPathObservation -Path $path -Root $check.Path -Identity $identity
+        if (Test-Path -LiteralPath $next.Path) { throw "Fresh Git configuration directory already exists: $($next.Path)" }
+        $null = [IO.Directory]::CreateDirectory($next.Path)
+        $null = Assert-AirkOutputPathObservation -Path (Join-Path $next.Path 'future-output') -Root $check.Path -Identity $identity
+        Assert-PrivateFixtureDirectory $next.Path
+        $directory = $next.Path
+    }
+}
+
+function Assert-FixtureOutputBatch($entries) {
+    if ($entries.Count -eq 0) { return }
+    $audit = Assert-AirkOutputBatch -Entries $entries.ToArray() -ExpectedSid $request.sid -BudgetSeconds 10
+    if ($audit.schema -ne 'airk.human-output-audit/1' -or $audit.expired -or $audit.results.Count -ne $entries.Count) {
+        throw 'Incomplete or expired Windows client fixture output audit'
+    }
+    foreach ($result in $audit.results) {
+        if (-not $result.passed) {
+            throw "Windows client fixture output refused: $($entries[$result.index].path): $($result.error)"
+        }
+    }
+    $entries.Clear()
+}
+
+if ($request.audit_tree) {
+    $pending = [Collections.Generic.Stack[string]]::new()
+    $batch = [Collections.Generic.List[object]]::new(35)
+    $pending.Push($check.Path)
+    while ($pending.Count -gt 0) {
+        $directory = $pending.Pop()
+        $null = Get-AirkCheckedPath -Path $directory -Root $check.Path
+        Get-ChildItem -LiteralPath $directory -Force | ForEach-Object {
+            $item = $_
+            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "Windows client fixture output contains a reparse point: $($item.FullName)"
+            }
+            $batch.Add([pscustomobject]@{ path=$item.FullName; root=$check.Path; created=$true })
+            if ($batch.Count -eq 35) { Assert-FixtureOutputBatch $batch }
+            if ($item.PSIsContainer) { $pending.Push($item.FullName) }
+        }
+    }
+    Assert-FixtureOutputBatch $batch
+}
+"""
+
+
+def check_windows_client_fixture(parent, child, expected_sid, *, created, prepare_git=False, audit_tree=False):
+    guard = Path(__file__).resolve().parent / "dev" / "assert-human-execution.ps1"
+    request = {
+        "guard": str(guard), "base": str(parent), "path": str(child), "sid": expected_sid,
+        "created": created, "prepare_git": prepare_git, "audit_tree": audit_tree,
+    }
+    result = subprocess.run(
+        ["pwsh", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_CLIENT_FIXTURE_CHECK],
+        input=json.dumps(request), capture_output=True, encoding="utf-8", timeout=120 if audit_tree else 30,
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    if result.returncode != 0:
+        raise RuntimeError("Windows client fixture check failed: " + result.stderr.strip())
+
+
+@contextmanager
+def checked_windows_client_fixture(parent, expected_sid):
+    child = parent / ("airk-service-clients-" + uuid.uuid4().hex)
+    check_windows_client_fixture(parent, child, expected_sid, created=False)
+    # Avoid Python 3.13's special Windows mode 0700 DACL, which cannot
+    # supply inheritable grants. The checked parent limits access first.
+    child.mkdir(mode=0o777)
+    try:
+        # The shared Git setup keeps its private 0700 default for new dirs.
+        # Pre-create its exact dirs with the audited private Windows inheritance.
+        check_windows_client_fixture(parent, child, expected_sid, created=True, prepare_git=True)
+        yield str(child)
+        check_windows_client_fixture(parent, child, expected_sid, created=True, audit_tree=True)
+    except BaseException:
+        print("Preserving failed owned native client fixture: " + str(child), file=sys.stderr)
+        raise
+    else:
+        shutil.rmtree(child)
+
+
 @contextmanager
 def owned_client_fixture():
     parent = None
     configured = os.environ.get("AIRK_PRIVATE_CENSUS_BASE")
+    expected_sid = os.environ.get("AIRK_PRIVATE_CENSUS_EXPECTED_SID")
+    if expected_sid is not None and (not expected_sid or not configured or os.name != "nt"):
+        raise RuntimeError("AIRK_PRIVATE_CENSUS_EXPECTED_SID requires Windows and an explicit private base")
     if configured:
         selected = Path(configured)
         if not selected.is_absolute():
@@ -58,6 +175,10 @@ def owned_client_fixture():
             metadata = parent.stat()
             if metadata.st_uid != os.geteuid() or metadata.st_mode & 0o077:
                 raise RuntimeError("AIRK_PRIVATE_CENSUS_BASE must remain private to its owner")
+    if expected_sid is not None:
+        with checked_windows_client_fixture(parent, expected_sid) as fixture:
+            yield fixture
+        return
     # Only a new random child is created. Existing base permissions/ACL stay intact.
     temporary = tempfile.TemporaryDirectory(prefix="airk-service-clients-",dir=parent)
     try:
@@ -955,7 +1076,48 @@ class Fixture:
     def catalog_authority(self):
         return self.compatibility["authority"] == "catalog"
 
+    @property
+    def named_index_scope(self):
+        return getattr(self, "compatibility", {}).get("topology") == "split_pair"
+
+    def register_named_index(self, name, root, data):
+        # Use the current native setup owner. Resolve uncertainty only by reading
+        # the receipt for the exact draft; never run setup/apply a second time.
+        deadline = time.monotonic() + self.job_timeout
+        result = self.run(*self.open_service(), "--root", root, "--data-dir", data,
+                          "library", "setup", "--name", name, "--index-collection", name,
+                          "--watch", "off", "--apply", check=False, timeout=remaining(deadline, 90))
+        lines = [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
+        assert 1 <= len(lines) <= 2 and lines[0].get("status") == "catalog_index_setup_draft", (
+            f"Native setup did not return one reviewed draft: {result.stderr[-4096:]} {lines}")
+        request = lines[0]["draft"]["request"]
+        lookup = {"caller": request["caller"], "key": request["key"]}
+        response = lines[1] if len(lines) == 2 else None
+        while True:
+            if response is not None:
+                status = response.get("status")
+                assert status in ("catalog_index_setup_applied", "catalog_index_setup_receipt",
+                                  "catalog_outcome_unknown"), response
+                if status == "catalog_outcome_unknown":
+                    assert all(response[field] == value for field, value in lookup.items()), response
+                receipt = response.get("receipt")
+                if receipt is not None:
+                    assert receipt["request"] == request, "Native setup receipt names another draft"
+                    if receipt["stage"] == "ready":
+                        break
+            time.sleep(min(0.05, remaining(deadline, 90)))
+            response = self.rpc({"catalog_index_setup_receipt": lookup}, deadline=deadline)
+        registration = request["registration"]
+        assert Path(registration["root"]).samefile(root) and Path(registration["data_root"]).samefile(data), (
+            "Native setup registration changed the fixture's source or data directory")
+        assert registration["collection"] == name, registration
+        self.projects[name] = registration
+        self.scopes[name] = {"index_id": receipt["index_id"]}
+
     def register(self, name, root, data):
+        if self.named_index_scope:
+            self.register_named_index(name, root, data / name)
+            return
         if self.catalog_authority:
             spec = importlib.util.spec_from_file_location("runtime_reviewed_fixture", Path(__file__).with_name("check-runtime-upgrade.py"))
             reviewed = importlib.util.module_from_spec(spec)
@@ -971,7 +1133,7 @@ class Fixture:
         self.projects[name] = prepared
 
     def arguments(self, name):
-        project = self.projects[name]
+        assert not self.named_index_scope, "Current tool calls must name their index per call"
         if self.catalog_authority:
             selected = self.scopes[name].copy()
             descriptor = self.rpc({"catalog_host_context": {"key": selected["context_key"], "expected_catalog_revision": None}})["descriptor"]
@@ -1065,7 +1227,11 @@ class Fixture:
         assert (arguments[:2] == ("tools", "call") and len(arguments) >= 3 and arguments[2] in RETRYABLE_TOOLS
                 or arguments and arguments[0] in ("status", "search", "files", "read", "info", "outline", "symbol",
                                                   "imports", "facts", "refs", "context", "changes", "code-facts", "relationships")), "Expected a read-only fixture query"
-        exact = (*self.arguments(project), *arguments)
+        if self.named_index_scope:
+            assert arguments[:2] == ("tools", "call"), "Current reads require a named-index tool call"
+            exact = (*self.open_service(), *arguments[:3], *self.open_selector(project), *arguments[3:])
+        else:
+            exact = (*self.arguments(project), *arguments)
         def read(until):
             result = self.run(*exact, check=False, timeout=remaining(until, 90))
             assert result.returncode in (0, 1), f"Native read process failed: exit {result.returncode}"
@@ -1241,6 +1407,11 @@ class Fixture:
                 fields = {"url": endpoint["url"], "http_headers" if row["client"] == "codex" else "headers": {"X-AIRK-Response-Mode": "terse"}}
                 if row["client"] != "codex":
                     fields["type"] = "http"
+                if self.named_index_scope and row["client"] == "codex":
+                    # Core's manual entry allows 600 s for Answer plus 5 s for delivery.
+                    fields["tool_timeout_sec"] = 605
+                    timeout = value.get(container, {}).get("airk", {}).get("tool_timeout_sec")
+                    assert type(timeout) is int, "Native manual text differs from token-free endpoint entry"
                 assert value == {container: {"airk": fields}}, "Native manual text differs from token-free endpoint entry"
         return endpoint
 
@@ -1508,6 +1679,57 @@ def airkctl_session_smoke(fixture):
             "service_instance_matched": True, "events": events, "clean_exit": True}
 
 
+@contextmanager
+def damaged_index_scope(fixture, project, data):
+    """Corrupt one owned index's scope and restore its exact original bytes."""
+    if not fixture.named_index_scope:
+        owners = [path for path in data.rglob("current-owner.json")
+                  if json.loads(path.read_bytes())["scope"]["collection"] == project]
+        assert len(owners) == 1, owners
+        owner = owners[0]
+        assert owner.resolve(strict=True).is_relative_to(fixture.owner)
+        original = owner.read_bytes()
+        try:
+            owner.write_bytes(b"{")
+            yield
+        finally:
+            owner.write_bytes(original)
+        return
+
+    candidates = []
+    for database in (data / "collections-1.4").rglob("index.sqlite3"):
+        assert database.resolve(strict=True) == database and database.is_relative_to(fixture.owner), database
+        with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, timeout=10)) as connection:
+            # Old SQLite indexes can use this same filename. Only select a
+            # proven plain catalog row for this fixture's saved registration.
+            if not connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='meta'").fetchone():
+                continue
+            format_row = connection.execute("SELECT CAST(value AS TEXT) FROM meta WHERE key='format'").fetchone()
+            if format_row != ("airk-index/1",):
+                continue
+            row = connection.execute("SELECT value FROM meta WHERE key='scope'").fetchone()
+            assert row is not None and isinstance(row[0], bytes), database
+            scope = json.loads(row[0])
+            if scope["collection"] == project:
+                assert Path(scope["root"]).samefile(fixture.projects[project]["root"]), database
+                candidates.append((database, row[0]))
+    assert len(candidates) == 1, [database for database, _ in candidates]
+    database, original = candidates[0]
+
+    def replace_scope(expected, value):
+        with closing(sqlite3.connect(database.as_uri() + "?mode=rw", uri=True, timeout=10)) as connection:
+            with connection:
+                updated = connection.execute("UPDATE meta SET value=? WHERE key='scope' AND value=?",
+                                             (value, expected))
+                assert updated.rowcount == 1, "Fixture index scope changed outside the injected fault"
+
+    replace_scope(original, b"{")
+    try:
+        yield
+    finally:
+        replace_scope(b"{", original)
+
+
 def retained_job_failure(fixture, project):
     """Break only this disposable fixture's derived metadata, then restore exact bytes."""
     data = (fixture.owner / "data" / project if fixture.catalog_authority else fixture.owner / "data").resolve(strict=True)
@@ -1515,14 +1737,7 @@ def retained_job_failure(fixture, project):
     # Native Windows registrations use extended paths; samefile verifies identity
     # without treating the \\?\ spelling as a different parent directory.
     assert data.samefile(fixture.projects[project]["data_root"])
-    owners = [path for path in data.rglob("current-owner.json")
-              if json.loads(path.read_bytes())["scope"]["collection"] == project]
-    assert len(owners) == 1, owners
-    owner = owners[0]
-    assert owner.resolve(strict=True).is_relative_to(fixture.owner)
-    original = owner.read_bytes()
-    try:
-        owner.write_bytes(b"{")
+    with damaged_index_scope(fixture, project, data):
         failed = fixture.wait(fixture.enqueue(project, "index"), expected="failed")
         code = failed["outcome"]["code"]
         assert code.startswith("index_") and code.endswith("metadata_incomplete"), failed
@@ -1543,8 +1758,6 @@ def retained_job_failure(fixture, project):
                 break
             assert time.monotonic() < deadline, "Failed job never reached the retained service log"
             time.sleep(0.05)
-    finally:
-        owner.write_bytes(original)
     fixture.job(project, "index")
     return {"receipt_and_log_match": True, "code": code, "metadata_restored": True}
 

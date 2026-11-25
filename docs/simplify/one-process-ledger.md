@@ -18237,3 +18237,39 @@ D: had 413,682,135,040 free bytes after this batch. A fresh exact
 Windows CUDA fixture and real cross-scope smoke will exercise this
 correction before judging. The development controls will run with
 Focus and Arbiter off. MiniLM retrieval stays enabled.
+
+#### Normal Windows matched-client preflight
+
+The normal Windows pair built from `7eba5dc1` retained its original
+install-manifest SHA-256
+`fdc99008ae9946c339dc529c7efb718b5f9270e2105c47756a9f99e41c368053`.
+The verifier now uses the current named-index setup receipt, compares
+the complete token-free HTTPS endpoint entries, restores the exact
+plain scope metadata after its failure probe, and checks the embedded
+FP16 smoke against the static CPU engine contract. The opt-in tested
+Windows scratch path creates only within a verified private same-human
+base with appropriate inherited grants and audits the outputs before
+cleanup. Earlier attempts and the diagnostics they produced are
+retained. No existing ACL or owner was changed.
+
+The R6 script suite passed 76 tests. The live run with
+`scripts/check-service-clients.py --files 16 --model --answer-validator
+<prebuilt combined_reads test binary> --preserve-pair-metadata`
+passed in 235.586 seconds on two 16-file projects. It compared three
+normalized full Answer /3 transport envelopes, checked 20 native
+tools and 30 MCP tools, exercised first-status client lifecycles and
+a matched `airkctl session`, and observed real vector queries using
+`minilm-l6-v2-fp16-v1` on `onnxruntime-cpu/1.30.0`. It recovered the
+interrupted job under the same identity, observed automatic orphan
+recovery, matched the typed scope failure in the service log,
+restored metadata and source bytes, and observed managed shutdown.
+
+The exact guarded command and reservation are in
+`L5C/windows-client-pair-r1/service-clients-admission-r6.json`. The
+successful output `service-clients-r6.json` has SHA-256
+`97ccb17dc94308fecafa3c597bc158c571e7ecfdcb7472e1d8b3804fc2b50017`.
+D: had 409,862,746,112 free bytes after the run. The normal CPU pair
+establishes the stated client and transport checks. The private
+replacement CUDA image has its own live scope, leak, and model
+qualification; the results do not establish cross-platform,
+Workbench or release qualification.

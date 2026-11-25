@@ -29,8 +29,9 @@ fixture admission. The corrected full sweep and focused receipts
 retain their exact limits and remaining owners. Build the reviewed
 CUDA image with the existing warm target, start a fresh guarded
 evaluation lifetime and confirm its pinned indexes, leak check and
-tool catalog. Run the applicable normal Windows service-client
-preflight before scoring. Then run the 20-scenario Windows baseline
+tool catalog. The matched normal Windows client preflight passed with
+its three Answer transport comparisons and FP16 CPU model check.
+Then run the 20-scenario Windows baseline
 and three judged changes without an internal review stop, and stop
 for the requested review. Keep the pending harness work with its
 judged series. The [indexing performance plan](indexing/performance-plan.md)

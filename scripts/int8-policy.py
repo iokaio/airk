@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Consume the native-owned bundled model policy; never invent model pins."""
+from functools import cache
+import importlib.util
 import json
 from pathlib import Path
 import re
@@ -34,17 +36,28 @@ def approved_profile(identifier):
     return profiles[0]
 
 
+@cache
+def _embedded_cpu_engine():
+    # The smoke reports the static CPU provider, independent of the shared
+    # CPU/CUDA pipeline ABI stored in the model catalog.
+    specification = importlib.util.spec_from_file_location(
+        "embedded_smoke_static_ort", ROOT / "scripts/provision-static-onnx-runtime.py")
+    static_ort = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(static_ort)
+    static_ort.validate_lock()
+    return "onnxruntime-cpu/" + static_ort.VERSION
+
+
 def approved_engine(identifier):
-    # Rust's approved runtime is engine/version/backend; consume its engine
-    # prefix rather than keeping another version pin in Python callers.
-    return approved_profile(identifier)["runtime"].rsplit("/", 1)[0]
+    approved_profile(identifier)
+    return _embedded_cpu_engine()
 
 
 def verify_model_smoke(report):
     profile = approved_profile(report.get("profile"))
     if (type(report.get("schema")) is not int or report["schema"] != 1
             or report.get("source") != "embedded"
-            or report.get("engine") != profile["runtime"].rsplit("/", 1)[0]
+            or report.get("engine") != _embedded_cpu_engine()
             or type(report.get("dimensions")) is not int or report["dimensions"] != profile["manifest"]["dimensions"]
             or report.get("repeat_equal") is not True
             or any(not isinstance(report.get(field), str) or not re.fullmatch("[0-9a-f]{64}", report[field])

@@ -9,7 +9,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import call, Mock, patch
 
 SPEC = importlib.util.spec_from_file_location("service_clients", Path(__file__).parents[1] / "check-service-clients.py")
 CLIENTS = importlib.util.module_from_spec(SPEC)
@@ -532,6 +532,44 @@ class ServiceClientTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError,"not sealed"):
                         CLIENTS.runtime_compatibility(runtime)
 
+    def test_split_client_registers_through_native_setup_and_names_its_index(self):
+        fixture = CLIENTS.Fixture.__new__(CLIENTS.Fixture)
+        fixture.compatibility = {"authority": "catalog", "topology": "split_pair"}
+        fixture.control = Path("owned-control")
+        fixture.projects, fixture.scopes = {}, {}
+        fixture.job_timeout = 10
+        source, parent = Path("fixture-source"), Path("fixture-data")
+        registration = {"binding": "fixture-binding", "root": str(source),
+                        "data_root": str(parent / "fiction"), "collection": "fiction"}
+        request = {"caller": "original-caller", "key": {"nonce": "original-nonce"},
+                   "registration": registration}
+        draft = {"status": "catalog_index_setup_draft", "draft": {"request": request}}
+        unknown = {"status": "catalog_outcome_unknown", "caller": request["caller"],
+                   "key": request["key"]}
+        receipt = {"status": "catalog_index_setup_receipt",
+                   "receipt": {"request": request, "stage": "ready", "index_id": "idx-exact"}}
+        fixture.rpc = Mock(side_effect=[{"status": "catalog_index_setup_receipt", "receipt": None}, receipt])
+        fixture.run = Mock(side_effect=[
+            subprocess.CompletedProcess([], 1, json.dumps(draft) + "\n" + json.dumps(unknown), ""),
+            subprocess.CompletedProcess([], 0, json.dumps({"content": [{"type": "text", "text": '{"hits":[]}'}]}), ""),
+        ])
+        with patch.object(Path, "samefile", autospec=True, side_effect=lambda a, b: a == b):
+            fixture.register("fiction", source, parent)
+        self.assertEqual(fixture.projects["fiction"], registration)
+        self.assertEqual(fixture.scopes["fiction"], {"index_id": "idx-exact"})
+        self.assertEqual(fixture.run.call_args.args, (
+            "--service-runtime-dir", "owned-control", "--root", source, "--data-dir", parent / "fiction",
+            "library", "setup", "--name", "fiction", "--index-collection", "fiction",
+            "--watch", "off", "--apply"))
+        self.assertEqual([call.args for call in fixture.rpc.call_args_list], [
+            ({"catalog_index_setup_receipt": {"caller": request["caller"], "key": request["key"]}},),
+        ] * 2)
+        self.assertEqual(fixture.tool("fiction", "airk_search", {"query": "marker"}), {"hits": []})
+        self.assertEqual(fixture.run.call_args.args, (
+            "--service-runtime-dir", "owned-control", "tools", "call", "airk_search",
+            "--index", "idx-exact", "--args", json.dumps({"query": "marker"})))
+        self.assertEqual(fixture.run.call_count, 2)
+
     def test_schema_one_catalog_authority_never_selects_fresh_raw_registration(self):
         fixture = CLIENTS.Fixture.__new__(CLIENTS.Fixture)
         fixture.single_image = False
@@ -803,6 +841,82 @@ class ServiceClientTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError,"absolute"):
                     with CLIENTS.owned_client_fixture():
                         self.fail("invalid base created a fixture")
+
+    def test_checked_windows_fixture_audits_before_use_and_cleanup(self):
+        base = Path("private-base")
+        child = base / "airk-service-clients-fixed"
+        events = Mock()
+        with patch.object(CLIENTS.uuid, "uuid4", return_value=Mock(hex="fixed")), \
+                patch.object(CLIENTS, "check_windows_client_fixture", events.check), \
+                patch.object(type(child), "mkdir", events.mkdir), \
+                patch.object(CLIENTS.shutil, "rmtree", events.cleanup):
+            with CLIENTS.checked_windows_client_fixture(base, "human-sid") as selected:
+                events.use(selected)
+        self.assertEqual(events.mock_calls, [
+            call.check(base, child, "human-sid", created=False),
+            call.mkdir(mode=0o777),
+            call.check(base, child, "human-sid", created=True, prepare_git=True),
+            call.use(str(child)),
+            call.check(base, child, "human-sid", created=True, audit_tree=True),
+            call.cleanup(child),
+        ])
+
+    def test_checked_windows_fixture_refusal_and_failure_leave_scope_untouched(self):
+        base = Path("private-base")
+        with patch.object(type(base), "mkdir") as mkdir, \
+                patch.object(CLIENTS.shutil, "rmtree") as cleanup, \
+                patch.object(CLIENTS.sys, "stderr") as stderr, \
+                patch.object(CLIENTS, "check_windows_client_fixture",
+                             side_effect=[RuntimeError("unsafe parent"), None, RuntimeError("failed audit"), None, None]):
+            with self.assertRaisesRegex(RuntimeError, "unsafe parent"):
+                with CLIENTS.checked_windows_client_fixture(base, "human-sid"):
+                    self.fail("unsafe parent was used")
+            mkdir.assert_not_called()
+            with self.assertRaisesRegex(RuntimeError, "failed audit"):
+                with CLIENTS.checked_windows_client_fixture(base, "human-sid"):
+                    self.fail("unaudited directory was used")
+            with self.assertRaisesRegex(ValueError, "native failure"):
+                with CLIENTS.checked_windows_client_fixture(base, "human-sid"):
+                    raise ValueError("native failure")
+            self.assertEqual(mkdir.call_count, 2)
+            cleanup.assert_not_called()
+            self.assertEqual(sum("Preserving failed owned" in str(item) for item in stderr.mock_calls), 2)
+
+    def test_checked_windows_tree_audit_refusal_preserves_diagnostics(self):
+        base = Path("private-base")
+        with patch.object(type(base), "mkdir"), \
+                patch.object(CLIENTS.shutil, "rmtree") as cleanup, \
+                patch.object(CLIENTS.sys, "stderr") as stderr, \
+                patch.object(CLIENTS, "check_windows_client_fixture",
+                             side_effect=[None, None, RuntimeError("foreign output owner")]) as check:
+            with self.assertRaisesRegex(RuntimeError, "foreign output owner"):
+                with CLIENTS.checked_windows_client_fixture(base, "human-sid") as selected:
+                    child = Path(selected)
+            check.assert_called_with(base, child, "human-sid", created=True, audit_tree=True)
+            cleanup.assert_not_called()
+            stderr.write.assert_any_call("Preserving failed owned native client fixture: " + str(child))
+
+    def test_checked_windows_opt_in_cannot_silently_use_default_scratch(self):
+        with patch.dict(CLIENTS.os.environ, {
+            "AIRK_PRIVATE_CENSUS_BASE": "", "AIRK_PRIVATE_CENSUS_EXPECTED_SID": "human-sid",
+        }), patch.object(CLIENTS.tempfile, "TemporaryDirectory") as ordinary:
+            with self.assertRaisesRegex(RuntimeError, "requires Windows and an explicit private base"):
+                with CLIENTS.owned_client_fixture():
+                    self.fail("explicit SID used default scratch")
+            ordinary.assert_not_called()
+
+    @unittest.skipUnless(CLIENTS.os.name == "nt", "requires Windows path selection")
+    def test_explicit_windows_private_base_selects_checked_creation(self):
+        base = Path(CLIENTS.__file__).resolve().parent
+        with patch.dict(CLIENTS.os.environ, {
+            "AIRK_PRIVATE_CENSUS_BASE": str(base), "AIRK_PRIVATE_CENSUS_EXPECTED_SID": "human-sid",
+        }), patch.object(CLIENTS, "checked_windows_client_fixture") as checked, \
+                patch.object(CLIENTS.tempfile, "TemporaryDirectory") as ordinary:
+            checked.return_value.__enter__.return_value = "checked-scratch"
+            with CLIENTS.owned_client_fixture() as selected:
+                self.assertEqual(selected, "checked-scratch")
+            checked.assert_called_once_with(base, "human-sid")
+            ordinary.assert_not_called()
 
     def test_maintenance_submission_uses_explicit_owner_and_never_the_read_selector(self):
         fixture = CLIENTS.Fixture.__new__(CLIENTS.Fixture)
@@ -1477,6 +1591,44 @@ class TokenlessHttpsTests(unittest.TestCase):
                     transport.read_endpoint.return_value = {**endpoint, "url": "http://127.0.0.1:4434/mcp"}
                     with self.assertRaisesRegex(AssertionError, "differs"):
                         fixture.http_endpoint()
+
+    def test_manual_endpoint_matches_complete_current_and_historical_entry(self):
+        endpoint = {"schema": 1, "url": "http://127.0.0.1:4433/mcp", "state": "ready"}
+        url = endpoint["url"]
+        headers = {"X-AIRK-Response-Mode": "terse"}
+        claude = json.dumps({"mcpServers": {"airk": {"type": "http", "url": url, "headers": headers}}})
+        vscode = json.dumps({"servers": {"airk": {"type": "http", "url": url, "headers": headers}}})
+        legacy = f'[mcp_servers.airk]\nurl = "{url}"\n'
+        mode = '\n[mcp_servers.airk.http_headers]\n"X-AIRK-Response-Mode" = "terse"\n'
+        for split in (False, True):
+            with self.subTest(split=split):
+                fixture = self.fixture(split=split)
+                fixture.compatibility = {"topology": "split_pair" if split else "single_image"}
+                transport = Mock()
+                transport.read_endpoint.return_value = endpoint
+                codex = legacy + ("tool_timeout_sec = 605\n" if split else "") + mode
+                manual = [
+                    {"client": "claude", "scope": "project", "file": ".mcp.json",
+                     "format": "json", "text": claude},
+                    {"client": "codex", "scope": "project", "file": ".codex/config.toml",
+                     "format": "toml", "text": codex},
+                    {"client": "vscode", "scope": "project", "file": ".vscode/mcp.json",
+                     "format": "json", "text": vscode},
+                ]
+                command = Mock()
+                fixture.run = fixture.service_run = command
+                with patch.object(CLIENTS, "http_transport", return_value=transport):
+                    command.return_value = subprocess.CompletedProcess(
+                        [], 0, json.dumps({**endpoint, "manual": manual}), "")
+                    self.assertEqual(fixture.http_endpoint(), {**endpoint, "manual": manual})
+                    wrong_timeout = legacy + ("tool_timeout_sec = 60\n" if split else "tool_timeout_sec = 605\n") + mode
+                    for text in (wrong_timeout, codex + 'Authorization = "unexpected"\n'):
+                        tampered = copy.deepcopy(manual)
+                        tampered[1]["text"] = text
+                        command.return_value = subprocess.CompletedProcess(
+                            [], 0, json.dumps({**endpoint, "manual": tampered}), "")
+                        with self.assertRaisesRegex(AssertionError, "token-free endpoint entry"):
+                            fixture.http_endpoint()
 
     def test_open_http_connects_tokenless_with_the_fixture_index_and_never_enrolls(self):
         fixture = self.fixture()
