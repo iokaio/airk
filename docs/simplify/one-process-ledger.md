@@ -19031,3 +19031,57 @@ Native closure retained the exact publications and the same 41
 past source jobs with zero new Index or Vectors jobs. D: retained
 362,112,151,552 bytes. The next action is a read-only audit of
 essential span membership in the committed vector units.
+
+### 25 November 2026 — Search step 6 committed vector coverage
+
+Read-only audit of the settled Bookbuilder and Munarium publications
+from the Step 5 fixture. Separately owner-checked detached SQLite copies
+were byte-identical to sources before and after copying with empty WALs.
+The native test mapped committed occurrences with Core
+`VectorEvidenceReader`, and the Python summary used the frozen Rule 2
+threshold and the same original and Step 5 Focus pair identities. The
+audit found 108/108 exact accepted paths with committed units, 111/113
+notes qualifying in one unit and two qualifying only across multiple
+units. Each Focus arm missed 95 notes, of which 93 already had a
+qualifying unit. The five paired, identical pre-fusion traces covered 22
+misses. Six had a qualifying occurrence in the capped list and 16 had a
+qualifying unit elsewhere in the committed index. Exact full-matrix rank
+and the other 15 queries' pre-fusion ranks remain unobserved.
+
+Keep the Step 5 pair as the Step 7 baseline. Overlap can directly
+address two notes in this cohort. Potential changes to embedding context
+were not tested. Neither a fresh Search pair nor a representation build
+ran. Any proposed full rebuild requires discussion of the actual changes
+and tradeoffs with the user before work starts.
+
+Audited with the logged-in `TYAI\tdotn` identity, SID
+`S-1-5-21-3678370870-3858642417-826968105-1002`. Use
+`answer-loop/L5C/search-step6-vector-audit-r1` under the retained campaign
+root. Input SHA-256
+`c69843933bf570f209eb667207f67ff346c37df21a401f8e7642711d299cc9ac`.
+Snapshots
+`cdca7447d29da28f32ace41ced01c6819c181a8eebf1fd591cfe3be4c7dedc95`,
+native log
+`afec0131ed80c72437533490784605912d3c4185bef97ad7a90d342e68cc24c5`,
+coverage report
+`c5f294a58b5635c45c43ce21bdefe0d5ecaf349f42bcdf7cb675f9517658dded`.
+Step 5 semantic trace SHA-256
+`bd1f9a7886059007e3c52c213785db53b21f8d3a1368bad6895dcdf4b991e884`.
+
+Pinned Cargo 1.98.0 and Nextest 0.9.148 used the Windows
+`answer-loop/target-cuda` target, incremental 1, offline with locked
+dependencies and timing reports. R1 stopped on an unused import. R2
+passed 16 selected index tests (904 skipped, 96.64 s including compile)
+and exposed the captured-input envelope in the detached probe. R3
+corrected the probe, passed scoped Store Clippy (12.35 s) and the one
+selected native audit (919 skipped, 83.90 s including compile, 1.555 s
+test). Exact command and output hashes are in
+`CARGO-OWNER-CUDA.windows-search-step6-store-audit-r3.at-release.json`
+(SHA-256
+`8ca45b04a833f54fb77266afe8f9ba995289c3367c8decbeacd45ddac88b3eb5`).
+Rust format, five vector-audit Python tests and 13 unchanged Focus
+comparison controls passed. No compiler or fixture descendants remained
+from this audit. Removed only the verified detached database copies
+(665,665,536 bytes). D had 361,212,780,544 free bytes after cleanup.
+Receipt SHA-256
+`382fcc45cfcb36cee676398469b801e426438b4a072cf0b032fa1f44cf776e85`.

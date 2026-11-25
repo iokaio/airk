@@ -57,7 +57,7 @@ Prioritize Munarium, where 23 misses already had a hit from the right path with 
 
 **Original proposal 6.** Audit whether the missing essential lines are present in a committed vector unit and what rank that unit receives. AIRK already uses written headings and definition boundaries. If the audit finds evidence split across units or short passages missing essential context, test bounded overlap or additional heading and symbol context on a small, isolated index.
 
-Use the same MiniLM weights and the same source sample for both builds. Compare passage coverage, exact vector ranks, index size and build cost. Consider any full rebuild only after the isolated test demonstrates a gain that the query-time changes leave unresolved.
+Use the same MiniLM weights and the same source sample for both builds. Compare passage coverage, exact vector ranks, index size and build cost. If the isolated test demonstrates a gain that the query-time changes leave unresolved, review the proposed representation changes and measured tradeoffs with the user before starting a full rebuild.
 
 **Focus comparison.** Within each isolated index, test the same queries with Focus off and on. Record whether changed vector units improve the candidates supplied to Focus and whether the reranker preserves or reduces the gain.
 
@@ -260,6 +260,40 @@ Carry this policy into Step 6. The paired receipt SHA-256 is
 `43a777e7a4b4278a60e82125cab843d0f944240e94ab1e850e8708d8b90ea991`. The comparison to the prior and original is
 `74d6c3557cf3ead527f6f331b4d37271ebec49d941605ee6f3f9b75b495668f8`. Both publications reused the original job set
 and the fixture shut down with zero new Index or Vectors jobs.
+
+### Step 6 result — Committed vector coverage
+
+The native audit mapped the committed units for 108 accepted paths to
+source lines. All paths had vectors on the pinned Bookbuilder and
+Munarium publications. Applying the existing Rule 2 threshold, 111 of
+113 notes had a qualifying single unit. For the remaining two, only
+the union of units on an accepted path reached the threshold.
+
+| Repository | Misses in each Focus arm | Qualifying single unit | Coverage split across units |
+| --- | ---: | ---: | ---: |
+| Bookbuilder | 58 | 57 | 1 |
+| Munarium | 37 | 36 | 1 |
+| Total | 95 | 93 | 2 |
+
+Five of the 20 requests had retained pre-fusion semantic traces. The
+two Focus arms produced identical candidate lists for those requests.
+Of the 22 notes both arms missed, six had a qualifying passage in a
+recorded list and 16 had qualifying units outside all recorded lists.
+The earliest qualifying positions for those six notes ranged from 14
+to 46 within the relevant query's list. These are bounded occurrence
+ranks. The other 15 requests have no retained semantic trace.
+
+Retain Step 5 as the baseline for Step 7. Its coverage is 18/113 with
+Focus off and 18/113 with Focus on, and its top-three coverage is 9/113
+and 10/113 respectively. Step 6 changed neither ranking nor indexing.
+There was no new Focus comparison or rebuild. Unit overlap could
+directly address the two split notes on this cohort. The audit did
+not measure whether adding embedding context would change ranking.
+Prioritize retrieving and selecting the already indexed passages
+before testing a new representation.
+
+Private report SHA-256
+`c5f294a58b5635c45c43ce21bdefe0d5ecaf349f42bcdf7cb675f9517658dded`.
 
 ## Evidence and implementation references
 

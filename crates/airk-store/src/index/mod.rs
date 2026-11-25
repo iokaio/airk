@@ -5,6 +5,8 @@
 //! against tampering; see CONTRACT.md. The engine stores prepared, neutral
 //! records and returns them unchanged: it does not interpret the caller's
 //! compact file record, metadata, citations or payloads.
+#[cfg(all(test, feature = "test-support"))]
+mod coverage_audit;
 mod reader;
 mod schema;
 #[cfg(test)]

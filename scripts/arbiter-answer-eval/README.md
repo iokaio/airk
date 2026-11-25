@@ -714,3 +714,30 @@ overall and by repository. The Focus interaction is the change with Focus
 enabled minus the change with Focus disabled. Read it alongside cache and
 fixed-arm-order limits, and for an experimental index, the changed
 publications. The report does not contain query text or excerpts.
+
+### Committed vector passage coverage
+
+`search_vector_audit.py` takes the SHA-256-pinned Search cohort and a
+verified receipt for detached index databases. Its `prepare` command writes
+the exact collection-relative paths, publication sequences, pipeline
+digests, committed row counts and database hashes for the native probe.
+Prepare copies while the fixture is settled, verify that each original WAL
+is empty, and verify the copied bytes against the unchanged original.
+Place each database at `db/<repository>/index.sqlite3` beside the generated
+input under the ignored audit directory.
+
+Set `AIRK_SEARCH_VECTOR_AUDIT_INPUT` and `AIRK_SEARCH_VECTOR_AUDIT_SHA256`
+to the prepared input and its digest, then capture stdout and stderr from
+the scoped native command.
+
+```text
+cargo nextest run --profile ci -p airk-store --lib --features test-support --locked --offline --timings --run-ignored ignored-only --no-capture -E 'test(=index::coverage_audit::committed_vector_coverage_audit)'
+```
+
+The ignored test emits one `AIRK_COMMITTED_VECTOR_CITATIONS` JSON record
+per requested path, with no evidence text. Pass the log, frozen cohort,
+original and current Focus comparisons, snapshot receipt and prepared
+input with their hashes to `summarize`. An optional pinned service trace
+can show where the same qualifying occurrence ranked inside a recorded
+candidate list. Its rank does not establish position in the full vector
+matrix. Keep inputs, logs and reports under the private campaign root.
