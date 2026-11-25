@@ -1,7 +1,8 @@
 # Native CUDA runtime custody and selected scorer
 
-This additive owner is enabled only by gpu-cuda on Windows x64. CPU open and
-MiniLM do not enumerate adapters or open optional DLLs. One CUDA-capable static
+This additive owner is enabled only by gpu-cuda on Windows x64. CPU model opens do not enumerate adapters or open optional DLLs. The
+explicit MiniLM CUDA lane uses this authenticated runtime only after its
+separate embedding policy and model-specific admission succeed. One CUDA-capable static
 ORT1.30 core serves both CPU and CUDA. Loading another onnxruntime core refuses.
 
 RuntimeManifest/1 is Rust-owned authenticated build input, not a Core permit.

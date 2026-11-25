@@ -624,6 +624,88 @@
       ],
       "type": "string"
     },
+    "ResourceConfiguration": {
+      "additionalProperties": false,
+      "properties": {
+        "allow_embedding_gpu": {
+          "description": "Embeddings may use a qualified GPU unless the user turns this off.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "allow_gpu": {
+          "default": false,
+          "description": "Off unless the user opted in. `true` is in effect only with\n`gpu_opt_in: user_choice`.",
+          "type": "boolean"
+        },
+        "background_io_bytes_per_second": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "extraction_threads": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "gpu_opt_in": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GpuOptIn"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "inference_threads": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "memory_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "preset": {
+          "$ref": "#/$defs/ResourcePreset"
+        },
+        "query_concurrency": {
+          "default": 16,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "preset"
+      ],
+      "type": "object"
+    },
+    "ResourcePreset": {
+      "enum": [
+        "balanced",
+        "responsive",
+        "throughput"
+      ],
+      "type": "string"
+    },
     "ReviewedCall": {
       "additionalProperties": false,
       "description": "The body of a call to a row with a review-mode request key or a\nconfirmation (U98). Every other row's body is the bare method object.",
@@ -794,6 +876,7 @@
     "EventStreamRequest",
     "OperationRow",
     "SetGpuAllowed",
+    "ResourceConfiguration",
     "GpuOptIn",
     "ReviewedCall",
     "MutationPreparation",

@@ -58,6 +58,7 @@ pub fn document() -> serde_json::Value {
     root::<EventStreamRequest>(&mut generator, &mut roots);
     root::<OperationRow>(&mut generator, &mut roots);
     root::<airk_core::service_resources::SetGpuAllowed>(&mut generator, &mut roots);
+    root::<airk_core::service_resources::ResourceConfiguration>(&mut generator, &mut roots);
     root::<airk_core::service_resources::GpuOptIn>(&mut generator, &mut roots);
     root::<ReviewedCall>(&mut generator, &mut roots);
     root::<MutationPreparation>(&mut generator, &mut roots);

@@ -54,7 +54,9 @@ pub struct WaitObservation {
     pub age_ms: u64,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ResourcePreset {
     #[default]
@@ -76,7 +78,7 @@ pub enum GpuOptIn {
     DefaultReset,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ResourceConfiguration {
     /// Off unless the user opted in. `true` is in effect only with
@@ -85,6 +87,9 @@ pub struct ResourceConfiguration {
     pub allow_gpu: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gpu_opt_in: Option<GpuOptIn>,
+    /// Embeddings may use a qualified GPU unless the user turns this off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_embedding_gpu: Option<bool>,
     #[serde(default = "default_query_concurrency")]
     pub query_concurrency: usize,
     pub preset: ResourcePreset,
@@ -105,6 +110,7 @@ impl Default for ResourceConfiguration {
         Self {
             allow_gpu: false,
             gpu_opt_in: None,
+            allow_embedding_gpu: None,
             query_concurrency: DEFAULT_QUERY_CONCURRENCY,
             preset: Default::default(),
             extraction_threads: None,
@@ -115,6 +121,10 @@ impl Default for ResourceConfiguration {
     }
 }
 impl ResourceConfiguration {
+    pub fn embedding_gpu_allowed(&self) -> bool {
+        self.allow_embedding_gpu.unwrap_or(true)
+    }
+
     /// Reads a stored configuration under the opt-in rule. An enabled value
     /// without the record was written under the earlier default: it becomes off
     /// with the reset notice pending. Every other configuration is unchanged,
@@ -141,6 +151,7 @@ impl ResourceConfiguration {
     /// clear it.
     #[must_use]
     pub fn replacing(mut self, previous: &Self) -> Self {
+        self.allow_embedding_gpu = self.allow_embedding_gpu.or(previous.allow_embedding_gpu);
         self.gpu_opt_in = if self.allow_gpu {
             Some(GpuOptIn::UserChoice)
         } else {
@@ -232,6 +243,16 @@ pub struct ResourceSnapshot {
     pub pressure: bool,
     pub running_jobs: usize,
     pub waiting_projects: usize,
+}
+
+impl ResourceSnapshot {
+    /// Expose the effective new policy in observations while retaining omitted
+    /// fields in older stored configurations and requests.
+    #[must_use]
+    pub fn with_effective_embedding_gpu(mut self) -> Self {
+        self.configuration.allow_embedding_gpu = Some(self.configuration.embedding_gpu_allowed());
+        self
+    }
 }
 
 #[cfg(test)]

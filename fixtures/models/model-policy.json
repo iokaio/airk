@@ -1,103 +1,56 @@
 {
   "catalog": {
-    "default_profile": "minilm-l6-v2-u8-v3",
+    "schema": 2,
+    "default_profile": "minilm-l6-v2-fp16-v1",
     "profiles": [
       {
+        "id": "minilm-l6-v2-fp16-v1",
+        "precision": "float16",
+        "runtime": "onnxruntime/1.30.0/airk-minilm-fp16-shared/1",
+        "qualification": {
+          "verified_platforms": [],
+          "evidence": "docs/indexing/performance-plan.md#q9-one-model-file-or-two-follows-from-q2",
+          "scope": "Shared FP16 learned weights, explicit FP32 CPU compute, and separately admitted batched CUDA compute. Platform qualification is recorded separately."
+        },
+        "manifest": {
+          "schema": 2,
+          "name": "sentence-transformers/all-MiniLM-L6-v2",
+          "license": "Apache-2.0",
+          "source": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2",
+          "revision": "10dbd2f06a8baf40ad285b037edda610c1b9a57c",
+          "model_sha256": "f3c3a4eed373650ba1e2f4d3d53437f1ecf92d4c50e5994e07e163751923ee4a",
+          "tokenizer_sha256": "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037",
+          "license_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "dimensions": 384,
+          "max_tokens": 256,
+          "pooling": "attention-mask-mean-l2",
+          "input_ids": "input_ids",
+          "attention_mask": "attention_mask",
+          "token_type_ids": "token_type_ids",
+          "output": "last_hidden_state"
+        },
         "assets": [
           {
-            "bytes": 23046789,
             "name": "model.onnx",
-            "sha256": "b941bf19f1f1283680f449fa6a7336bb5600bdcd5f84d10ddc5cd72218a0fd21",
-            "url": null
+            "url": null,
+            "bytes": 45469884,
+            "sha256": "f3c3a4eed373650ba1e2f4d3d53437f1ecf92d4c50e5994e07e163751923ee4a"
           },
           {
-            "bytes": 466247,
             "name": "tokenizer.json",
-            "sha256": "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037",
-            "url": null
-          },
-          {
-            "bytes": 11358,
-            "name": "LICENSE",
-            "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
-            "url": null
-          }
-        ],
-        "id": "minilm-l6-v2-u8-v3",
-        "manifest": {
-          "attention_mask": "attention_mask",
-          "dimensions": 384,
-          "input_ids": "input_ids",
-          "license": "Apache-2.0",
-          "license_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
-          "max_tokens": 256,
-          "model_sha256": "b941bf19f1f1283680f449fa6a7336bb5600bdcd5f84d10ddc5cd72218a0fd21",
-          "name": "sentence-transformers/all-MiniLM-L6-v2",
-          "output": "last_hidden_state",
-          "pooling": "attention-mask-mean-l2",
-          "revision": "10dbd2f06a8baf40ad285b037edda610c1b9a57c",
-          "schema": 2,
-          "source": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2",
-          "token_type_ids": "token_type_ids",
-          "tokenizer_sha256": "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037"
-        },
-        "precision": "uint8",
-        "qualification": {
-          "evidence": "docs/split/codex-plan.md#9-arbiter-and-local-models",
-          "scope": "Exact original publisher graph under current ORT1.30 provider. Qualification remains empty until actual task, signed-profile numerical/platform, resource, regeneration, installed/package/offline gates complete. Historical provider name is not training provenance.",
-          "verified_platforms": []
-        },
-        "runtime": "onnxruntime-cpu/1.30.0/airk-trained-mixed-int8-b1-v2"
-      },
-      {
-        "assets": [
-          {
-            "bytes": 23026053,
-            "name": "model.onnx",
-            "sha256": "4278337fd0ff3c68bfb6291042cad8ab363e1d9fbc43dcb499fe91c871902474",
-            "url": null
-          },
-          {
+            "url": null,
             "bytes": 466247,
-            "name": "tokenizer.json",
-            "sha256": "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037",
-            "url": null
+            "sha256": "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037"
           },
           {
-            "bytes": 11358,
             "name": "LICENSE",
-            "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
-            "url": null
+            "url": null,
+            "bytes": 11358,
+            "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
           }
-        ],
-        "id": "minilm-l6-v2-s8-v3",
-        "manifest": {
-          "attention_mask": "attention_mask",
-          "dimensions": 384,
-          "input_ids": "input_ids",
-          "license": "Apache-2.0",
-          "license_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
-          "max_tokens": 256,
-          "model_sha256": "4278337fd0ff3c68bfb6291042cad8ab363e1d9fbc43dcb499fe91c871902474",
-          "name": "sentence-transformers/all-MiniLM-L6-v2",
-          "output": "last_hidden_state",
-          "pooling": "attention-mask-mean-l2",
-          "revision": "10dbd2f06a8baf40ad285b037edda610c1b9a57c",
-          "schema": 2,
-          "source": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2",
-          "token_type_ids": "token_type_ids",
-          "tokenizer_sha256": "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037"
-        },
-        "precision": "int8",
-        "qualification": {
-          "evidence": "docs/split/codex-plan.md#9-arbiter-and-local-models",
-          "scope": "Exact original publisher graph under current ORT1.30 provider. Qualification remains empty until actual task, signed-profile numerical/platform, resource, regeneration, installed/package/offline gates complete. Historical provider name is not training provenance.",
-          "verified_platforms": []
-        },
-        "runtime": "onnxruntime-cpu/1.30.0/airk-trained-mixed-int8-b1-v2"
+        ]
       }
-    ],
-    "schema": 2
+    ]
   },
   "schema": "airk.minilm.native-policy/2",
   "scope": "candidate build policy; human quality and installed platform qualification are not inferred"

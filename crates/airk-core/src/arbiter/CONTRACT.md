@@ -1101,8 +1101,8 @@ provider values are decided separately.
 
 **Default.** `allow_gpu` is off in a new configuration, in a stored
 configuration that lacks the field, and in a replacement request that omits
-it. No platform or build turns it on. While it is off no GPU route is
-eligible and Auto selects CPU.
+it. No platform or build turns it on. While it is off no Arbiter GPU route
+is eligible and Arbiter Auto selects CPU.
 
 **Encoding.** The stored file stays `resources-1.4.json` and grows the way it
 has before: one added field that is optional on read. The field is
@@ -1186,6 +1186,17 @@ service over a file stored under the earlier default.
 and the extension read `gpu_opt_in` through generated types. The wire value
 is unchanged. This replaces the earlier statement that the I3 schema and the
 generated client types are unchanged.
+
+The later [indexing performance plan Q10](../../../../docs/indexing/performance-plan.md#q10-the-setting-for-embedding-on-the-graphics-card-follows-from-q2)
+adds independent `allow_embedding_gpu` to this configuration. Missing values
+permit embedding GPU admission. A replacement that omits the field preserves
+an earlier explicit choice. `SetGpuAllowed` affects Arbiter only.
+`Resources` reports the effective embedding setting when configuration is valid.
+`ConfigureResources` applies the setting to the native embedding owner after
+persistence succeeds. An invalid resource configuration closes admission.
+The setting permits a qualified provider. Actual inference reports whether the
+provider ran, including CPU fallback. The Rust-emitted I3 resource schema
+covers the existing configuration request used by Admin and the extension.
 
 
 ## CPU ladder, Auto route order and typed fallback reasons (decided 21 November 2026, America/Denver)

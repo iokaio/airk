@@ -172,7 +172,55 @@ pub struct ModelCatalog {
     pub profiles: Vec<ModelProfile>,
 }
 
+pub const FP16_PROFILE: &str = "minilm-l6-v2-fp16-v1";
+pub const FP16_MODEL_SHA256: &str =
+    "f3c3a4eed373650ba1e2f4d3d53437f1ecf92d4c50e5994e07e163751923ee4a";
+
 impl ModelCatalog {
+    fn validate_fp16(&self) -> Result<()> {
+        ensure!(
+            self.schema == 2 && self.default_profile == FP16_PROFILE && self.profiles.len() == 1,
+            "invalid shared MiniLM catalog"
+        );
+        let profile = &self.profiles[0];
+        let retained = legacy_catalog()?;
+        let mut expected = retained
+            .profiles
+            .iter()
+            .find(|old| old.precision == "uint8")
+            .context("original publisher ABI missing")?
+            .manifest
+            .clone();
+        expected.model_sha256 = FP16_MODEL_SHA256.into();
+        ensure!(
+            profile.id == FP16_PROFILE
+                && profile.runtime == crate::model::ONNX_FP16_RUNTIME
+                && profile.precision == "float16"
+                && profile.quantization.is_none()
+                && profile.manifest == expected
+                && profile.assets.len() == 3,
+            "invalid shared FP16 MiniLM profile"
+        );
+        let mut names = BTreeSet::new();
+        for asset in &profile.assets {
+            let (digest, bytes) = match asset.name.as_str() {
+                "model.onnx" => (&expected.model_sha256, 45_469_884),
+                "tokenizer.json" => (&expected.tokenizer_sha256, 466_247),
+                "LICENSE" => (&expected.license_sha256, 11_358),
+                _ => anyhow::bail!("unexpected shared FP16 MiniLM asset"),
+            };
+            ensure!(
+                names.insert(&asset.name)
+                    && asset.url.is_none()
+                    && asset.sha256 == *digest
+                    && asset.bytes == bytes,
+                "shared FP16 MiniLM asset differs from its pin"
+            );
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
     fn validate(&self) -> Result<()> {
         ensure!(
             self.schema == 2
@@ -269,29 +317,16 @@ pub struct ModelCatalogReport {
 }
 
 fn select_profile(catalog: &ModelCatalog, hardware: &ModelCapabilities) -> Result<ModelSelection> {
-    catalog.validate()?;
-    let (id, reason) = match hardware.architecture {
-        "aarch64" => ("minilm-l6-v2-s8-v3", "arm64_signed_int8"),
-        "x86_64"
-            if hardware
-                .cpu_features
-                .iter()
-                .any(|feature| matches!(*feature, "avxvnni" | "avx512vnni")) =>
-        {
-            ("minilm-l6-v2-s8-v3", "vnni_signed_int8")
-        }
-        "x86_64" => ("minilm-l6-v2-u8-v3", "portable_unsigned_int8"),
-        _ => anyhow::bail!("unsupported INT8 architecture"),
-    };
-    let profile = catalog
-        .profiles
-        .iter()
-        .find(|profile| profile.id == id)
-        .context("INT8 profile missing")?;
+    catalog.validate_fp16()?;
+    ensure!(
+        matches!(hardware.architecture, "aarch64" | "x86_64"),
+        "unsupported MiniLM architecture"
+    );
+    let profile = &catalog.profiles[0];
     let platform = format!("{}-{}", hardware.operating_system, hardware.architecture);
     Ok(ModelSelection {
         profile_id: profile.id.clone(),
-        reason,
+        reason: "shared_fp16_model",
         platform_qualified: profile.qualification.verified_platforms.contains(&platform),
         // Dynamic activation quantization is sensitive to other rows in a batch.
         // Keep per-text cache keys independent of unrelated inputs on every CPU.
@@ -302,7 +337,7 @@ fn select_profile(catalog: &ModelCatalog, hardware: &ModelCapabilities) -> Resul
 /// Only these exact pinned exports can execute; arbitrary/FP32 graphs cannot.
 pub(crate) fn contains_active_manifest(manifest: &OnnxManifest) -> Result<bool> {
     let catalog: ModelCatalog = serde_json::from_str(include_str!("model_catalog.json"))?;
-    catalog.validate()?;
+    catalog.validate_fp16()?;
     Ok(catalog
         .profiles
         .iter()
@@ -315,7 +350,7 @@ pub(crate) fn contains_active_asset_references(
     use airk_core::model_objects::ModelAssetName;
     set.validate()?;
     let catalog: ModelCatalog = serde_json::from_str(include_str!("model_catalog.json"))?;
-    catalog.validate()?;
+    catalog.validate_fp16()?;
     Ok(catalog.profiles.iter().any(|profile| {
         [
             (ModelAssetName::ModelOnnx, "model.onnx"),
@@ -338,10 +373,10 @@ pub(crate) fn contains_active_asset_references(
 
 pub fn approved_manifest(manifest: &OnnxManifest) -> Result<()> {
     let catalog: ModelCatalog = serde_json::from_str(include_str!("model_catalog.json"))?;
-    catalog.validate()?;
+    catalog.validate_fp16()?;
     ensure!(
         catalog.profiles.iter().any(|p| p.manifest == *manifest),
-        "semantic_model_upgrade_required: AIRK 1.6 requires its bundled INT8 model"
+        "semantic_model_upgrade_required: AIRK requires its bundled MiniLM model"
     );
     Ok(())
 }
@@ -353,7 +388,7 @@ pub fn selected_profile() -> Result<ModelProfile> {
         .profiles
         .into_iter()
         .find(|p| p.id == report.selection.profile_id)
-        .context("selected INT8 profile missing")
+        .context("selected MiniLM profile missing")
 }
 
 pub fn inspect_catalog() -> Result<ModelCatalogReport> {
@@ -366,7 +401,7 @@ pub fn inspect_catalog() -> Result<ModelCatalogReport> {
         capabilities,
         catalog,
         selection,
-        automatic_int8: true,
+        automatic_int8: false,
     })
 }
 
@@ -375,14 +410,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn selection_covers_non_vnni_vnni_and_arm_without_fp32_fallback() -> Result<()> {
+    fn selection_uses_the_shared_weights_on_each_supported_cpu() -> Result<()> {
         let mut report = inspect_catalog()?;
         for (architecture, features, expected) in [
-            ("x86_64", vec![], "minilm-l6-v2-u8-v3"),
-            ("x86_64", vec!["avx2", "avx512f"], "minilm-l6-v2-u8-v3"),
-            ("x86_64", vec!["avxvnni"], "minilm-l6-v2-s8-v3"),
-            ("x86_64", vec!["avx512vnni"], "minilm-l6-v2-s8-v3"),
-            ("aarch64", vec!["neon"], "minilm-l6-v2-s8-v3"),
+            ("x86_64", vec![], FP16_PROFILE),
+            ("x86_64", vec!["avx2", "avx512f"], FP16_PROFILE),
+            ("x86_64", vec!["avxvnni"], FP16_PROFILE),
+            ("x86_64", vec!["avx512vnni"], FP16_PROFILE),
+            ("aarch64", vec!["neon"], FP16_PROFILE),
         ] {
             report.capabilities.architecture = architecture;
             report.capabilities.cpu_features = features;
@@ -403,10 +438,10 @@ mod tests {
     fn catalog_rejects_corrupt_asset_bindings_and_duplicate_paths() -> Result<()> {
         let mut report = inspect_catalog()?;
         report.catalog.profiles[0].assets[0].sha256 = "00".repeat(32);
-        assert!(report.catalog.validate().is_err());
+        assert!(report.catalog.validate_fp16().is_err());
         let mut report = inspect_catalog()?;
         report.catalog.profiles[0].assets[1] = report.catalog.profiles[0].assets[0].clone();
-        assert!(report.catalog.validate().is_err());
+        assert!(report.catalog.validate_fp16().is_err());
         Ok(())
     }
 }

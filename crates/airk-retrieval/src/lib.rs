@@ -9,6 +9,8 @@ pub mod embedding_worker;
 pub mod intent;
 #[cfg(test)]
 mod macho_identity;
+#[cfg(feature = "gpu-cuda")]
+pub mod minilm_fp16;
 pub mod model;
 pub mod model_catalog;
 #[cfg(feature = "local-inference")]

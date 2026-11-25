@@ -54,20 +54,10 @@ use std::{fs, io::Write};
 include!(concat!(env!("OUT_DIR"), "/bundled_model.rs"));
 
 fn manifest_bytes() -> Result<&'static [u8]> {
-    Ok(
-        match airk_retrieval::model_catalog::selected_profile()?
-            .id
-            .as_str()
-        {
-            "minilm-l6-v2-u8-v3" => {
-                include_bytes!(concat!(env!("OUT_DIR"), "/minilm-l6-v2-u8-v3/model.json"))
-            }
-            "minilm-l6-v2-s8-v3" => {
-                include_bytes!(concat!(env!("OUT_DIR"), "/minilm-l6-v2-s8-v3/model.json"))
-            }
-            _ => anyhow::bail!("unsupported bundled model"),
-        },
-    )
+    Ok(include_bytes!(concat!(
+        env!("OUT_DIR"),
+        "/minilm-l6-v2-fp16-v1/model.json"
+    )))
 }
 pub fn manifest() -> Result<serde_json::Value> {
     Ok(serde_json::from_slice(manifest_bytes()?)?)

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Consume the native-owned trained model policy; never invent model pins."""
+"""Consume the native-owned bundled model policy; never invent model pins."""
 import json
 from pathlib import Path
 import re
@@ -56,13 +56,13 @@ def verify_model_smoke(report):
 def verify_embedded(report):
     expected = catalog()
     if report.get("schema") != 1 or report.get("fp32_included") is not False:
-        raise ValueError("Helper did not verify its complete INT8 inventory")
+        raise ValueError("Helper did not verify its complete approved model inventory")
     profiles = report.get("profiles", [])
-    if len(profiles) != 2 or {p.get("id") for p in profiles} != set(APPROVED):
+    if len(profiles) != len(APPROVED) or {p.get("id") for p in profiles} != set(APPROVED):
         raise ValueError("Helper contains an unexpected model inventory")
     for profile in profiles:
         reference = next(p for p in expected["profiles"] if p["id"] == profile["id"])
         if (profile.get("manifest") != reference["manifest"] or profile.get("assets") != reference["assets"]
                 or profile.get("precision") != reference["precision"]):
-            raise ValueError("Embedded model differs from approved INT8 manifest")
+            raise ValueError("Embedded model differs from approved manifest")
     return report

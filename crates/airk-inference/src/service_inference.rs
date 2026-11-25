@@ -705,6 +705,20 @@ mod native {
             self.health.last_ack_at = Instant::now();
             Ok(status)
         }
+        pub fn embedding_route(
+            &self,
+        ) -> Result<Option<airk_core::inference_provider::EmbeddingRouteObservation>> {
+            self.owner
+                .as_ref()
+                .map_or(Ok(None), InferenceOwner::embedding_route)
+        }
+
+        pub fn configure_embedding_gpu(&self, allowed: bool) {
+            if let Some(owner) = &self.owner {
+                owner.configure_embedding_gpu(allowed);
+            }
+        }
+
         pub fn configure_threads(&mut self, threads: u16) -> Result<()> {
             #[cfg(any(test, feature = "test-support"))]
             if let Some(legacy) = self.legacy.as_mut() {
@@ -768,6 +782,20 @@ pub fn provider_status(
     #[cfg(feature = "local-inference")]
     {
         pool.provider_status()
+    }
+    #[cfg(not(feature = "local-inference"))]
+    {
+        let _ = pool;
+        Ok(None)
+    }
+}
+
+pub fn embedding_route(
+    pool: &Pool,
+) -> anyhow::Result<Option<airk_core::inference_provider::EmbeddingRouteObservation>> {
+    #[cfg(feature = "local-inference")]
+    {
+        pool.embedding_route()
     }
     #[cfg(not(feature = "local-inference"))]
     {

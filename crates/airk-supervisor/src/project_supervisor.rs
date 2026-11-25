@@ -2265,6 +2265,10 @@ WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref(), hooks }
                         let started = Pool::start(&root, instance, resources.snapshot().inference_threads_limit);
                         match started {
                             Ok(started) => {
+                                #[cfg(feature = "local-inference")]
+                                started.configure_embedding_gpu(
+                                    !configuration_error && resources.snapshot().configuration.embedding_gpu_allowed(),
+                                );
                                 pool_recovery.started(started.identity());
                                 pool = Some(started);
                                 log.record_code(airk_core::service_logs::LogKind::ModelRecovery, None, None, Some("helper_started"));
@@ -2500,7 +2504,7 @@ WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref(), hooks }
                                     // Off during a pending reset notice is the user's answer, not a repeat.
                                     if chosen == previous {
                                         let _ = reply.send(ControlResponse::Resources {
-                                            observation: Box::new(resources.snapshot()),
+                                            observation: Box::new(resources.snapshot().with_effective_embedding_gpu()),
                                             age_ms: 0,
                                             configuration_error: false,
                                         });
@@ -2547,10 +2551,14 @@ WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref(), hooks }
                                     let _ = pool.configure_threads(resources.snapshot().inference_threads_limit);
                                 }
                             }
+                            #[cfg(feature = "local-inference")]
+                            if let Some(pool) = &pool {
+                                pool.configure_embedding_gpu(result.is_ok() && configuration.embedding_gpu_allowed());
+                            }
                             let response = if result.is_ok() {
                                 configuration_error = false;
                                 ControlResponse::Resources {
-                                    observation: Box::new(resources.snapshot()),
+                                    observation: Box::new(resources.snapshot().with_effective_embedding_gpu()),
                                     age_ms: 0,
                                     configuration_error: false,
                                 }
@@ -2613,7 +2621,10 @@ WorkerAdmission {
                         Ok(Envelope::EmbeddingStatus { reply }) => {
                             let response = match pool.as_mut().map(|pool| {
                                 let id = airk_inference::service_inference::process_id(pool);
-                                pool.status().and_then(|status|airk_inference::service_inference::provider_status(pool).map(|provider|(id,status,provider)))
+                                let status = pool.status()?;
+                                let provider = airk_inference::service_inference::provider_status(pool)?;
+                                let last_embedding = airk_inference::service_inference::embedding_route(pool)?;
+                                Ok::<_, anyhow::Error>((id, status, provider, last_embedding))
                             }) {
                                 Some(Ok((
                                     id,
@@ -2624,6 +2635,7 @@ WorkerAdmission {
                                         age_ms,
                                     },
                                     provider,
+                                    last_embedding,
                                 ))) => ControlResponse::EmbeddingStatus {
                                     available: provider.as_ref().is_none_or(|provider|provider.admission_open&&provider.failure.is_none()),
                                     process_id: id,
@@ -2633,6 +2645,7 @@ WorkerAdmission {
                                     sessions,
                                     observation_age_ms: Some(age_ms),
                                     provider,
+                                    last_embedding,
                                 },
                                 None => ControlResponse::EmbeddingStatus {
                                     available: false,
@@ -2643,6 +2656,7 @@ WorkerAdmission {
                                     sessions: 0,
                                     observation_age_ms: None,
                                     provider:None,
+                                    last_embedding:None,
                                 },
                                 _ => ControlResponse::Failure {
                                     code: "embedding_observation_busy".into(),
@@ -3265,7 +3279,11 @@ WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref(), hooks }
     pub fn resource_status(&self) -> ControlResponse {
         match self.resources.lock() {
             Ok(cache) => ControlResponse::Resources {
-                observation: Box::new(cache.snapshot.clone()),
+                observation: Box::new(if cache.configuration_error {
+                    cache.snapshot.clone()
+                } else {
+                    cache.snapshot.clone().with_effective_embedding_gpu()
+                }),
                 age_ms: cache.observed.elapsed().as_millis().min(u64::MAX as u128) as u64,
                 configuration_error: cache.configuration_error,
             },

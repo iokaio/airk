@@ -367,6 +367,9 @@ export function managementView(state: ServiceConsoleState): ManagementView {
                 ? (configuration.allow_gpu ? 'Allowed'
                     : configuration.gpu_opt_in === GPU_DEFAULT_RESET ? 'Disabled (reset from an earlier default; choose in Service Admin)' : 'Disabled')
                 : 'Unavailable'],
+            ['Embedding GPU use', state.resources.value?.configuration_error === false && typeof configuration.allow_embedding_gpu === 'boolean'
+                ? configuration.allow_embedding_gpu ? 'Allowed' : 'Disabled'
+                : 'Unavailable'],
             ['Concurrent evidence requests', configuration.query_concurrency],
             ['Resident workers / limit', resources.resident_workers === undefined ? undefined : `${scalar(resources.resident_workers)} / ${scalar(resources.resident_limit)}`],
             ['Running jobs', resources.running_jobs], ['Waiting projects', resources.waiting_projects], ['Logical CPUs', resources.logical_cpus],

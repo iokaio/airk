@@ -33,6 +33,10 @@ pub struct InferenceOwner {
     pub state: Arc<State>,
     provider: ProviderIdentity,
     threads: Arc<AtomicUsize>,
+    embedding_observation:
+        Arc<Mutex<Option<airk_core::inference_provider::EmbeddingRouteObservation>>>,
+    allow_embedding_gpu: Arc<AtomicBool>,
+    embedding_unsettled: Arc<AtomicBool>,
     observation: Arc<Mutex<(u64, u64, usize, Instant)>>,
     owner: Option<std::thread::JoinHandle<Result<()>>>,
     stopped: bool,
@@ -79,8 +83,16 @@ impl InferenceOwner {
         });
         let threads = Arc::new(AtomicUsize::new(usize::from(inference_threads)));
         let observation = Arc::new(Mutex::new((0, 0, 0, Instant::now())));
+        let embedding_observation = Arc::new(Mutex::new(None));
+        let engine_embedding_observation = embedding_observation.clone();
+        #[cfg(feature = "gpu-cuda")]
+        let engine_gpu_lease = lease.clone();
         let engine_state = state.clone();
         let engine_threads = threads.clone();
+        let allow_embedding_gpu = Arc::new(AtomicBool::new(false));
+        let engine_embedding_gpu = allow_embedding_gpu.clone();
+        let embedding_unsettled = Arc::new(AtomicBool::new(false));
+        let engine_embedding_unsettled = embedding_unsettled.clone();
         let engine_observation = observation.clone();
         let owner_state = state.clone();
         let compute_ownership =
@@ -97,6 +109,13 @@ impl InferenceOwner {
                 let mut engine = Engine::new(&runtime)?;
                 engine.embedded=Some(airk_store::service::embedded_model::EmbeddedModelBinding::new(airk_host::bundled_assets::EmbeddedAssets::plan()?,Arc::new(airk_host::bundled_assets::EmbeddedAssets))?);
                 engine.inference_threads = engine_threads;
+                engine.allow_embedding_gpu = engine_embedding_gpu;
+                engine.embedding_unsettled = engine_embedding_unsettled;
+                engine.embedding_observation = engine_embedding_observation;
+                #[cfg(feature = "gpu-cuda")]
+                {
+                    engine.gpu_lease = Some(engine_gpu_lease);
+                }
                 let (compute_ready, compute_start) = std::sync::mpsc::sync_channel(1);
                 let compute = std::thread::Builder::new().name("airk-inference-compute".into()).stack_size(8 << 20).spawn(move || {
                     compute_ownership.run(move || {
@@ -114,8 +133,9 @@ impl InferenceOwner {
                             *status = (engine.loads, engine.reuses, engine.sessions.len(), Instant::now());
                         }
                     }
+                    let engine_settled = engine.retire_model().is_ok();
                     drop(engine);
-                    if let Some(accounting) = &engine_state.accounting {
+                    if engine_settled && let Some(accounting) = &engine_state.accounting {
                         accounting.model_cached(false);
                         accounting.mark_engine_barrier();
                     }
@@ -179,7 +199,10 @@ impl InferenceOwner {
             state,
             provider,
             threads,
+            allow_embedding_gpu,
+            embedding_unsettled,
             observation,
+            embedding_observation,
             owner: Some(owner),
             stopped: false,
             stop_requested: false,
@@ -342,6 +365,19 @@ impl InferenceOwner {
             age_ms: value.3.elapsed().as_millis().min(u64::MAX as u128) as u64,
         })
     }
+    pub(crate) fn embedding_route(
+        &self,
+    ) -> Result<Option<airk_core::inference_provider::EmbeddingRouteObservation>> {
+        self.embedding_observation
+            .lock()
+            .map(|route| *route)
+            .map_err(|_| anyhow::anyhow!("embedding route observation unavailable"))
+    }
+
+    pub(crate) fn configure_embedding_gpu(&self, allowed: bool) {
+        self.allow_embedding_gpu.store(allowed, Ordering::Release);
+    }
+
     pub(crate) fn configure_threads(&self, threads: u16) -> Result<()> {
         ensure!(
             (1..=MAX_INFERENCE_THREADS).contains(&threads),
@@ -394,7 +430,7 @@ impl InferenceOwner {
         capture.validate()?;
         accounting.close(operation, workers)?;
         self.arbiter.handle.close();
-        if self.stopped {
+        if self.stopped && !self.embedding_unsettled.load(Ordering::Acquire) {
             accounting.mark_engine_barrier();
         }
         if !self.barrier_sent
@@ -452,8 +488,11 @@ impl InferenceOwner {
                     return Err(error);
                 }
             }
+            self.failure |= self.embedding_unsettled.load(Ordering::Acquire);
             self.stopped = arbiter_stopped;
-            if let Some(accounting) = &self.state.accounting {
+            if !self.embedding_unsettled.load(Ordering::Acquire)
+                && let Some(accounting) = &self.state.accounting
+            {
                 accounting.model_cached(false);
                 accounting.mark_engine_barrier();
             }

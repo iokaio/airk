@@ -208,6 +208,27 @@ export type RequestProgress = {
  */
 export type RequestState = "submitted" | "accepted" | "completed" | "refused" | "unknown";
 
+export type ResourceConfiguration = {
+    /**
+     * Embeddings may use a qualified GPU unless the user turns this off.
+     */
+    allow_embedding_gpu?: boolean | null;
+    /**
+     * Off unless the user opted in. `true` is in effect only with
+     * `gpu_opt_in: user_choice`.
+     */
+    allow_gpu?: boolean;
+    background_io_bytes_per_second?: number | null;
+    extraction_threads?: number | null;
+    gpu_opt_in?: GpuOptIn | null;
+    inference_threads?: number | null;
+    memory_bytes?: number | null;
+    preset: ResourcePreset;
+    query_concurrency?: number;
+};
+
+export type ResourcePreset = "balanced" | "responsive" | "throughput";
+
 /**
  * The body of a call to a row with a review-mode request key or a
  * confirmation (U98). Every other row's body is the bare method object.

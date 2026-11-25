@@ -273,3 +273,117 @@ fn score_with_outputs<T>(
     binding.authorize_score(input.input_digest)?;
     Ok((scores.to_vec(), additional))
 }
+
+// MiniLM uses the same retained native device/claims and transfer guard as the
+// Arbiter scorer. This hook has no profile or release-approval authority.
+impl CudaDevice {
+    pub(crate) fn configure_minilm_cuda(
+        &self,
+        builder: ort::session::builder::SessionBuilder,
+        canonical_asset: &[u8],
+        graph: &[u8],
+        arena_limit: usize,
+        deadline: Instant,
+    ) -> Result<ort::session::builder::SessionBuilder> {
+        crate::native_inference::require_service_compute()?;
+        in_time(deadline)?;
+        let external_name = "minilm-fp16.bin";
+        let files = std::collections::BTreeMap::from([(
+            external_name.to_owned(),
+            canonical_asset.len().try_into()?,
+        )]);
+        let external = crate::arbiter::external_data::validate(graph, &files)?;
+        ensure!(
+            external.len() == 1 && external.contains(external_name),
+            "MiniLM CUDA graph has an unexpected external weight reference"
+        );
+        let provider = ort::execution_providers::CUDAExecutionProvider::default()
+            .with_device_id(self.ordinal())
+            .with_tf32(false)
+            .with_cuda_graph(false)
+            .with_memory_limit(arena_limit);
+        Ok(builder
+            .with_execution_providers([provider.build().error_on_failure()])
+            .map_err(run_failure)?
+            .with_external_initializer_file_in_memory(
+                external_name,
+                std::borrow::Cow::Owned(canonical_asset.to_vec()),
+            )?)
+    }
+
+    pub(crate) fn observe_minilm_placement(
+        &self,
+        session: &Session,
+    ) -> Result<PlacementObservation> {
+        self.placement(session)
+    }
+
+    pub(crate) fn run_minilm_cuda(
+        self: &Arc<Self>,
+        session: &mut Session,
+        inputs: Vec<(&'static str, DynValue)>,
+        shape: [usize; 3],
+        extra_bytes: u64,
+        headroom: u64,
+        deadline: Instant,
+    ) -> Result<DynValue> {
+        crate::native_inference::require_service_compute()?;
+        in_time(deadline)?;
+        let output_name = "last_hidden_state";
+        let options = RunOptions::new()?;
+        let output = Tensor::from_array((shape, vec![0.0_f32; shape.iter().product()]))?;
+        let options = options.with_outputs(
+            OutputSelector::no_default()
+                .with(output_name)
+                .preallocate(output_name, output),
+        );
+        let claim = self.reserve_warm_work(extra_bytes, headroom, deadline)?;
+        let transfers = Transfers {
+            inputs: ManuallyDrop::new(inputs),
+            options: ManuallyDrop::new(options),
+            claim: RefCell::new(Some(claim)),
+            device: self.clone(),
+            settled: Cell::new(false),
+        };
+        let borrowed = transfers
+            .inputs
+            .iter()
+            .map(|(name, value)| (*name, value))
+            .collect::<Vec<_>>();
+        let result = session
+            .run_with_options(borrowed, &transfers.options)
+            .map_err(run_failure);
+        let wait = transfers.finish();
+        match (result, wait) {
+            (Ok(mut outputs), Ok(())) => outputs
+                .remove(output_name)
+                .context("MiniLM CUDA output was absent"),
+            (Ok(outputs), Err(error)) => {
+                if !transfers.settled.get() {
+                    std::mem::forget(outputs);
+                }
+                Err(error)
+            }
+            (Err(error), Ok(())) => Err(error),
+            (Err(error), Err(wait)) => Err(preserve_primary(
+                error,
+                format!("MiniLM GPU settlement also failed: {wait:#}"),
+            )),
+        }
+    }
+}
+
+// After a failed MiniLM load, a poisoned resident remains in the runtime's
+// weak-device map because unknown native work retains the strong device lease.
+// Observe the exact adapter before the caller considers CPU fallback.
+impl CudaRuntime {
+    pub(crate) fn minilm_device_settled(&self, adapter_uuid: [u8; 16]) -> bool {
+        !self.poisoned()
+            && self.devices.lock().is_ok_and(|devices| {
+                devices
+                    .get(&adapter_uuid)
+                    .and_then(Weak::upgrade)
+                    .is_none_or(|device| !device.poisoned())
+            })
+    }
+}

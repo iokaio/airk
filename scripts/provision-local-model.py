@@ -15,9 +15,11 @@ _spec = importlib.util.spec_from_file_location("int8_policy", Path(__file__).wit
 _policy = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_policy)
 _policy.validate_catalog(CATALOG)
-PROFILE = CATALOG["profiles"][0]
-if CATALOG["schema"] != 2 or PROFILE["id"] != CATALOG["default_profile"] or PROFILE["precision"] != "uint8" or len(CATALOG["profiles"]) != 2:
-    raise ValueError("No approved INT8 provisioning profiles")
+HISTORICAL_INT8_POLICY_SHA256 = "9da184de7f3ae4ef93d9b4fabd6987677ffec0261c6c472f3e49387cd2dcb31d"
+default_profiles = [profile for profile in CATALOG["profiles"] if profile["id"] == CATALOG["default_profile"]]
+if CATALOG["schema"] != 2 or len(default_profiles) != 1:
+    raise ValueError("No unique native-approved default provisioning profile")
+PROFILE = default_profiles[0]
 REVISION = PROFILE["manifest"]["revision"]
 SOURCE = PROFILE["manifest"]["source"]
 ASSETS = {asset["name"]: (asset["url"], asset["bytes"], asset["sha256"]) for asset in PROFILE["assets"]}
@@ -106,16 +108,36 @@ def provision(destination, download=False, profile=None, source_directory=None):
     return manifest
 
 
+def historical_int8_profiles(path):
+    """Read the exact former native capture for explicit offline reproduction."""
+    if path.is_symlink() or not path.is_file() or path.stat().st_size > 16_384:
+        raise ValueError("The historical INT8 capture must be a regular bounded file")
+    with path.open("rb") as source:
+        raw = source.read(16_385)
+    if hashlib.sha256(raw).hexdigest() != HISTORICAL_INT8_POLICY_SHA256:
+        raise ValueError("Historical INT8 model policy capture differs from the retained pin")
+    return json.loads(raw)["catalog"]["profiles"]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--destination", type=Path, required=True)
     parser.add_argument("--download", action="store_true", help="fetch only when the native catalog supplies an authenticated URL; current assets use authenticated local inputs")
-    parser.add_argument("--profile", choices=[profile["id"] for profile in CATALOG["profiles"]])
+    parser.add_argument("--profile", help="one exact profile ID from the selected policy")
     parser.add_argument("--source-directory", type=Path, help="explicit local model.onnx/tokenizer.json/LICENSE inputs for --profile")
+    parser.add_argument("--historical-policy", type=Path, help="exact retained INT8 policy capture for offline reproduction")
     args = parser.parse_args()
     if args.source_directory is not None and args.profile is None:
         parser.error("--source-directory requires one explicit --profile")
-    profiles = [profile for profile in CATALOG["profiles"] if args.profile is None or profile["id"] == args.profile]
+    if args.historical_policy is not None:
+        if args.profile is None or args.source_directory is None or args.download:
+            parser.error("--historical-policy requires --profile and --source-directory without --download")
+        available = historical_int8_profiles(args.historical_policy)
+    else:
+        available = CATALOG["profiles"]
+    profiles = [profile for profile in available if args.profile is None or profile["id"] == args.profile]
+    if not profiles:
+        parser.error("--profile is absent from the selected policy")
     manifest = {profile["id"]: provision(args.destination / profile["id"], args.download, profile, args.source_directory)
                 for profile in profiles}
     print(json.dumps({"verified": True, "directory": str(args.destination.resolve()), "manifest": manifest}, indent=2))

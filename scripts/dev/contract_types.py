@@ -32,7 +32,7 @@ HEADER = ("// SPDX-License-Identifier: Apache-2.0\n"
           "// Owner: {title} (Rust). Semantic rules stay hand-written and fixture-tested.\n")
 KNOWN = {"$ref", "type", "properties", "required", "additionalProperties", "description",
          "format", "minimum", "maximum", "enum", "const", "oneOf", "anyOf", "items", "pattern", "uniqueItems",
-         "minItems", "maxItems"}
+         "minItems", "maxItems", "default"}
 IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 

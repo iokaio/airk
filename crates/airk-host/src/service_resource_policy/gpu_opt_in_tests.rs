@@ -134,6 +134,23 @@ fn a_carrier_copies_the_stored_bytes_and_the_successor_applies_the_rule() -> Res
 }
 
 #[test]
+fn an_explicit_embedding_gpu_preference_survives_reload_and_arbiter_updates() -> Result<()> {
+    const DISABLED: &[u8] = br#"{"allow_gpu":false,"allow_embedding_gpu":false,"query_concurrency":16,"preset":"balanced","extraction_threads":null,"inference_threads":null,"memory_bytes":null,"background_io_bytes_per_second":null}"#;
+    let directory = tempfile::tempdir()?;
+    let root = runtime(&directory, "runtime")?;
+    assert!(load(&root)?.embedding_gpu_allowed());
+    std::fs::write(root.join(FILE), DISABLED)?;
+    assert!(!load(&root)?.embedding_gpu_allowed());
+    assert_eq!(stored(&root)?, DISABLED);
+
+    save(&root, &load(&root)?.with_gpu_choice(true))?;
+    let updated = load(&root)?;
+    assert!(updated.allow_gpu);
+    assert!(!updated.embedding_gpu_allowed());
+    Ok(())
+}
+
+#[test]
 fn contradictory_or_unknown_stored_records_are_configuration_errors() -> Result<()> {
     let directory = tempfile::tempdir()?;
     let root = runtime(&directory, "runtime")?;

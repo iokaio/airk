@@ -1,4 +1,28 @@
-# Offline INT8 transformer embeddings
+# Offline transformer embeddings
+
+## Bundled profiles
+
+The current native indexing candidate bundles `minilm-l6-v2-fp16-v1`.
+Its ONNX file contains one FP16 weight set, the explicit FP32 CPU graph
+and the small CUDA graph view over the same weights. The protected
+MiniLM tokenizer binds a 256-token context to 384-dimensional normalized
+vectors. The embedded graph is 45,469,884 bytes.
+
+The service allows embedding GPU use by default through a setting separate
+from Arbiter GPU use. A compatible admitted CUDA session handles batches of up
+to 32 texts. The CPU pool handles embeddings when CUDA is disabled or
+unavailable, or when admission or safely settled execution fails. The
+inference status reports the observed provider and fallback reason.
+Both routes use the same pipeline identity, and earlier INT8 vectors need
+regeneration. See the [indexing plan](indexing/performance-plan.md) and
+[offline exporter and provisioner](../scripts/indexing-plan/README.md).
+
+For the matching Cargo build, set `AIRK_BUNDLED_MODEL_DIR` to the parent of
+the single profile directory after staging and verifying its four files.
+The packaged service links the pinned static ONNX Runtime; embedding continues
+to run under the service`s actual native inference lease.
+
+## Historical INT8 candidate
 
 The AIRK 1.9.0 build embeds two pinned trained MiniLM mixed-precision INT8
 exports and statically links ONNX Runtime 1.30.0 CPU into the main executable. Inference runs inside the native
@@ -14,7 +38,7 @@ The trained exports retain FP32 embeddings and six sensitive feed-forward output
 projections; 66.7% of linear parameters are quantized. Floating-point pooling,
 normalization and output vectors remain. There is no precision fallback.
 
-## Bundled profiles
+### Historical bundled profiles
 
 Both trained exports derive from `sentence-transformers/all-MiniLM-L6-v2`,
 revision `10dbd2f06a8baf40ad285b037edda610c1b9a57c`, with retained Apache-2.0

@@ -27,7 +27,7 @@ import { currentSession } from './session';
 import { useContext } from 'preact/hooks';
 import { PageVisible } from './pageVisibility';
 import type { CallResult } from './api';
-import type { GpuOptIn } from '../../contracts-gen/i3';
+import type { GpuOptIn, ResourceConfiguration } from '../../contracts-gen/i3';
 
 /** U103: live progress of one registered index, chosen from the catalog names. */
 function OverviewProgress(): JSX.Element {
@@ -275,6 +275,15 @@ export function gpuAllowedOf(value: unknown): boolean | null {
   return typeof configured === 'boolean' ? configured : null;
 }
 
+type EmbeddingGpuConfiguration = ResourceConfiguration & { allow_embedding_gpu: boolean };
+
+function embeddingGpuConfigurationOf(value: unknown): EmbeddingGpuConfiguration | null {
+  if (field(value, 'status') !== 'resources' || field(value, 'configuration_error') !== false) return null;
+  const configuration = field(field(value, 'observation'), 'configuration');
+  return typeof field(configuration, 'allow_embedding_gpu') === 'boolean'
+    ? configuration as EmbeddingGpuConfiguration : null;
+}
+
 /** The reset record's wire value, checked against the type generated from the Rust owner. */
 const GPU_DEFAULT_RESET: GpuOptIn = 'default_reset';
 
@@ -331,6 +340,8 @@ export function Service(props: { onLifecycle: (action: 'stop' | 'restart') => vo
   const [outcomeSession, setOutcomeSession] = useState<ReturnType<typeof currentSession>>(null);
   const [observedSession, setObservedSession] = useState<ReturnType<typeof currentSession>>(null);
   const [gpuReview, setGpuReview] = useState<{ observation: CallState; desired: boolean } | null>(null);
+  const [embeddingReview, setEmbeddingReview] = useState<CallState | null>(null);
+  const [embeddingNotice, setEmbeddingNotice] = useState<string | null>(null);
   const readNumber = useRef(0);
   const gpuBusy = useRef(false);
   const refreshResources = async () => {
@@ -338,6 +349,7 @@ export function Service(props: { onLifecycle: (action: 'stop' | 'restart') => vo
     const ticket = ++readNumber.current;
     setObservedSession(null);
     setGpuReview(null);
+    setEmbeddingReview(null);
     await runResources(OPS.resources, body.resources());
     if (ticket === readNumber.current && origin === currentSession()) setObservedSession(origin);
   };
@@ -347,6 +359,7 @@ export function Service(props: { onLifecycle: (action: 'stop' | 'restart') => vo
   useEffect(() => { if (visible && session !== null) void refreshResources(); }, [visible, session]);
   const allowed = session && session === observedSession ? gpuAllowedOf(resultOf(resources)) : null;
   const resetPending = session !== null && session === observedSession && gpuResetPendingOf(resultOf(resources));
+  const embeddingGpu = session && session === observedSession ? embeddingGpuConfigurationOf(resultOf(resources)) : null;
   // A review belongs to the observation it was opened on. The toggle can only invert the value in
   // effect. Keeping GPU use off is a request only while the reset notice is pending: the service
   // takes it as the user's answer and clears the notice without a GPU transition.
@@ -362,6 +375,30 @@ export function Service(props: { onLifecycle: (action: 'stop' | 'restart') => vo
     } finally {
       gpuBusy.current = false;
       if (session === currentSession()) await refreshResources();
+    }
+  };
+  const applyEmbeddingGpu = async () => {
+    if (embeddingGpu === null || embeddingReview !== resources || !visible || gpuBusy.current
+        || currentSession() !== observedSession) return;
+    gpuBusy.current = true;
+    setEmbeddingReview(null);
+    setEmbeddingNotice(null);
+    const ticket = ++readNumber.current;
+    try {
+      const fresh = await runResources(OPS.resources, body.resources());
+      if (currentSession() !== session || ticket !== readNumber.current) return;
+      const configuration = embeddingGpuConfigurationOf(fresh.kind === 'ok' ? fresh.envelope.result : null);
+      if (configuration === null || JSON.stringify(configuration) !== JSON.stringify(embeddingGpu)) {
+        setEmbeddingNotice('Resources changed or could not be read. Review the current setting to try again.');
+        return;
+      }
+      setOutcomeSession(observedSession);
+      await runGpu(OPS.configureResources, body.configureResources({
+        ...configuration, allow_embedding_gpu: !configuration.allow_embedding_gpu,
+      }));
+    } finally {
+      gpuBusy.current = false;
+      if (currentSession() === session && ticket === readNumber.current) await refreshResources();
     }
   };
   const lifetime = useRef<{ session: unknown; owner: ReturnType<typeof generatedAction> | null } | null>(null);
@@ -408,14 +445,24 @@ export function Service(props: { onLifecycle: (action: 'stop' | 'restart') => vo
           <button type="button" onClick={() => setGpuReview(null)}>Cancel</button>
         </div> : <>
           <button type="button" disabled={gpuBusy.current || !visible}
-            onClick={() => setGpuReview({ observation: resources, desired: !allowed })}>
+            onClick={() => { setEmbeddingReview(null); setGpuReview({ observation: resources, desired: !allowed }); }}>
             {allowed ? 'Disable GPU use' : 'Allow GPU use'}
           </button>
           {resetPending ? <button type="button" disabled={gpuBusy.current || !visible}
-            onClick={() => setGpuReview({ observation: resources, desired: false })}>
+            onClick={() => { setEmbeddingReview(null); setGpuReview({ observation: resources, desired: false }); }}>
             Keep GPU off
           </button> : null}
         </>)}
+        <p>Embedding GPU use: <strong>{embeddingGpu === null ? 'Unavailable' : embeddingGpu.allow_embedding_gpu ? 'Allowed' : 'Disabled'}</strong></p>
+        {embeddingGpu !== null && (embeddingReview === resources ? <div>
+          <p>{embeddingGpu.allow_embedding_gpu ? 'Disable GPU use for embeddings?' : 'Allow embeddings to use an eligible GPU?'}</p>
+          <button type="button" disabled={gpuBusy.current || !visible} onClick={() => void applyEmbeddingGpu()}>Confirm embedding change</button>
+          <button type="button" onClick={() => setEmbeddingReview(null)}>Cancel</button>
+        </div> : <button type="button" disabled={gpuBusy.current || !visible}
+          onClick={() => { setGpuReview(null); setEmbeddingNotice(null); setEmbeddingReview(resources); }}>
+          {embeddingGpu.allow_embedding_gpu ? 'Disable embedding GPU use' : 'Allow embedding GPU use'}
+        </button>)}
+        {embeddingNotice === null ? null : <p role="status">{embeddingNotice}</p>}
         {outcomeSession === session && gpuOutcome.phase !== 'idle' && <details open><summary>GPU setting result</summary><Outcome state={gpuOutcome} /></details>}
         <details><summary>Details: complete resource result</summary><Outcome state={resources} /></details>
       </Panel>

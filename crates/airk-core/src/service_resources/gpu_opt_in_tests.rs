@@ -138,6 +138,31 @@ fn contradictory_records_and_unknown_values_are_refused() {
 }
 
 #[test]
+fn embedding_gpu_defaults_to_allowed_and_legacy_replacement_preserves_a_choice() {
+    let legacy = stored(OFF);
+    let disabled = stored(
+        r#"{"allow_gpu":false,"allow_embedding_gpu":false,"query_concurrency":16,"preset":"balanced","extraction_threads":null,"inference_threads":null,"memory_bytes":null,"background_io_bytes_per_second":null}"#,
+    );
+    assert!(legacy.embedding_gpu_allowed());
+    assert!(!legacy.allow_gpu);
+    assert_eq!(bytes(&legacy), OFF);
+    assert!(!disabled.embedding_gpu_allowed());
+    assert!(
+        !disabled
+            .clone()
+            .with_gpu_choice(true)
+            .embedding_gpu_allowed()
+    );
+    assert!(!legacy.clone().replacing(&disabled).embedding_gpu_allowed());
+
+    let enabled = stored(
+        r#"{"allow_gpu":false,"allow_embedding_gpu":true,"query_concurrency":16,"preset":"balanced","extraction_threads":null,"inference_threads":null,"memory_bytes":null,"background_io_bytes_per_second":null}"#,
+    );
+    assert!(enabled.replacing(&disabled).embedding_gpu_allowed());
+    assert!(!disabled.replacing(&legacy).embedding_gpu_allowed());
+}
+
+#[test]
 fn the_setting_request_carries_only_the_boolean() {
     assert!(
         serde_json::from_str::<SetGpuAllowed>(r#"{"allow_gpu":true}"#)

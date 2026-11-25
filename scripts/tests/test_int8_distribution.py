@@ -71,7 +71,14 @@ class Int8Distribution(unittest.TestCase):
     def test_fp32_or_unapproved_weights_cannot_replace_or_join_bundled_profiles(self):
         policy = script("int8-policy")
         catalog = policy.catalog()
-        report = {"schema": 1, "fp32_included": False, "profiles": copy.deepcopy(catalog["profiles"])}
+        self.assertEqual([profile["id"] for profile in catalog["profiles"]], ["minilm-l6-v2-fp16-v1"])
+        approved = catalog["profiles"][0]
+        self.assertEqual(approved["precision"], "float16")
+        self.assertEqual(
+            approved["manifest"]["model_sha256"],
+            "f3c3a4eed373650ba1e2f4d3d53437f1ecf92d4c50e5994e07e163751923ee4a",
+        )
+        report = {"schema": 1, "fp32_included": False, "profiles": [copy.deepcopy(approved)]}
         policy.verify_embedded(report)
         for field, value in [("precision", "fp32"), ("id", "legacy-fp32")]:
             altered = copy.deepcopy(catalog)
@@ -84,6 +91,9 @@ class Int8Distribution(unittest.TestCase):
         with self.assertRaises(ValueError): policy.validate_catalog(altered)
         for change in (lambda r: r["profiles"].append(r["profiles"][0]),
                        lambda r: r["profiles"].pop(),
+                       lambda r: r["profiles"][0].update(id="minilm-l6-v2-u8-v3"),
+                       lambda r: r["profiles"][0].update(precision="uint8"),
+                       lambda r: r["profiles"][0]["assets"][0].update(sha256=old),
                        lambda r: r["profiles"][0]["manifest"].update(model_sha256=old),
                        lambda r: r.update(fp32_included=True)):
             altered = copy.deepcopy(report)

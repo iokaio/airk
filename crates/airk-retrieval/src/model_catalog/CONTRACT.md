@@ -1,4 +1,13 @@
-# Native MiniLM catalog: original baseline on the current provider
+# Native MiniLM catalog
+
+The active profile is `minilm-l6-v2-fp16-v1`, selected on supported CPUs.
+It authenticates one shared ONNX weight asset with independent CPU FP32 and
+CUDA FP16 graph views. Catalog and unpacked asset inventory are exact, and
+legacy manifests retain their original embedding descriptors for readiness
+and regeneration. GPU execution and its actual native observations belong
+to the [MiniLM embedding contract](../minilm_fp16/CONTRACT.md).
+
+## Historical original-baseline policy
 
 Owner: airk-retrieval. Root recorded the original-baseline retention decision
 after the preselected epoch1 candidate and both original unsigned controls tied
@@ -6,14 +15,14 @@ on the complete matched DEV suite. No epoch1 promotion or further model bakeoff
 is selected. The former checkpoint515… trained-v2 catalog was unqualified and
 is not evidence of a qualified retained baseline.
 
-The current schema2 catalog contains exactly minilm-l6-v2-u8-v3 and
+The preceding schema2 catalog contained exactly minilm-l6-v2-u8-v3 and
 minilm-l6-v2-s8-v3. They restore the exact original publisher U8 and S8 graphs,
 tokenizer, OnnxManifest ABI and Apache license bytes from the retained native
 v1 catalog. Graph hashes are b941bf19…0fd21 and4278337f…02474. Precision is
 uint8/int8 and quantization is absent, rather than a false trained/mixed policy.
 The existing ORT1.30 provider implementation identity/options are unchanged;
 its historical opaque name is not model training provenance. Profile IDs are
-new catalog identities; weights and runtime are separately authenticated.
+catalog identities at that time; weights and runtime were separately authenticated.
 
 Only the native Rust owner constructs/captures the ModelCatalog, OnnxManifest
 and airk.minilm.native-policy/2 files. Actual original asset hashes/lengths and

@@ -17673,8 +17673,7 @@ is switching to Codex.
 
 ### 24 November 2026 — Plain store adopted and semantic smoke passed
 
-The user reauthorized Answer completion after adopting Claude`s
-plain-store implementation. `feat/arbiter-final` fast-forwarded from
+The user reauthorized Answer completion after adopting the plain-store refactor. `feat/arbiter-final` fast-forwarded from
 `bc501771` to `2856835730ba47b4401f897b7ea1053978d4f615` and that
 fast-forward reached `origin`. The user requested GPU-first embedding
 and a fresh smoke before the full Bookbuilder and Munarium rebuilds.
@@ -17705,3 +17704,53 @@ D: free space was 500,995,579,904 bytes when the build settled.
 
 Next is the shared-weight MiniLM embedding route and its CUDA/fallback
 smoke. The full indexes have no active writers.
+
+### 24 November 2026 — Shared FP16 MiniLM ran batched CUDA on the Windows A6000
+
+One pinned ONNX model now holds shared FP16 learned weights, a CPU graph
+that explicitly widens them to FP32, and the CUDA batch graph view.
+The active model asset is 45,469,884 bytes with SHA-256
+`f3c3a4eed373650ba1e2f4d3d53437f1ecf92d4c50e5994e07e163751923ee4a`.
+The private, owner-audited export receipt SHA-256 is
+`7422648ca9e7b9d26e2ae6e131c0ad7e0aa4a0c70eeef64519691727db7b340b`.
+Offline checks bound both graph views to the same weights through B32.
+The service setting defaults to allowing embedding GPU use independently
+of Arbiter GPU opt-in. Native status records the completed route and any
+CPU fallback reason. Earlier INT8 embeddings keep their old identity.
+
+R3`s strict CUDA probe refused session initialization after 46 integer or
+boolean shape and index nodes were assigned to CPU. Its complete native
+receipt is `minilm-windows-native-probe-r3/placement.json` (SHA-256
+`ebcdabb151fcb35549bb2f6455f16b2b6ee4a76e2d217a511c6eea0cae091c9b`).
+The reviewed MiniLM policy now binds those exact 46 named nodes and all
+210 CUDA nodes. All encoder arithmetic resides on CUDA. The R4 probe ran
+2 and 32 rows in one native forward each, returned finite normalized
+384-dimensional vectors and synchronized and released the session.
+The assignment digest is
+`3761c7dc65d393a8ac2593b87578fe2bb7a2d714318aad902de2577ec4878801`.
+The R4 receipt at `minilm-windows-native-probe-r4/placement.json` has
+SHA-256 `4a08e3d8bc956fadfe858ea4e4017adfa53fe60d862fa853971a23e902aa1f37`.
+The R4 test ran 5.30 s with one selected and 255 filtered, unpoisoned.
+The largest coordinate difference against the same-weights CPU recipe
+was 0.00017712. This is functional smoke evidence. The declared VRAM
+reservations are bounds for this private probe and the receipt`s free-space
+samples are point observations.
+
+One verified desktop-human Cargo owner reused `answer-loop/target-cuda`,
+incremental enabled. R4 Clippy took 26.637 s and Retrieval and Inference
+test image compilation took 38.847 s. Exact arguments and source hashes
+are in `L5C/CARGO-OWNER-CUDA.embedding-fp16-6210412f-r4.at-release.json`;
+492,615,913,472 D: bytes remained free at settlement. The focused
+placement and metadata selection passed 3 (one opt-in test ignored,
+390 filtered). Native schema emission selected one and passed (33
+filtered). The UI checks passed nine rendered cases, ten generator
+cases, both type checks and the Admin bundle drift check. Eleven Python
+offline provisioning and distribution cases passed in audited scratch.
+
+Next, build the matched Windows service and CLI with the exact scoped
+development admission from this observation. Index a private three-file
+fixture with default GPU policy and again with CPU forced, observe the
+served routes, and settle the service before launching the full Bookbuilder
+and Munarium indexes. The authenticated scientific CUDA closure supports
+this development fixture. Product and cross-platform CUDA qualification
+remain separate. Full index writers were idle at this checkpoint.

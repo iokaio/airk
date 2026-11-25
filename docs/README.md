@@ -447,7 +447,7 @@ The [Windows build/editor guide](windows-local-build.md) describes pair builds, 
 - [Transactional storage relocation and recovery](storage-relocation.md)
 - [Additional source folders and revision-bound aliases](source-roots.md)
 - [Explicit local model assets and vector/hybrid retrieval](local-models.md)
-- [Native CPU capability detection and pinned INT8 model profiles](onnx-models.md#bundled-profiles)
+- [Bundled MiniLM profiles and embedding routes](onnx-models.md#bundled-profiles)
 - [Semantic index optimization: rationale, offline models and measured tradeoffs](semantic-index-optimization.md)
 - [Durable native scheduling and crash recovery](native-scheduler.md)
 - [MCP tool contracts](mcp.md)

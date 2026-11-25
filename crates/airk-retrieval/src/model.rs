@@ -358,8 +358,18 @@ pub(crate) fn onnx_manifest(bytes: &[u8]) -> Result<(OnnxManifest, String)> {
         !manifest.output.is_empty() && manifest.output.len() <= 128,
         "invalid ONNX output name"
     );
-    let identity = onnx_identity(&manifest, ONNX_RUNTIME)?;
+    let identity = onnx_identity(&manifest, onnx_runtime(&manifest))?;
     Ok((manifest, identity))
+}
+
+pub const ONNX_FP16_RUNTIME: &str = "onnxruntime/1.30.0/airk-minilm-fp16-shared/1";
+
+fn onnx_runtime(manifest: &OnnxManifest) -> &'static str {
+    if manifest.model_sha256 == crate::model_catalog::FP16_MODEL_SHA256 {
+        ONNX_FP16_RUNTIME
+    } else {
+        ONNX_RUNTIME
+    }
 }
 
 const RETAINED_ONNX_RUNTIME_V1: &str = "onnxruntime-cpu/1.22.1/airk-int8-b1-1";
@@ -373,7 +383,7 @@ const ONNX_METADATA_PLATFORMS: [(&str, &str); 4] = [
 pub(crate) fn runtime_from_authenticated_onnx_descriptor(
     descriptor: &EmbeddingDescriptor,
 ) -> Result<&'static str> {
-    for runtime in [RETAINED_ONNX_RUNTIME_V1, ONNX_RUNTIME] {
+    for runtime in [RETAINED_ONNX_RUNTIME_V1, ONNX_RUNTIME, ONNX_FP16_RUNTIME] {
         for (arch, os) in ONNX_METADATA_PLATFORMS {
             if descriptor.inference
                 == framed_digest(
@@ -399,13 +409,13 @@ fn authenticated_onnx_descriptor(
     set: &ModelObjectSet,
 ) -> Result<(EmbeddingDescriptor, String)> {
     let current = descriptor_from_manifest(DescriptorManifest::Onnx(manifest))?;
-    let identity = onnx_identity(manifest, ONNX_RUNTIME)?;
+    let identity = onnx_identity(manifest, onnx_runtime(manifest))?;
     if current.identity()? == set.pipeline_digest && identity == set.legacy_identity {
         return Ok((current, identity));
     }
     // Read-only compatibility metadata only. These exact historical/current
     // platform identities never authorize opening a model or relabel old vectors.
-    for runtime in [RETAINED_ONNX_RUNTIME_V1, ONNX_RUNTIME] {
+    for runtime in [RETAINED_ONNX_RUNTIME_V1, ONNX_RUNTIME, ONNX_FP16_RUNTIME] {
         let identity = onnx_identity(manifest, runtime)?;
         if identity != set.legacy_identity {
             continue;
@@ -424,15 +434,19 @@ fn authenticated_onnx_descriptor(
 }
 /// Metadata comparison only; opening still requires the strict active catalog.
 pub fn onnx_descriptor_uses_current_runtime(descriptor: &EmbeddingDescriptor) -> bool {
-    descriptor.inference
-        == framed_digest(
-            b"airk-inference/1",
-            &[
-                ONNX_RUNTIME.as_bytes(),
-                std::env::consts::ARCH.as_bytes(),
-                std::env::consts::OS.as_bytes(),
-            ],
-        )
+    [ONNX_RUNTIME, ONNX_FP16_RUNTIME]
+        .into_iter()
+        .any(|runtime| {
+            descriptor.inference
+                == framed_digest(
+                    b"airk-inference/1",
+                    &[
+                        runtime.as_bytes(),
+                        std::env::consts::ARCH.as_bytes(),
+                        std::env::consts::OS.as_bytes(),
+                    ],
+                )
+        })
 }
 
 enum VerifiedManifest {
@@ -487,9 +501,9 @@ pub fn inspect(directory: &Path) -> Result<ModelInfo> {
         },
         VerifiedManifest::Onnx(manifest, identity) => ModelInfo {
             identity,
+            backend: onnx_runtime(&manifest),
             name: manifest.name,
             license: manifest.license,
-            backend: ONNX_RUNTIME,
             dimensions: manifest.dimensions,
             max_tokens: Some(manifest.max_tokens),
             max_input_bytes: Some(MAX_INPUT_BYTES),
@@ -885,7 +899,7 @@ impl EmbeddingModel {
         match self {
             Self::Remote(model) => model.info.backend,
             Self::WordVectors(_) => "local-word-vectors/mean/l2-normalized",
-            Self::Onnx(_) => ONNX_RUNTIME,
+            Self::Onnx(model) => onnx_runtime(&model.manifest),
         }
     }
     pub fn asset_names(&self) -> &'static [&'static str] {
@@ -1026,7 +1040,10 @@ enum DescriptorManifest<'a> {
 fn descriptor_from_manifest(source: DescriptorManifest<'_>) -> Result<EmbeddingDescriptor> {
     descriptor_for_platform(
         source,
-        ONNX_RUNTIME,
+        match source {
+            DescriptorManifest::Word(_) => ONNX_RUNTIME,
+            DescriptorManifest::Onnx(manifest) => onnx_runtime(manifest),
+        },
         std::env::consts::ARCH,
         std::env::consts::OS,
     )
@@ -1055,7 +1072,11 @@ fn descriptor_for_platform(
             serde_json::to_vec(&(
                 MAX_INPUT_BYTES,
                 manifest.max_tokens,
-                "tokenizers-0.23.2/fancy-regex/utf8-boundary-prefix/trim-empty-none/raw-single-encoding/right-truncation-reserve-specials-stride0/right-PAD-type0/smallest-32-64-128-256-512-or-context/int8-per-text-batch1/3",
+                if onnx_runtime == ONNX_FP16_RUNTIME {
+                    "tokenizers-0.23.2/fancy-regex/utf8-boundary-prefix/trim-empty-none/raw-single-encoding/right-truncation-reserve-specials-stride0/right-PAD-type0/smallest-32-64-128-256-512-or-context/shared-fp16-cpu-f32-cuda-f16/1"
+                } else {
+                    "tokenizers-0.23.2/fancy-regex/utf8-boundary-prefix/trim-empty-none/raw-single-encoding/right-truncation-reserve-specials-stride0/right-PAD-type0/smallest-32-64-128-256-512-or-context/int8-per-text-batch1/3"
+                },
             ))?,
             manifest.pooling.as_bytes().to_vec(),
             onnx_runtime.as_bytes().to_vec(),

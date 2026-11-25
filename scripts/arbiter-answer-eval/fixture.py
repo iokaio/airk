@@ -74,7 +74,11 @@ COMMAND_SECONDS = 120
 # profile. This roster is the one the TechQA stage arms ran on.
 DEFAULT_INPUTS = CAMPAIGN / "cal100-focus1024-launch-r1/inputs.json"
 DEFAULT_INPUTS_SHA256 = "8fbde10f3fc8a42d1d05ec0f362a1e0527840ad49fa6686224f1feee4b08373d"
-MINILM = ROOT / "artifacts/advanced-split/bundled-model-v3/minilm-l6-v2-u8-v3"
+# A fresh candidate can select its exact approved offline bundle. The native
+# configuration emitter authenticates the selected manifest and asset bytes.
+MINILM = Path(os.environ["AIRK_EVALUATION_MINILM_DIRECTORY"]).resolve(strict=True) if (
+    "AIRK_EVALUATION_MINILM_DIRECTORY" in os.environ
+) else ROOT / "artifacts/advanced-split/bundled-model-v3/minilm-l6-v2-u8-v3"
 REPOSITORIES = {"airk": Path(r"D:\code\Github\airk"), "bookbuilder": Path(r"D:\code\Github\bookbuilder"),
                 # A fresh bookbuilder index (22 Nov 2026): its denies are source policy before the first index
                 # pass, because trimming the live bookbuilder index degraded its vector publication (token 267).

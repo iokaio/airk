@@ -26,6 +26,9 @@ use std::{
 };
 pub mod accounting;
 pub mod arbiter;
+mod embedding_route;
+#[cfg(all(test, feature = "gpu-cuda", feature = "test-support"))]
+mod embedding_route_tests;
 mod owner;
 mod retirement;
 pub use owner::{InferenceOwner, NativeCompletionWitness};
@@ -72,6 +75,14 @@ pub(crate) struct Engine {
     reuses: u64,
     used: Instant,
     inference_threads: Arc<AtomicUsize>,
+    allow_embedding_gpu: Arc<AtomicBool>,
+    embedding_unsettled: Arc<AtomicBool>,
+    embedding_observation:
+        Arc<Mutex<Option<airk_core::inference_provider::EmbeddingRouteObservation>>>,
+    #[cfg(feature = "gpu-cuda")]
+    gpu_lease: Option<Arc<airk_store::service::ServiceLease>>,
+    #[cfg(feature = "gpu-cuda")]
+    gpu_resident: Option<embedding_route::Resident>,
     #[cfg(any(test, feature = "test-support"))]
     before_compute: Option<ComputeHook>,
     #[cfg(any(test, feature = "test-support"))]
@@ -203,6 +214,13 @@ impl Engine {
             reuses: 0,
             used: Instant::now(),
             inference_threads: Arc::new(AtomicUsize::new(1)),
+            allow_embedding_gpu: Arc::new(AtomicBool::new(false)),
+            embedding_unsettled: Arc::new(AtomicBool::new(false)),
+            embedding_observation: Arc::new(Mutex::new(None)),
+            #[cfg(feature = "gpu-cuda")]
+            gpu_lease: None,
+            #[cfg(feature = "gpu-cuda")]
+            gpu_resident: None,
             #[cfg(any(test, feature = "test-support"))]
             before_compute: None,
             #[cfg(any(test, feature = "test-support"))]
@@ -249,9 +267,7 @@ impl Engine {
             return Ok(());
         }
         // Retire incompatible inference state before allocating its replacement.
-        self.model = None;
-        self.model_lease = None;
-        self.model_key = None;
+        self.retire_model()?;
         require_live(owner)?;
         if let ModelLocation::Shared { objects } = location.as_ref() {
             let source = self
@@ -320,9 +336,7 @@ impl Engine {
                 );
                 let source = airk_kernel::service_configuration::ProtectedModelInput(&directory);
                 let set = source.inspect_plan()?;
-                self.model = None;
-                self.model_lease = None;
-                self.model_key = None;
+                self.retire_model()?;
                 let _installed = self.model_files.install_readers(&set, |name| {
                     use airk_core::model_objects::ModelAssetSource;
                     Ok(Box::new(std::io::Cursor::new(
@@ -346,9 +360,7 @@ impl Engine {
                         objects: self.model_files.publish_default(&set)?,
                     });
                 }
-                self.model = None;
-                self.model_lease = None;
-                self.model_key = None;
+                self.retire_model()?;
                 let _lease = self.model_files.install_readers(&set, |name| {
                     Ok(Box::new(std::io::Cursor::new(
                         airk_host::bundled_assets::EmbeddedAssets::bytes(name)?,
@@ -530,7 +542,7 @@ impl Engine {
                         if let Some(hook) = self.before_compute.as_mut() {
                             hook(self.compute_context.as_ref(), &request);
                         }
-                        super::handle(request, &mut self.model, &mut None)
+                        self.handle_model_request(&binding, owner, request)
                     }
                     Binding::Tokenizer { path } => {
                         ensure!(
@@ -593,10 +605,18 @@ fn process_work(engine: &mut Engine, work: Work, closing: &AtomicBool) {
         }
         Work::Sweep => {
             engine.retire_disconnected();
+            #[cfg(feature = "gpu-cuda")]
+            if !engine.allow_embedding_gpu.load(Ordering::Acquire)
+                && engine.retire_embedding_cuda().is_err()
+            {
+                closing.store(true, Ordering::Release);
+                return;
+            }
             if engine.sessions.is_empty() && engine.used.elapsed() > Duration::from_secs(60) {
-                engine.model = None;
-                engine.model_lease = None;
-                engine.model_key = None;
+                if engine.retire_model().is_err() {
+                    closing.store(true, Ordering::Release);
+                    return;
+                }
                 engine.tokenizer = None;
                 engine.tokenizer_path = None;
             }
@@ -672,6 +692,11 @@ fn process_work(engine: &mut Engine, work: Work, closing: &AtomicBool) {
             {
                 engine.compute_context = None;
             }
+            if engine.embedding_unsettled.load(Ordering::Acquire) {
+                // The exact native work is still outstanding. Preserve its charge.
+                std::mem::forget(charge);
+                closing.store(true, Ordering::Release);
+            }
             let _ = reply.send(protocol::ResultEnvelope {
                 project: envelope.project,
                 worker: envelope.worker,
@@ -686,14 +711,17 @@ fn process_work(engine: &mut Engine, work: Work, closing: &AtomicBool) {
             engine.release_owner(worker, None);
             // Only the actual engine queue, after earlier compute completes,
             // can publish this exact generation's provider completion witness.
-            completed.store(true, Ordering::Release);
+            if !engine.embedding_unsettled.load(Ordering::Acquire) {
+                completed.store(true, Ordering::Release);
+            }
         }
         Work::CloseEngine { accounting } => {
             engine.sessions.clear();
             engine.owners.clear();
-            engine.model = None;
-            engine.model_lease = None;
-            engine.model_key = None;
+            if engine.retire_model().is_err() {
+                closing.store(true, Ordering::Release);
+                return;
+            }
             engine.tokenizer = None;
             engine.tokenizer_path = None;
             accounting.mark_engine_barrier();
@@ -773,6 +801,17 @@ pub struct State {
     pub accounting: Option<Arc<accounting::Accounting>>,
 }
 impl State {
+    #[cfg(feature = "gpu-cuda")]
+    fn embedding_deadline(&self, grant: &protocol::Grant) -> Result<Instant> {
+        let grants = self
+            .grants
+            .lock()
+            .map_err(|_| anyhow::anyhow!("pool authorization unavailable"))?;
+        let authorization = grants.get(&grant.token).context("pool grant expired")?;
+        ensure!(Instant::now() < authorization.expires, "pool grant expired");
+        Ok(authorization.expires)
+    }
+
     fn grant_live(&self, grant: &protocol::Grant) -> Result<bool> {
         let grants = self
             .grants

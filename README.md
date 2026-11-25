@@ -403,7 +403,7 @@ AIRK's optional models for Answer, **Focus** and **Arbiter**, are not in the ins
 | Arbiter | [Qwen/Qwen3-1.7B](https://huggingface.co/Qwen/Qwen3-1.7B) at [`70d244c`](https://huggingface.co/Qwen/Qwen3-1.7B/tree/70d244cc86ccca08cf5af4e1e306ecf908b1ad5e) | `arbiter-context-qwen3-17b.*` (13 files; weights in 7 parts) | 6.90 GB |
 | Retired: Large | [Qwen/Qwen3-4B](https://huggingface.co/Qwen/Qwen3-4B) at [`1cfa9a7`](https://huggingface.co/Qwen/Qwen3-4B/tree/1cfa9a7208912126459214e8b04321603b3df60c) | `arbiter-context-qwen3-4b.*` (21 files; weights in 15 parts) | 16.10 GB |
 
-Every part's exact name, size and SHA-256 is listed in the [release notes](https://github.com/iokaio/airk/releases/tag/models-1.8.201). Focus and Arbiter are separate switches: Answer runs with neither, either or both. The Large files stay in the prerelease for the retained receipts only. MiniLM, the bundled retrieval model, is unchanged and ships in the installer.
+Every part's exact name, size and SHA-256 is listed in the [release notes](https://github.com/iokaio/airk/releases/tag/models-1.8.201). Focus and Arbiter are separate switches: Answer runs with neither, either or both. The Large files stay in the prerelease for the retained receipts only. MiniLM remains bundled for retrieval. The current indexing candidate uses a shared FP16 asset with CPU fallback and a separate, default-on embedding GPU setting.
 
 **How they differ from the originals.** The upstream weights are converted, not retrained. No fine-tuning or other training is recorded in their provenance.
 

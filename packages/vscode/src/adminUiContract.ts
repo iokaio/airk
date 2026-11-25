@@ -4,6 +4,7 @@
 export const OPS = {
   health: 'service.health',
   resources: 'service.resources',
+  configureResources: 'service.configure_resources',
   allowGpu: 'service.allow_gpu',
   workers: 'service.workers',
   indexesList: 'indexes.list',

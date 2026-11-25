@@ -6,6 +6,12 @@ the Answer evaluation's agent sessions call (plan
 verified human, CPU only. Nothing is written into either repository under
 test.
 
+For a fresh FP16 MiniLM candidate, set `AIRK_EVALUATION_MINILM_DIRECTORY`
+to the provisioned profile directory before starting the fixture or base
+driver. The native config emitter authenticates that exact directory against
+the built image, and the fixture records the requested path. Retained
+historical runs use their original MiniLM inputs.
+
 ## Purpose
 
 - Start one **fixture lifetime**: the `airk-service` test image run on its

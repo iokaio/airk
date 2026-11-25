@@ -228,3 +228,31 @@ impl CompletionObservation {
 
 #[cfg(test)]
 mod tests;
+
+/// Provider of the latest completed nonempty text embedding in this owner.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EmbeddingRoute {
+    Cpu,
+    Cuda,
+}
+
+/// A successful CPU embedding explains why CUDA was not used.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EmbeddingFallback {
+    Disabled,
+    RuntimeUnavailable,
+    AdapterUnavailable,
+    AdmissionRefused,
+    ExecutionFailed,
+    ModelUnsupported,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EmbeddingRouteObservation {
+    pub route: EmbeddingRoute,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<EmbeddingFallback>,
+}
