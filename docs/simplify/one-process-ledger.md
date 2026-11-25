@@ -18072,3 +18072,35 @@ check actual paid work and takeover. D6 still requires rebuilding old
 indexes. Distinguish retired-mechanic assertions from current behavior
 tests with predecessor-only fixture setup before counting qualification.
 The Windows L7 baseline and judged changes remain ahead.
+
+### 24 November 2026 — Windows split funding repair verified
+
+The full combined-read target on the first L6 repair binaries ran 64
+cases. It passed 56, failed six and ignored two, in 463.35 seconds.
+Both Answer transport parity cases passed across actual CLI pipes and
+HTTPS MCP. Five failures were in split journeys. The other was a
+retained-credit case whose fixture expects legacy durable Current
+grants. Those grants are absent from the plain layout by decision D8.
+The direct binary test log SHA-256 is
+`304a27b3e7fed6b32ce81723e84389a088f4668d662ebd71ac8dd6c6a334a1c3`.
+
+The paid split checkpoint now verifies an authenticated plain
+publication and settles measured growth under the claimed worker and
+writer lock. The previous checkpoint sent the plain store's format
+capacity to legacy journal funding and requested 88,097,568,784,384
+bytes. The correction uses the saved funding phase, preserves the
+legacy journal checks for genuinely legacy state, and preserves the
+pinned owner through a resumable disposal. The expanded custody tests
+verify the actual plain database and reject unsettled payload.
+
+Scoped all-feature Clippy passed in 86.994 seconds. Focused native
+Nextest passed all eight selected split and store tests, with
+1,040 skipped. All seven initial supervisor failures are in those
+eight passes. The remaining case checks partial journal and plain
+payload refusal. The exact commands and timing reports are under
+`L5C/windows-l6-split-r3`. The unchanged-input receipt records
+250.619 seconds, including compilation. The shared Cargo owner
+audited 4,606 outputs and settled with 438,159,224,832 bytes free
+on D:. Rerun the full corrected workspace on the short owned
+fixture path and check the applicable installed transport and
+doctest evidence before starting the Windows judged baseline.

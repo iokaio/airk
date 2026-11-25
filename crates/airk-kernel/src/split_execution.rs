@@ -6,7 +6,7 @@ use airk_core::{
     identity::Incarnation,
 };
 use airk_store::service::registry::catalog::split::{ClaimedSplitWork, NativeSplitJobResult};
-use anyhow::{Context, Result, ensure};
+use anyhow::{Result, ensure};
 
 impl Kernel {
     pub fn execute_split_current_work(
@@ -55,8 +55,8 @@ impl Kernel {
                 // through its existing owner before requiring vector readiness.
                 selected.select_service_bundled_model()?;
             }
-            // Establish and account the actual current journal before the scan
-            // borrows its long-lived capture and failure reservations.
+            // Establish and account the current publication before the scan
+            // borrows its capture reservation.
             selected.initialize_current()?;
             selected.checkpoint_completed_split_work()?;
             selected.index_service_sources()?;
@@ -103,13 +103,7 @@ impl Kernel {
             "split checkpoint has no prepaid quota"
         );
         let writer = self.store.lock()?;
-        let scope = self
-            .current_scope()?
-            .context("split checkpoint lacks current publication")?;
-        let capacity = self.store.current_database_capacity(&scope)?;
-        self.store
-            .current_write(&writer, &quota, &scope, capacity)?
-            .reconcile_operation_funding()?;
+        self.store.reconcile_split_worker_funding(&writer, &quota)?;
         Ok(())
     }
 }

@@ -565,21 +565,28 @@ impl Collection {
                     store = store.with_operation_funding(funding.clone())?;
                 }
                 let writer = store.lock()?;
-                let incarnation = if path.join("current-owner.json").try_exists()? {
-                    Some(
-                        store
-                            .current_scope(&collection.owner.root, &collection.owner.collection)?
-                            .context("removal slot ownership missing")?
-                            .incarnation,
-                    )
-                } else {
-                    None
-                };
                 let gate = Gate::exclusive(&store, &writer)?;
+                // An interrupted purge can retain the owner after deleting
+                // the database. Resume from that exact pinned owner.
+                let scope = store.current_owned_scope_under_gate(&gate)?;
+                ensure!(
+                    scope.as_ref().is_none_or(|scope| {
+                        scope.root == collection.owner.root
+                            && scope.collection == collection.owner.collection
+                    }),
+                    "removal slot owner differs from its source"
+                );
                 let incarnation = if funding.is_some() {
-                    store.service_incarnation()?
-                } else {
+                    let incarnation = store.service_incarnation()?;
+                    ensure!(
+                        scope
+                            .as_ref()
+                            .is_none_or(|scope| Some(scope.incarnation) == incarnation),
+                        "funded removal slot differs from its owner"
+                    );
                     incarnation
+                } else {
+                    scope.map(|scope| scope.incarnation)
                 };
                 let quota = Quota::for_store(&store)?;
                 if let Some(funding) = funding {

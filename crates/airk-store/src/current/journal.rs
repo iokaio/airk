@@ -728,6 +728,17 @@ fn require_absent_current(directory: &crate::store_fs::SetupDirectory) -> Result
     require_absent_native_entries(directory, &[database::OWNER_FILE])
 }
 fn require_absent_current_payload(directory: &crate::store_fs::SetupDirectory) -> Result<()> {
+    require_absent_legacy_payload(directory)?;
+    for name in directory.entries()? {
+        let name = name?;
+        ensure!(
+            !name.to_str().is_some_and(crate::index::is_index_file),
+            "plain index payload remains; dispose of it before funding settlement"
+        );
+    }
+    Ok(())
+}
+fn require_absent_legacy_payload(directory: &crate::store_fs::SetupDirectory) -> Result<()> {
     require_absent_native_entries(
         directory,
         &[
@@ -771,6 +782,9 @@ fn no_current_proof_refuses_every_partial_native_journal_entry() -> Result<()> {
         "current.sqlite3-journal",
         "current.sqlite3-wal",
         "current.sqlite3-shm",
+        crate::index::DATABASE_FILE,
+        "index.sqlite3-wal",
+        "vectors-1.f32",
         database::OWNER_FILE,
         BOOTSTRAP_FILE,
     ] {
@@ -807,6 +821,10 @@ impl FileStore {
             require_absent_current(&pin)?;
             return quota.reconcile_funding_phase(writer, funding, None);
         };
+        if self.plain_index_present()? {
+            self.require_funded_split_scope(quota, funding, &scope)?;
+            return self.reconcile_plain_split_funding(writer, quota, funding, &scope);
+        }
         let capacity = database::check_owner(self.directory(), &scope)?;
         super::wal::validate_files(self.directory(), capacity)?;
         let wal = self.grant_scope_for_metadata(&scope);
@@ -829,6 +847,98 @@ impl FileStore {
         }
         quota.reconcile_funding_phase(writer, funding, Some(&wal))
     }
+    /// Settle a claimed split worker's completed publication under its exact funding.
+    pub fn reconcile_split_worker_funding(
+        &self,
+        writer: &WriterLock,
+        quota: &Quota,
+    ) -> Result<crate::quota::funding::FundingReceipt> {
+        let permit = self
+            .split_access
+            .as_ref()
+            .context("split checkpoint requires its claimed native worker")?;
+        permit.validate_store(self)?;
+        quota.require_store_funding(self)?;
+        crate::maintenance::check_writer(self, writer, quota)?;
+        ensure!(
+            !writer.has_object_captures(),
+            "live captures retain split funding"
+        );
+        let funding = quota
+            .funding_use()
+            .context("split checkpoint has no exact saved funding")?;
+        permit.validate_funding_use(funding)?;
+        ensure!(
+            matches!(
+                funding.phase.purpose,
+                airk_core::catalog_split::SplitJobPurpose::DestinationBuild
+                    | airk_core::catalog_split::SplitJobPurpose::OriginalRemoval
+                    | airk_core::catalog_split::SplitJobPurpose::OriginalCleanup
+            ),
+            "split checkpoint requires build, removal or original cleanup work"
+        );
+        let gate = Gate::shared(self)?;
+        let scope = self
+            .current_owned_scope_under_gate(&gate)?
+            .context("split checkpoint lacks current publication")?;
+        self.require_funded_split_scope(quota, funding, &scope)?;
+        if self.plain_index_present()? {
+            return self.reconcile_plain_split_funding(writer, quota, funding, &scope);
+        }
+        ensure!(
+            self.directory().join("current.sqlite3").try_exists()?,
+            "split checkpoint lacks current database"
+        );
+        drop(gate);
+        let capacity = database::check_owner(self.directory(), &scope)?;
+        self.current_write(writer, quota, &scope, capacity)?
+            .reconcile_operation_funding()
+    }
+
+    fn require_funded_split_scope(
+        &self,
+        quota: &Quota,
+        funding: &crate::quota::funding::FundingUse,
+        scope: &CurrentScope,
+    ) -> Result<()> {
+        let receipt = quota.observe_funding(funding.operation_id)?;
+        let registration = if funding.index_id == receipt.request.original_index {
+            &receipt.request.original
+        } else {
+            &receipt.request.destination
+        };
+        ensure!(
+            scope.root == registration.root
+                && scope.collection == registration.collection
+                && self.service_incarnation()? == Some(scope.incarnation),
+            "split publication differs from its funded participant"
+        );
+        Ok(())
+    }
+
+    fn reconcile_plain_split_funding(
+        &self,
+        writer: &WriterLock,
+        quota: &Quota,
+        funding: &crate::quota::funding::FundingUse,
+        scope: &CurrentScope,
+    ) -> Result<crate::quota::funding::FundingReceipt> {
+        let pin = crate::store_fs::SetupDirectory::open_canonical(self.directory())?;
+        require_absent_legacy_payload(&pin)?;
+        let path = self.directory().join(crate::index::DATABASE_FILE);
+        crate::managed_collection::reject_file_aliases(&path, &fs::symlink_metadata(&path)?)?;
+        let index = crate::index::IndexReader::open(self.directory())?;
+        ensure!(
+            index.meta("format")?.as_deref() == Some(crate::index::FORMAT.as_bytes())
+                && super::plain::synthesize_head(&index, scope)?.1.is_some(),
+            "plain split publication is incomplete"
+        );
+        // The held writer prevents a new publication. SQLite commits already
+        // define the settled boundary, with no independent journal grant to preserve.
+        drop(index);
+        quota.reconcile_funding_phase(writer, funding, None)
+    }
+
     fn grant_scope_for_metadata(&self, scope: &CurrentScope) -> CurrentGrantScope {
         CurrentGrantScope {
             collection: scope.collection.clone(),

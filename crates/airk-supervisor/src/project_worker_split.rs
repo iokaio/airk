@@ -309,10 +309,12 @@ mod tests {
             participant.settled_revision,
             participant.phase.as_ref().map(|phase| phase.revision)
         );
-        assert!(funding.children.iter().all(|child| !matches!(
-            child.kind,
-            airk_store::quota::funding::FundingChildKind::Reservation { .. }
-        )));
+        assert!(funding.children.is_empty());
+        assert!(participant.consumed_growth > 0);
+        assert_eq!(
+            participant.initial_bytes,
+            participant.remaining_growth + participant.consumed_growth
+        );
         let cancel = airk_core::catalog_split::SplitRecoveryRequest {
             caller: validated.request.caller,
             key: airk_core::service::RequestKey {
@@ -919,7 +921,7 @@ mod tests {
         )?
         .select_for_diagnostics()?
         .directory()
-        .join("current.sqlite3");
+        .join(airk_store::index::DATABASE_FILE);
         assert!(native_current.is_file());
         let observer =
             Kernel::open_existing_service_observer(&building.request.destination_registration)?;

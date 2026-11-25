@@ -12,6 +12,14 @@ The existing immediate membership transaction enables the validated destination,
 
 DeleteProject remains the only set-deletion owner. It removes the set and its associations/preferences, preserving member definitions, source rows/files, stored publications, configuration, work/watch ownership and other memberships. Native grouping matrix tests cover signed/checked SQLite revisions, rollback, original-key replay, conflicts, existing-set scope preservation, empty/stale deletion and active-work preservation. Supervisor split qualification drives the full native split/fence/publication/funding pipeline and checks grouping plus member evidence before/after real fenced set deletion; running those selectors is required before claiming that outcome.
 
+A claimed split worker settles a committed plain index under the collection
+writer and the participant's saved funding phase. Settlement checks the
+collection scope and incarnation and measures actual retained bytes. The
+plain store has no separate current journal grant. Legacy journal settlement
+still requires its own Ready state and recovery allowance. Canceled cleanup
+preserves the pinned owner across interruption and accounts for disposal only
+after the database, sidecars and vector files are absent.
+
 ## Finished-split pruning (record cleanups of 23 November 2026, item 2)
 
 At most 64 split operations are retained (`index_split_capacity`), and before
