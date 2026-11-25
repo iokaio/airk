@@ -17850,3 +17850,67 @@ target) and produced a CPU-only first-pass profile binding
 Finish the native graph and strict scorer check, then pair it with the
 unchanged Focus profile. The same-install shakedown and full leak check
 remain ahead. Neither requires rebuilding these bases.
+
+### 24 November 2026 — Prepared return to the Windows completion plan
+
+The user directed us to commit, push and prepare to return to the
+completion plan. The rebuilt Windows indexes are settled and reusable.
+The next live qualification is the same-install four-switch shakedown.
+
+The refreshed Compact Arbiter profile passed the native graph review
+and strict scorer path at 32, 1,024 and 8,192 tokens, with ten warm
+samples per width. Native device work settled. The final profile is
+`5fee1af351ca223be7132c1dcb181f3b4a1368859485ee796292886171a9c35f`
+and its manifest is
+`ab1897cb4bdb8afdf01ebfb31b344d34b49a1d12ae8d5af9f3ee6be4e06fb8cf`.
+Evidence lives under `L5C/reemit-b940c33d-minilm-index/compact`.
+The strict confirm receipt digest is
+`0b024cb17aba2ce08b3fc0702ff4664bcdf1b7d19606a6edd2af0de43ea2ec78`.
+The diagnostics retain separate sampled and instantaneous device
+memory fields. This is scoped native component evidence. The live
+four-switch service receipt remains pending.
+
+The new `pair/pair.json` in the same re-emission root has SHA-256
+`c34d8c6ecb7fa405d89617b377d0325a730dc6597cd901cd08323b586630ece5`.
+Its rows are `focus-1024-cuda` and `context-compact-fp16-cuda`.
+The existing Compact asset inventory matched byte-for-byte and the
+pair emitter reauthenticated all declared files. The original Focus
+profile and its native parity receipt were reused.
+
+Use the checked desktop shell for the next start. Supply the dispatch
+census computed from the planned lifetime before launching. The base
+accepts one CUDA evaluation lifetime, so retain it for the Windows
+phases that share that scope. Before judging, verify the same publication
+tokens remain Ready and run the full leak check.
+
+```powershell
+$campaign = Join-Path 'D:\code\Github\airk' 'artifacts/v190/final-plan/exec-20261116T052942Z'
+$run = Join-Path $campaign 'answer-eval-r1'
+$fixture = Join-Path $run 'fixture-win-minilm-cuda-base-r1'
+$image = 'D:\code\Github\airk\artifacts\eval-cuda\answer-eval-gpu-r1\minilm-live-r2-e818a1f2'
+$inputs = Join-Path $campaign 'cal100-focus1024-launch-r1/inputs.json'
+$pair = Join-Path $run 'answer-loop/L5C/reemit-b940c33d-minilm-index/pair/pair.json'
+$arguments = @(
+    '-I', '-B', 'scripts/arbiter-answer-eval/gpu_fixture.py',
+    '--fixtures', $fixture, 'start', '--image', $image,
+    '--lifetime', 'win-minilm-cuda-shakedown', '--model', 'pair', '--pair', $pair,
+    '--pair-sha256', 'c34d8c6ecb7fa405d89617b377d0325a730dc6597cd901cd08323b586630ece5',
+    '--inputs', $inputs, '--inputs-sha256', '8fbde10f3fc8a42d1d05ec0f362a1e0527840ad49fa6686224f1feee4b08373d',
+    '--repositories', 'bookbuilder-v2,munarium', '--seconds', '21000',
+    '--dispatch-census', $census, '--restart-from', 'win-minilm-cuda-base'
+)
+& python @arguments
+```
+
+Generate fresh specs against that handle. Exercise neither, Focus only,
+both, and Arbiter only with explicit disable and re-enable transitions.
+Capture canonical and legacy status with the requested model-sourced
+provenance and deadline case. Keep the local completion-plan draft and
+separate pending L7 harness changes in the working tree.
+
+After the successful smoke settled, its three duplicate weight files
+were authenticated against their retained originals and removed.
+The cleanup reclaimed 24,090,091,520 bytes, leaving D: with
+459,842,703,360 free bytes. The private disposal receipt SHA-256 is
+`d32d9168068a5731e0dd7f55b798923e2b252498422ba165d90b40951a5ca2e9`.
+The closed evaluation base and its staged CUDA runtime remain available.

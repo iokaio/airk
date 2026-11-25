@@ -4,18 +4,23 @@ These instructions are mandatory for the active assignment. Standing rules remai
 
 All unlinked filesystem paths below are repository-relative unless absolute or prefixed with `~/`.
 
-**24 November 2026. Resume Answer completion after the indexing smoke.**
-The user authorized adopting Claude`s plain-store work into
-`feat/arbiter-final`, verified via fast-forward to `28568357`, and requested
-GPU-first embedding before rebuilding both evaluation indexes. The
-plain-store CPU semantic smoke has passed. Qualify the default embedding
-route and fallback on the fresh candidate, then start Bookbuilder and
-Munarium rebuilds from the pinned read-only inputs. Skip comparison
-benchmarks. The previous incomplete indexes were removed at the user`s
-direction. Keep the outstanding L7 harness changes out of indexing commits.
-See the [execution ledger](simplify/one-process-ledger.md#24-november-2026--plain-store-adopted-and-semantic-smoke-passed).
-The [indexing performance plan](indexing/performance-plan.md) records the
-plain-store decisions, shared FP16 model and separate default-on GPU setting.
+**24 November 2026. Windows rebuild complete. Prepare the live shakedown.**
+Claude’s plain-store refactor is on `feat/arbiter-final`. The Windows live
+smoke verified default CUDA embedding and CPU opt-out. Fresh Bookbuilder
+and Munarium indexes reached Ready on their pinned source exports, served
+hybrid retrieval, and settled on `win-minilm-cuda-base` with no restart
+blockers. The refreshed Arbiter CUDA profile passed native scoring and
+was paired with the retained Focus profile.
+[Resume inputs and exact launch shape](simplify/one-process-ledger.md#24-november-2026--prepared-return-to-the-windows-completion-plan).
+
+The user directed us to commit, push and prepare to return to the local
+`docs/arbiter/completion-plan.md`. Its next step is the same-install Windows
+four-switch shakedown and full leak check on the settled base. Calculate
+its native dispatch census from the plan before launching. Continue
+through Windows L6 and the L7 baseline plus three judged changes, then
+stop for the requested review. Keep the outstanding L7 harness edits
+with their judged series. The [indexing performance plan](indexing/performance-plan.md)
+records the plain-store and embedding decisions.
 
 The user resumed the Windows and Linux FP16 campaign after D: cleanup. Keep new Windows work on D:, reuse the existing checkout target with one Cargo owner, and apply the standing disk budget and fixture disposal rules. Retained receipts remain evidence under their original identities. Removed fixture installations must be restored or replaced by a verified compatible installation before reuse.
 
