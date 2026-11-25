@@ -106,36 +106,79 @@ fn selectors(
         Lookup::Files.identity(),
         Lookup::Language(&artifact.language).identity(),
     ]);
+    visit_selectors(&artifact, version, &mut |lookup| {
+        selectors.insert(lookup.identity());
+        ensure!(
+            selectors.len() <= MAX_SELECTORS_PER_ARTIFACT,
+            "current artifact selector limit exceeded"
+        );
+        Ok(())
+    })?;
+    Ok(selectors)
+}
+
+/// The fact and edge selectors of one materialized artifact (everything but
+/// `Files` and `Language`), with the terminal-call rule of posting version 1.
+fn visit_selectors(
+    artifact: &Artifact,
+    version: u32,
+    visit: &mut dyn FnMut(Lookup<'_>) -> Result<()>,
+) -> Result<()> {
     for fact in &artifact.facts {
-        selectors.insert(Lookup::FactName(&fact.name).identity());
-        selectors.insert(Lookup::FactKind(&fact.kind).identity());
+        visit(Lookup::FactName(&fact.name))?;
+        visit(Lookup::FactKind(&fact.kind))?;
         if let Some(code) = &fact.code {
             if version == 1
                 && let Some(name) = airk_core::code::terminal_call_name(code, &fact.kind)
             {
-                selectors.insert(Lookup::FactName(name).identity());
+                visit(Lookup::FactName(name))?;
             }
-            selectors.insert(Lookup::FactName(&code.qualified_name).identity());
-            selectors.insert(Lookup::FactName(&code.symbol_id).identity());
+            visit(Lookup::FactName(&code.qualified_name))?;
+            visit(Lookup::FactName(&code.symbol_id))?;
             if let Some(owner) = &code.owner_id {
-                selectors.insert(Lookup::EdgeSource(owner).identity());
-                selectors.insert(Lookup::EdgeTarget(&code.symbol_id).identity());
+                visit(Lookup::EdgeSource(owner))?;
+                visit(Lookup::EdgeTarget(&code.symbol_id))?;
             }
             if let Some(target) = &code.target {
                 let source = code
                     .owner_id
                     .clone()
                     .unwrap_or_else(|| format!("file:{}", artifact.path));
-                selectors.insert(Lookup::EdgeSource(&source).identity());
-                selectors.insert(Lookup::EdgeTarget(target).identity());
+                visit(Lookup::EdgeSource(&source))?;
+                visit(Lookup::EdgeTarget(target))?;
             }
         }
+    }
+    Ok(())
+}
+
+/// The plain index selectors of a materialized artifact: exactly the posting
+/// selectors except `Files` and `Language`, which the `files` table answers.
+pub(crate) fn plain_selectors(
+    artifact: &Artifact,
+    version: u32,
+) -> Result<Vec<crate::index::Selector>> {
+    use crate::index::{Selector, SelectorKind};
+    let mut selectors = BTreeSet::new();
+    visit_selectors(artifact, version, &mut |lookup| {
+        let (kind, value) = match lookup {
+            Lookup::FactName(value) => (SelectorKind::FactName, value),
+            Lookup::FactKind(value) => (SelectorKind::FactKind, value),
+            Lookup::EdgeSource(value) => (SelectorKind::EdgeSource, value),
+            Lookup::EdgeTarget(value) => (SelectorKind::EdgeTarget, value),
+            Lookup::Files | Lookup::Language(_) => return Ok(()),
+        };
+        selectors.insert(Selector {
+            kind,
+            value: value.to_owned(),
+        });
         ensure!(
             selectors.len() <= MAX_SELECTORS_PER_ARTIFACT,
             "current artifact selector limit exceeded"
         );
-    }
-    Ok(selectors)
+        Ok(())
+    })?;
+    Ok(selectors.into_iter().collect())
 }
 
 /// Accumulates final afterimages and charges them before they can grow beyond

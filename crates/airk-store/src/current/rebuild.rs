@@ -75,6 +75,54 @@ fn validate_tree(path: &Path, root: &Path, count: &mut usize, depth: usize) -> R
     Ok(())
 }
 impl FileStore {
+    /// An old-format collection (the old current store, no plain index) is not
+    /// read or converted: its derived state, owner header included, is removed
+    /// so the next index creates a new plain index. Sources and settings stay.
+    pub fn discard_old_format_index(
+        &self,
+        writer: &WriterLock,
+        root: &str,
+        collection: &str,
+    ) -> Result<bool> {
+        let directory = gate::check_writer(self, writer)?;
+        if !self.plain_old_format()? {
+            return Ok(false);
+        }
+        ensure!(
+            directory.file_name().and_then(|v| v.to_str()) == Some(collection),
+            "foreign old-format index disposal"
+        );
+        if let Ok(scope) = database::owned_scope(&directory) {
+            ensure!(
+                scope.root == root && scope.collection == collection,
+                "foreign old-format index disposal"
+            );
+        }
+        let _gate = gate::Gate::exclusive(self, writer)?;
+        super::release_lexical_cache();
+        writer.invalidate_census_before_mutation()?;
+        let mut count = 0;
+        let mut targets = Vec::new();
+        for entry in fs::read_dir(&directory)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let name = name.to_str().context("non-UTF-8 collection entry")?;
+            if derived(name) || name == MARKER {
+                validate_tree(&entry.path(), &directory, &mut count, 0)?;
+                targets.push(entry.path());
+            }
+        }
+        for path in targets {
+            if fs::symlink_metadata(&path)?.is_dir() {
+                fs::remove_dir_all(&path)?;
+            } else {
+                fs::remove_file(&path)?;
+            }
+        }
+        crate::store_fs::sync_parent(&directory)?;
+        Ok(true)
+    }
+
     /// Called only for an explicitly requested full rebuild. The durable marker
     /// survives interrupted deletion, so no half-cleared collection appears empty.
     pub fn rebuild_obsolete_index(
@@ -85,6 +133,9 @@ impl FileStore {
         collection: &str,
     ) -> Result<bool> {
         let directory = gate::check_writer(self, writer)?;
+        if self.discard_old_format_index(writer, root, collection)? {
+            return Ok(true);
+        }
         let marker_path = directory.join(MARKER);
         // The writer lock makes owner discovery stable. Compatible full reindex
         // requests must not contend with readers merely to perform this no-op.

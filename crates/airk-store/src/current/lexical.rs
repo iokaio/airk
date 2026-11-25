@@ -96,7 +96,7 @@ pub fn stable_id(path: &str, local: u64) -> Result<Sha256Digest> {
 // Prefixes separate literal aliases from digested overlong terms. The ascii
 // tokenizer is byte-stable for non-ASCII text; '_' explicitly preserves whole
 // identifier aliases alongside the components emitted by terms().
-fn token(term: &str) -> String {
+pub(crate) fn token(term: &str) -> String {
     if term.len() > 8000 {
         format!(
             "h{}",

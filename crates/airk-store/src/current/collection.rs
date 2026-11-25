@@ -186,6 +186,22 @@ impl CollectionState {
         );
         Ok(bytes)
     }
+    /// The canonical bytes the plain index keeps in its `collection_state` meta.
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>> {
+        self.bytes()
+    }
+    /// Counts recomputed from every stored file under this configuration.
+    pub fn recount<'a>(&mut self, artifacts: impl Iterator<Item = &'a Artifact>) -> Result<()> {
+        let mut counts = CollectionCounts::default();
+        for artifact in artifacts {
+            counts.update(artifact, &self.configuration.vector_selection, true)?;
+        }
+        self.counts = counts;
+        Ok(())
+    }
+    pub fn decode_canonical(bytes: &[u8]) -> Result<Self> {
+        Self::decode(bytes)
+    }
     pub(super) fn decode(bytes: &[u8]) -> Result<Self> {
         ensure!(
             bytes.len() <= map::MAX_VALUE_BYTES,
@@ -255,7 +271,22 @@ impl CollectionPlan {
         configuration: Option<&CollectionConfiguration>,
     ) -> Result<Self> {
         let old = plan.get(map::key(scope, map::MapDomain::Metadata, KEY)?)?;
-        let mut state = old.as_deref().map(CollectionState::decode).transpose()?;
+        let state = old.as_deref().map(CollectionState::decode).transpose()?;
+        if state.is_none() && configuration.is_some() {
+            ensure!(
+                plan.root()? == map::empty_root(scope)?,
+                "current collection metadata missing from nonempty index; rebuild"
+            );
+        }
+        Self::from_state(state, configuration)
+    }
+
+    /// The same configuration and count rules over a state the plain index
+    /// stores in its `collection_state` meta value.
+    pub(crate) fn from_state(
+        mut state: Option<CollectionState>,
+        configuration: Option<&CollectionConfiguration>,
+    ) -> Result<Self> {
         let prior_selection = state
             .as_ref()
             .map(|s| s.configuration.vector_selection.clone())
@@ -272,10 +303,6 @@ impl CollectionPlan {
                 }
                 state.configuration = configuration.clone();
             } else {
-                ensure!(
-                    plan.root()? == map::empty_root(scope)?,
-                    "current collection metadata missing from nonempty index; rebuild"
-                );
                 state = Some(CollectionState {
                     version: 1,
                     configuration: configuration.clone(),
@@ -355,6 +382,13 @@ impl CollectionPlan {
         }
         Ok(())
     }
+    /// The plain index publishes a configuration change over several batches,
+    /// so the complete-replacement fence of `finish` does not apply; a caller
+    /// that replaces every file recounts at the end instead.
+    pub(crate) fn into_state(self) -> Option<CollectionState> {
+        self.state
+    }
+
     pub(crate) fn finish(
         self,
         plan: &mut map::MapPlan<'_>,

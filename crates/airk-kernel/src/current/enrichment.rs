@@ -9,7 +9,7 @@ use airk_store::{
     FileStore,
     current::{
         ArtifactChange, CapturedInput, CurrentRead, MAX_PENDING_INPUTS,
-        collection::CollectionState, resources::ResourceChange,
+        collection::CollectionState, plain_writer::PlainRead, resources::ResourceChange,
     },
     quota::Reservation,
 };
@@ -246,27 +246,6 @@ pub(crate) fn readiness(read: &CurrentRead, store: &FileStore) -> Result<Semanti
     readiness_with_state(read, store, &state, policy)
 }
 
-/// Whether the saved graph was built under another graph specification and
-/// can only be replaced by a full rebuild (an incremental replacement would
-/// leave unchanged artifacts bound to the retired graph).
-pub(super) fn graph_regeneration_required(
-    read: &CurrentRead,
-    store: &FileStore,
-    state: &CollectionState,
-) -> Result<bool> {
-    if read.head().graph_head.allocated_count == 0 {
-        return Ok(false);
-    }
-    let Some(model) = state.configuration.model.as_ref() else {
-        return Ok(false);
-    };
-    let dimensions = usize::try_from(crate::shared_models::descriptor(store, model)?.dimensions)?;
-    let graph = &read.head().graph_head.scope;
-    Ok(graph.specification
-        != airk_retrieval::vector::mutable::specification(dimensions, model.pipeline_digest)?
-        || graph.record_bytes != airk_retrieval::vector::mutable::record_bytes(dimensions)?)
-}
-
 /// Reuse scalar metadata from this exact authorized read; callers retain policy-read ordering.
 fn graph_specification_readiness(
     graph: &airk_core::graph_storage::GraphScope,
@@ -330,6 +309,81 @@ pub(super) fn readiness_with_state(
         }
     }
     if let Some(work) = read_work(read, store)? {
+        return Ok(work.readiness(policy));
+    }
+    let c = &state.configuration;
+    let enabled = c.model.is_some();
+    Ok(SemanticReadiness {
+        version: 1,
+        state: if enabled {
+            SemanticState::Ready
+        } else {
+            SemanticState::Disabled
+        },
+        default_search_policy: policy,
+        selected_artifacts: if enabled {
+            state.counts.vector_eligible
+        } else {
+            0
+        },
+        completed_artifacts: if enabled {
+            state.counts.vector_eligible
+        } else {
+            0
+        },
+        selected_units: None,
+        completed_units: 0,
+        first_ready_unix_ms: None,
+        fully_ready_unix_ms: None,
+        selection_digest: Some(c.vector_selection.digest()?),
+        pipeline_digest: c.model.as_ref().map(|m| m.pipeline_digest),
+        failure: None,
+    })
+}
+
+/// The semantic work stored in the plain index, for the write side.
+pub(super) fn read_plain_work(read: &PlainRead) -> Result<Option<SemanticWork>> {
+    read.resource(KEY)?
+        .as_deref()
+        .map(SemanticWork::from_bytes)
+        .transpose()
+        .context("read current semantic work")
+}
+
+/// Semantic readiness of the plain index. Vectors are not computed yet, so a
+/// configured model reports its work queue (pending or partial).
+pub(super) fn plain_readiness(read: &PlainRead, store: &FileStore) -> Result<SemanticReadiness> {
+    let policy = match read.resource(POLICY_KEY)? {
+        Some(bytes) => {
+            let state: SavedSearchPolicy = serde_json::from_slice(&bytes)?;
+            ensure!(
+                state.version == 1 && serde_json::to_vec(&state)? == bytes,
+                "invalid saved semantic search policy"
+            );
+            state.policy
+        }
+        None => DefaultSearchPolicy::default(),
+    };
+    let state = read
+        .collection_state()?
+        .context("current configuration missing")?;
+    if crate::shared_models::semantic_upgrade_pending(store, state.configuration.model.as_ref())? {
+        return Ok(SemanticReadiness {
+            version: 1,
+            state: SemanticState::Pending,
+            default_search_policy: policy,
+            selected_artifacts: state.counts.vector_eligible,
+            completed_artifacts: 0,
+            selected_units: None,
+            completed_units: 0,
+            first_ready_unix_ms: None,
+            fully_ready_unix_ms: None,
+            selection_digest: Some(state.configuration.vector_selection.digest()?),
+            pipeline_digest: store.shared_model_default().map(|o| o.pipeline_digest),
+            failure: None,
+        });
+    }
+    if let Some(work) = read_plain_work(read)? {
         return Ok(work.readiness(policy));
     }
     let c = &state.configuration;
@@ -1023,253 +1077,35 @@ impl Kernel {
         Ok(report)
     }
 
+    /// Vectors are out of scope for this step of the plain store: the queue
+    /// stays pending (readiness "pending"/"partial") and nothing is published.
+    /// The embedding step writes vectors through `PlainWriter` instead.
     pub(super) fn drain_current_enrichment(
         &self,
-        model: &EmbeddingModel,
-        selection: &VectorSelectionPolicy,
-        stats: &mut EmbeddingCacheStats,
-        max_batches: usize,
-        mut current_work: Option<&mut airk_ingest::CurrentIndexWork>,
+        _model: &EmbeddingModel,
+        _selection: &VectorSelectionPolicy,
+        _stats: &mut EmbeddingCacheStats,
+        _max_batches: usize,
+        _current_work: Option<&mut airk_ingest::CurrentIndexWork>,
         admission: DrainAdmission<'_>,
     ) -> Result<DrainOutcome> {
-        let scope = self.current_scope()?.context("workspace is not indexed")?;
-        let execution = admission.execution;
-        let deadline = admission.deadline;
-        let writer = self.store.lock()?;
-        let quota = self.collection_quota()?;
-        let captures = writer.capture_objects();
-        let mut generation = None;
-        let mut yield_to_source = false;
-        let mut paused = false;
-        for batch in 0..max_batches {
-            // A paused service turn returns admission at a batch boundary rather
-            // than parking here with the writer, execution slot and model.
-            // At batch 0 the boundary applies only once this turn has already
-            // released its pause; a fresh turn parks in the checkpoint below.
-            if (batch > 0 || crate::service_execution::pause_released())
-                && self.service_collection.is_some()
-                && crate::service_execution::paused_at_boundary()
-            {
-                paused = true;
-                crate::service_execution::release_pause_wait();
-                break;
-            }
-            crate::service_execution::checkpoint()?;
-            if self.service_collection.is_some()
-                && crate::service_execution::source_yield_requested()
-            {
-                yield_to_source = true;
-                break;
-            }
-            if batch > 0 && deadline.is_some_and(|end| std::time::Instant::now() >= end) {
-                break;
-            }
-            let job = if self.service_collection.is_some() {
-                None
-            } else {
-                airk_store::scheduler::Queue::new(&self.data_root)
-                    .status(&self.collection, &self.root_id())?
-            };
-            if max_batches <= 8
-                && job.as_ref().is_some_and(|job| {
-                    job.paused || job.blocked || job.requested_revision > job.completed_revision
-                })
-            {
-                break;
-            }
-            let recent: std::collections::BTreeSet<_> = job
-                .as_ref()
-                .into_iter()
-                .flat_map(|job| &job.recent_paths)
-                .map(String::as_str)
-                .collect();
-            let read = self.store.current_build_read(&scope, &writer)?;
-            let Some(mut work) = read_work(&read, &self.store)? else {
-                break;
-            };
-            generation = Some(read.head().sequence);
-            if work.pending.is_empty() {
-                break;
-            }
-            let state = read
-                .collection_state()?
-                .context("current configuration missing")?;
-            let objects = state
-                .configuration
-                .model
-                .context("pending semantic model missing")?;
-            ensure!(
-                work.pipeline_digest == objects.pipeline_digest
-                    && work.selection_digest == selection.digest()?
-                    && state.configuration.vector_selection.digest()? == work.selection_digest,
-                "pending semantic work differs from current configuration"
-            );
-            let batch_len = work.pending.len().min(32);
-            // Keep the durable manifest path-sorted for canonical validation,
-            // while selecting recent edits and useful repository context first.
-            let mut selected: Vec<_> = work
-                .pending
-                .iter()
-                .map(|pending| {
-                    (
-                        !recent.contains(pending.path.as_str()),
-                        airk_ingest::priority::agent_path_priority(&pending.path),
-                        pending,
-                    )
-                })
-                .collect();
-            if selected.len() > batch_len {
-                selected.select_nth_unstable_by(batch_len, |left, right| {
-                    (left.0, left.1, &left.2.path).cmp(&(right.0, right.1, &right.2.path))
-                });
-            }
-            selected.truncate(batch_len);
-            selected.sort_unstable_by(|left, right| {
-                (left.0, left.1, &left.2.path).cmp(&(right.0, right.1, &right.2.path))
-            });
-            let mut selected: Vec<_> = selected
-                .into_iter()
-                .map(|(_, _, pending)| pending.clone())
-                .collect();
-            // Publication validates a canonical path order within each batch.
-            selected.sort_unstable_by(|left, right| left.path.cmp(&right.path));
-            self.emit_progress(airk_core::readiness::IndexProgress {
-                collection: String::new(),
-                phase: "enrichment_started",
-                revision: None,
-                processed_artifacts: 0,
-                committed_artifacts: 0,
-                selected_artifacts: Some(work.selected_artifacts),
-                total_artifacts: None,
-                completed_artifacts: Some(work.completed_artifacts),
-                completed_units: Some(work.completed_units),
-            });
-            let mut changes = Vec::with_capacity(batch_len);
-            for pending in &selected {
-                let artifact = read
-                    .artifact(&pending.path)?
-                    .context("pending semantic artifact missing")?;
-                ensure!(
-                    artifact.content_hash.parse::<Sha256Digest>()? == pending.source_hash
-                        && artifact
-                            .retained
-                            .as_ref()
-                            .context("pending extraction missing")?
-                            .object
-                            .parse::<Sha256Digest>()?
-                            == pending.extraction_object,
-                    "pending semantic input binding expired"
-                );
-                changes.push(CapturedInput::new(artifact));
-            }
-            drop(read);
-            self.emit_progress(airk_core::readiness::IndexProgress {
-                collection: String::new(),
-                phase: "enrichment_prepared",
-                revision: None,
-                processed_artifacts: batch_len as u64,
-                committed_artifacts: 0,
-                selected_artifacts: Some(work.selected_artifacts),
-                total_artifacts: None,
-                completed_artifacts: Some(work.completed_artifacts),
-                completed_units: Some(work.completed_units),
-            });
-            let reservation = self.publication_reservation()?;
-            let selected_paths: std::collections::BTreeSet<_> = selected
-                .iter()
-                .map(|pending| pending.path.as_str())
-                .collect();
-            work.pending
-                .retain(|pending| !selected_paths.contains(pending.path.as_str()));
-            work.completed_artifacts += batch_len as u64;
-            work.failure = None;
-            let result = CurrentUpdater {
-                store: &self.store,
-                quota: &quota,
-                scope: &scope,
-                writer: &writer,
-                reservation: &reservation,
-                configuration: None,
-            }
-            .apply_enrichment(
-                &changes,
-                SemanticUpdate {
-                    model,
-                    objects,
-                    selection,
-                    defer: false,
-                    cache: EmbeddingCacheContext {
-                        cache: None,
-                        bypass: work.force_recompute,
-                        stats,
-                        max_workers: execution.plan.inference_workers,
-                        working_memory_bytes: execution.plan.working_memory_bytes,
-                    },
-                },
-                &mut work,
-            )?;
-            if let Some(work) = current_work.as_deref_mut() {
-                work.lexical_documents = work
-                    .lexical_documents
-                    .saturating_add(result.lexical.changed.added_documents);
-                work.graph_records = work
-                    .graph_records
-                    .saturating_add(result.graph.sealed_records);
-                work.graph_read_bytes = work
-                    .graph_read_bytes
-                    .saturating_add(result.graph.read_bytes);
-                work.graph_base_record_reads = work
-                    .graph_base_record_reads
-                    .saturating_add(result.graph.base_record_reads);
-                work.graph_proof_cache_hits = work
-                    .graph_proof_cache_hits
-                    .saturating_add(result.graph.base_proof_cache_hits);
-                work.graph_proof_cache_evictions = work
-                    .graph_proof_cache_evictions
-                    .saturating_add(result.graph.base_proof_cache_evictions);
-            }
-            generation = Some(result.commit.token.sequence);
-            self.emit_progress(airk_core::readiness::IndexProgress {
-                collection: String::new(),
-                phase: "enrichment_committed",
-                revision: Some(super::runtime::revision(result.commit.token).to_string()),
-                processed_artifacts: 0,
-                committed_artifacts: 0,
-                selected_artifacts: Some(work.selected_artifacts),
-                total_artifacts: None,
-                completed_artifacts: Some(work.completed_artifacts),
-                completed_units: Some(work.completed_units),
-            });
-            // The accepted batch has durably published before relinquishing its
-            // writer. A hint never interrupts an inference call or atomic commit.
-            if self.service_collection.is_some() && crate::service_execution::paused_at_boundary() {
-                paused = true;
-                crate::service_execution::release_pause_wait();
-                break;
-            }
-            crate::service_execution::checkpoint()?;
-            if self.service_collection.is_some()
-                && crate::service_execution::source_yield_requested()
-            {
-                yield_to_source = true;
-                break;
-            }
+        let _ = (admission.execution, admission.deadline);
+        // A paused service turn still returns admission at its boundary.
+        if crate::service_execution::pause_released()
+            && self.service_collection.is_some()
+            && crate::service_execution::paused_at_boundary()
+        {
+            crate::service_execution::release_pause_wait();
         }
-        drop(captures);
-        // A turn that yields or ends on a pause skips reclamation and returns its
-        // writer at once; the next drain that runs to completion reclaims. Garbage
-        // objects only wait longer; they never become reachable again.
-        let maintenance_error = if generation.is_some() && !yield_to_source && !paused {
-            super::update::reclaim_current_objects(&self.store, &quota, &scope, &writer)
-                .err()
-                .map(|error| format!("current object cleanup: {error:#}"))
+        let generation = if self.store.plain_index_present()? {
+            Some(self.store.plain_read()?.sequence())
         } else {
             None
         };
         Ok(DrainOutcome {
             generation,
-            maintenance_error,
-            yield_to_source,
+            maintenance_error: None,
+            yield_to_source: false,
         })
     }
 }

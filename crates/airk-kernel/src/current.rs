@@ -6,7 +6,7 @@ use airk_retrieval::{terms, truncate_utf8};
 use airk_store::{
     FileStore,
     current::lexical::{CurrentLexicalCandidates, stable_id},
-    current::{CurrentRead, CurrentScope, CurrentToken, TransactionPhase},
+    current::{CurrentRead, CurrentScope, CurrentToken},
     quota::Quota,
 };
 use anyhow::{Context, Result, ensure};
@@ -56,95 +56,32 @@ impl std::fmt::Display for RecoveryFailure {
 }
 impl std::error::Error for RecoveryFailure {}
 
-/// Resolve Ready, Prepared or Applying after a writer restart. Prepared may be
-/// abandoned only while its original current files still verify; Applying is
-/// replayed or left unavailable on failure. No live source is consulted.
+/// The plain index has no journal: a batch is one SQLite transaction and
+/// SQLite itself rolls back an interrupted one. Recovery only reports the
+/// committed publication. No live source is consulted.
 pub fn recover_current(
     store: &FileStore,
-    quota: &Quota,
+    _quota: &Quota,
     scope: &CurrentScope,
 ) -> Result<CurrentRecovery> {
-    let capacity = store
-        .current_database_capacity(scope)
-        .context(RecoveryFailure("recovery_capacity"))?;
-    let lock = store
-        .lock()
-        .context(RecoveryFailure("recovery_writer_lock"))?;
-    let mut writer = store
-        .current_write(&lock, quota, scope, capacity)
-        .context(RecoveryFailure("recovery_open_writer"))?;
-    match writer
-        .phase()
-        .context(RecoveryFailure("recovery_read_phase"))?
-    {
-        TransactionPhase::Ready => {
-            let head = writer.head()?;
-            writer
-                .verify_current_lexical()
-                .context(RecoveryFailure("recovery_verify_published"))?;
-            writer
-                .release_orphan_grants()
-                .context(RecoveryFailure("recovery_release_capacity"))?;
-            Ok(CurrentRecovery {
-                token: head.token()?,
-                action: CurrentRecoveryAction::AlreadyReady,
-                aborted_reason: None,
-                maintenance_error: None,
-            })
-        }
-        phase @ (TransactionPhase::Prepared | TransactionPhase::Applying) => {
-            let pending = writer
-                .pending()?
-                .context("current transaction descriptor missing")
-                .context(RecoveryFailure("recovery_read_transaction"))?;
-            let target = writer.verify_pending_fts(&pending);
-            if let Err(error) = target {
-                if phase == TransactionPhase::Prepared {
-                    let base = writer.head()?;
-                    writer
-                        .verify_current_lexical()
-                        .context(RecoveryFailure("recovery_verify_published"))?;
-                    writer
-                        .abort_prepared(&pending)
-                        .context(RecoveryFailure("recovery_abort_prepared"))?;
-                    return Ok(CurrentRecovery {
-                        token: base.token()?,
-                        action: CurrentRecoveryAction::AbortedPrepared,
-                        aborted_reason: Some(format!("{error:#}")),
-                        maintenance_error: None,
-                    });
-                }
-                return Err(error.context(RecoveryFailure("recovery_verify_candidate")));
-            }
-            if let Err(error) = writer.mark_applying(&pending) {
-                if writer.phase()? == TransactionPhase::Prepared {
-                    let base = writer.head()?;
-                    writer
-                        .verify_current_lexical()
-                        .context(RecoveryFailure("recovery_verify_published"))?;
-                    writer
-                        .abort_prepared(&pending)
-                        .context(RecoveryFailure("recovery_abort_prepared"))?;
-                    return Ok(CurrentRecovery {
-                        token: base.token()?,
-                        action: CurrentRecoveryAction::AbortedPrepared,
-                        aborted_reason: Some(format!("{error:#}")),
-                        maintenance_error: None,
-                    });
-                }
-                return Err(error.context(RecoveryFailure("recovery_apply_candidate")));
-            }
-            let committed = writer
-                .commit(&pending, pending.target.lexical_commit)
-                .context(RecoveryFailure("recovery_commit_candidate"))?;
-            Ok(CurrentRecovery {
-                token: committed.token,
-                action: CurrentRecoveryAction::Applied,
-                aborted_reason: None,
-                maintenance_error: committed.maintenance_error,
-            })
-        }
-    }
+    let sequence = if store.plain_index_present()? {
+        let read = store
+            .plain_read()
+            .context(RecoveryFailure("recovery_open_reader"))?;
+        ensure!(
+            read.scope() == scope,
+            "current index belongs to another owner"
+        );
+        read.sequence()
+    } else {
+        0
+    };
+    Ok(CurrentRecovery {
+        token: airk_store::current::plain_writer::plain_token(scope, sequence),
+        action: CurrentRecoveryAction::AlreadyReady,
+        aborted_reason: None,
+        maintenance_error: None,
+    })
 }
 
 /// Request-scoped FTS5 reader; the current gate spans candidate materialization.

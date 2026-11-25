@@ -1,0 +1,658 @@
+// SPDX-License-Identifier: Apache-2.0
+//! The write side of the current index over the plain store (`crate::index`).
+//!
+//! It follows "Mapping of the current index" in `index/CONTRACT.md`: the
+//! existing current types (`CapturedInput`, `InventoryFile`, `Citation`,
+//! `CollectionState`, resources) are written into the plain tables, one SQLite
+//! transaction per batch. There is no Merkle map, journal, object file, grant
+//! or reclamation; extraction payloads travel with the batch in memory.
+use super::{
+    CapturedInput, CurrentScope, CurrentToken,
+    collection::{CollectionConfiguration, CollectionPlan, CollectionState},
+    lexical, postings,
+};
+use crate::{
+    FileStore, WriterLock,
+    index::{
+        self, Batch, ChunkEntry, EncodedPayload, FileChange, FileEntry, Handle, HandleKind,
+        IndexReader, IndexWriter, PathLookup, ResourceChange, VectorSetup,
+    },
+};
+use airk_core::{
+    Artifact, ArtifactRef, Citation,
+    extraction::{ExtractionPayload, ExtractionProfile},
+    identity::{Sha256Digest, framed_digest},
+    publication::InventoryFile,
+};
+use anyhow::{Context, Result, ensure};
+use std::{collections::BTreeMap, path::Path};
+
+pub const SCOPE_KEY: &str = "scope";
+pub const COLLECTION_STATE_KEY: &str = "collection_state";
+pub const LEXICAL_COMMIT_KEY: &str = "lexical_commit";
+const SOURCE_MEASUREMENT_PREFIX: &str = "source-measurement/";
+/// The engine bounds resource keys; longer paths use their digest.
+const MAX_RESOURCE_KEY_BYTES: usize = 256;
+/// Size cap of one collection's plain index (D8).
+pub const MAX_INDEX_BYTES: u64 = 1 << 40;
+
+/// The resource key of one file's usage measurement. A path too long for the
+/// engine's key bound is named by its digest instead.
+pub fn source_measurement_key(path: &str) -> String {
+    let key = format!("{SOURCE_MEASUREMENT_PREFIX}{path}");
+    if key.len() <= MAX_RESOURCE_KEY_BYTES {
+        key
+    } else {
+        format!(
+            "{SOURCE_MEASUREMENT_PREFIX}#{}",
+            framed_digest(b"airk-index/source-measurement/1", &[path.as_bytes()])
+        )
+    }
+}
+
+/// `lexical_commit` of the publication that last changed lexical rows.
+pub fn lexical_commit(scope: &CurrentScope, sequence: u64) -> Sha256Digest {
+    framed_digest(
+        b"airk-index/lexical/1",
+        &[scope.incarnation.as_bytes(), &sequence.to_be_bytes()],
+    )
+}
+
+/// The token of one plain publication (contract: `current-index-head/3`).
+pub fn plain_token(scope: &CurrentScope, sequence: u64) -> CurrentToken {
+    CurrentToken {
+        incarnation: scope.incarnation,
+        sequence,
+        digest: framed_digest(
+            b"current-index-head/3",
+            &[
+                scope.incarnation.as_bytes(),
+                &sequence.to_be_bytes(),
+                index::FORMAT.as_bytes(),
+            ],
+        ),
+    }
+}
+
+/// The plain index ran out of room (D8). The batch was not written.
+#[derive(Clone, Copy, Debug)]
+pub struct IndexSizeCap {
+    pub index_bytes: u64,
+    pub cap_bytes: u64,
+}
+impl std::fmt::Display for IndexSizeCap {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "index size cap reached: {} bytes stored, cap {} bytes",
+            self.index_bytes, self.cap_bytes
+        )
+    }
+}
+impl std::error::Error for IndexSizeCap {}
+
+/// One file's extraction as the batch carries it: the materialized artifact
+/// (chunks and facts), the path-free payload and its stored encoding.
+pub struct CapturedPayload {
+    pub artifact: Artifact,
+    pub payload: ExtractionPayload,
+    pub encoded: EncodedPayload,
+}
+
+impl CapturedPayload {
+    /// Capture a fresh extraction. Returns the compact artifact that becomes
+    /// the file record; nothing is written until the batch is applied.
+    pub fn capture(
+        artifact: &Artifact,
+        payload: &ExtractionPayload,
+        profile: &ExtractionProfile,
+    ) -> Result<(Artifact, Self)> {
+        let _stage = airk_core::stage_timing::scope("blob.retain");
+        profile.identity()?;
+        let bytes = serde_json::to_vec(payload)?;
+        let encoded = EncodedPayload::encode(&bytes)?;
+        let mut compact = artifact.clone();
+        compact.retained = Some(compact_reference(artifact, &encoded, profile));
+        compact.chunks.clear();
+        compact.facts.clear();
+        let mut full = artifact.clone();
+        full.retained = compact.retained.clone();
+        Ok((
+            compact,
+            Self {
+                artifact: full,
+                payload: payload.clone(),
+                encoded,
+            },
+        ))
+    }
+
+    /// Rebuild the batch form of a stored payload for a compact record.
+    pub fn from_stored(compact: &Artifact, raw: Vec<u8>) -> Result<Self> {
+        let retained = compact
+            .retained
+            .as_ref()
+            .context("stored record has no extraction reference")?;
+        let profile = retained
+            .profile
+            .as_ref()
+            .context("stored record has no extraction profile; rebuild the index")?;
+        let payload: ExtractionPayload = serde_json::from_slice(&raw)?;
+        let encoded = EncodedPayload::encode(&raw)?;
+        ensure!(
+            encoded.digest == retained.object.parse::<Sha256Digest>()?,
+            "stored payload differs from its record"
+        );
+        let mut artifact = airk_core::binding::bind_payload(
+            &payload,
+            profile,
+            airk_core::binding::ArtifactBinding {
+                path: &compact.path,
+                source_hash: compact.content_hash.parse()?,
+                source_bytes: compact.bytes,
+            },
+        )?;
+        artifact.retained = compact.retained.clone();
+        Ok(Self {
+            artifact,
+            payload,
+            encoded,
+        })
+    }
+
+    /// Indexed lines as the old store counted them: for a UTF-8 file of
+    /// extraction contract 2 the lines of its source (the payload text).
+    pub fn indexed_lines(&self) -> usize {
+        let profile = self
+            .artifact
+            .retained
+            .as_ref()
+            .and_then(|retained| retained.profile.as_ref());
+        if profile.is_some_and(|p| p.contract_version == 2)
+            && self.artifact.extraction_method == "utf8"
+        {
+            let text = self.payload.text.as_bytes();
+            text.iter().filter(|byte| **byte == b'\n').count()
+                + usize::from(text.last().is_some_and(|byte| *byte != b'\n'))
+        } else {
+            self.artifact
+                .chunks
+                .iter()
+                .map(|chunk| chunk.end_line)
+                .max()
+                .unwrap_or(0)
+        }
+    }
+}
+
+fn compact_reference(
+    artifact: &Artifact,
+    encoded: &EncodedPayload,
+    profile: &ExtractionProfile,
+) -> ArtifactRef {
+    ArtifactRef {
+        legacy_origin: None,
+        source_encoding: None,
+        payload_encoding: None,
+        object: encoded.digest.to_string(),
+        object_bytes: usize::try_from(encoded.raw_bytes).unwrap_or(usize::MAX),
+        // The plain index keeps no source copy (Q5). The flag keeps today's
+        // record shape; readers decide source availability by extraction
+        // method, as the mapping contract states.
+        raw_source: true,
+        chunks: artifact.chunks.len(),
+        extracted_bytes: artifact.extracted_bytes(),
+        facts: artifact.facts.len(),
+        profile: Some(profile.clone()),
+    }
+}
+
+/// One changed file of a plain publication.
+pub struct PlainUpsert {
+    pub input: CapturedInput,
+    pub file: InventoryFile,
+    pub captured: CapturedPayload,
+    pub vector_pending: bool,
+}
+
+pub enum PlainChange {
+    Upsert(Box<PlainUpsert>),
+    Delete(String),
+}
+
+impl PlainChange {
+    pub fn path(&self) -> &str {
+        match self {
+            Self::Upsert(upsert) => &upsert.input.artifact.path,
+            Self::Delete(path) => path,
+        }
+    }
+}
+
+/// A resource body (or its removal) under one of today's resource keys.
+#[derive(Clone, Debug)]
+pub struct PlainResource {
+    pub key: String,
+    pub body: Option<Vec<u8>>,
+}
+
+pub struct PlainPublication<'a> {
+    /// Sorted by path, unique.
+    pub changes: Vec<PlainChange>,
+    pub resources: Vec<PlainResource>,
+    /// Applied configuration published with this batch, if it changed.
+    pub configuration: Option<&'a CollectionConfiguration>,
+    /// Recount every file after this batch (a configuration change that
+    /// replaced every file over several batches).
+    pub recount: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct PlainCommit {
+    pub token: CurrentToken,
+    pub files_changed: usize,
+    pub chunks_added: u64,
+    pub changed_artifacts: usize,
+}
+
+/// A read snapshot of the plain index for the write side.
+pub struct PlainRead {
+    reader: IndexReader,
+    scope: CurrentScope,
+}
+
+impl PlainRead {
+    pub fn open(directory: &Path) -> Result<Self> {
+        let reader = IndexReader::open(directory)?;
+        let scope: CurrentScope = serde_json::from_slice(
+            &reader
+                .meta(SCOPE_KEY)?
+                .context("plain index has no scope; rebuild the index")?,
+        )?;
+        scope.validate()?;
+        Ok(Self { reader, scope })
+    }
+    pub fn reader(&self) -> &IndexReader {
+        &self.reader
+    }
+    pub fn scope(&self) -> &CurrentScope {
+        &self.scope
+    }
+    pub fn sequence(&self) -> u64 {
+        self.reader.sequence()
+    }
+    pub fn token(&self) -> CurrentToken {
+        plain_token(&self.scope, self.sequence())
+    }
+    pub fn collection_state(&self) -> Result<Option<CollectionState>> {
+        self.reader
+            .meta(COLLECTION_STATE_KEY)?
+            .as_deref()
+            .map(CollectionState::decode)
+            .transpose()
+    }
+    pub fn resource(&self, key: &str) -> Result<Option<Vec<u8>>> {
+        self.reader.resource(key)
+    }
+    /// The compact captured input stored for one path.
+    pub fn input(&self, path: &str) -> Result<Option<CapturedInput>> {
+        self.reader
+            .file(path)?
+            .map(|row| decode_record(&row.record))
+            .transpose()
+    }
+    pub fn inventory(&self, path: &str) -> Result<Option<InventoryFile>> {
+        self.reader
+            .file(path)?
+            .map(|row| Ok(serde_json::from_slice(&row.metadata)?))
+            .transpose()
+    }
+    /// Every stored compact artifact, by path.
+    pub fn artifacts(&self) -> Result<BTreeMap<String, Artifact>> {
+        let mut artifacts = BTreeMap::new();
+        self.visit_paths(&mut |path| {
+            let input = self.input(path)?.context("listed index file missing")?;
+            artifacts.insert(path.to_owned(), input.artifact);
+            Ok(())
+        })?;
+        Ok(artifacts)
+    }
+    pub fn visit_paths(&self, visit: &mut dyn FnMut(&str) -> Result<()>) -> Result<()> {
+        let mut after: Option<String> = None;
+        loop {
+            let page = self
+                .reader
+                .lookup(&PathLookup::Files, "", after.as_deref(), 4096)?;
+            for path in &page.paths {
+                visit(path)?;
+            }
+            after = page.next_after;
+            if after.is_none() {
+                return Ok(());
+            }
+        }
+    }
+    /// The batch form of a stored file's extraction.
+    pub fn captured(&self, compact: &Artifact) -> Result<CapturedPayload> {
+        let digest: Sha256Digest = compact
+            .retained
+            .as_ref()
+            .context("stored record has no extraction reference")?
+            .object
+            .parse()?;
+        CapturedPayload::from_stored(compact, self.reader.payload(&digest)?)
+    }
+}
+
+fn decode_record(bytes: &[u8]) -> Result<CapturedInput> {
+    let input: CapturedInput = serde_json::from_slice(bytes)?;
+    ensure!(
+        input.bytes()? == bytes,
+        "noncanonical plain index file record"
+    );
+    Ok(input)
+}
+
+impl FileStore {
+    pub fn plain_index_present(&self) -> Result<bool> {
+        Ok(self.directory().join(index::DATABASE_FILE).try_exists()?)
+    }
+
+    /// A collection directory holding the old current store and no plain index.
+    pub fn plain_old_format(&self) -> Result<bool> {
+        Ok(
+            self.directory().join("current.sqlite3").try_exists()?
+                && !self.plain_index_present()?,
+        )
+    }
+
+    pub fn plain_read(&self) -> Result<PlainRead> {
+        PlainRead::open(self.directory())
+    }
+
+    /// Create the owner header (if absent) and an empty plain index for this
+    /// scope and configuration. Refuses an existing index.
+    pub fn plain_create(
+        &self,
+        writer: &WriterLock,
+        scope: &CurrentScope,
+        configuration: &CollectionConfiguration,
+    ) -> Result<()> {
+        super::gate::check_writer(self, writer)?;
+        writer.invalidate_census_before_mutation()?;
+        scope.validate()?;
+        configuration.validate()?;
+        ensure!(!self.plain_index_present()?, "plain index already exists");
+        super::database::create_owner(
+            self.directory(),
+            scope,
+            super::database::MAX_DATABASE_BYTES,
+        )?;
+        let state = CollectionState {
+            version: 1,
+            configuration: configuration.clone(),
+            counts: Default::default(),
+        };
+        let mut index = IndexWriter::create(self.directory())?;
+        index.apply(Batch {
+            meta: vec![
+                (SCOPE_KEY.into(), serde_json::to_vec(scope)?),
+                (COLLECTION_STATE_KEY.into(), state.canonical_bytes()?),
+                (
+                    LEXICAL_COMMIT_KEY.into(),
+                    lexical_commit(scope, 0).as_bytes().to_vec(),
+                ),
+            ],
+            ..Default::default()
+        })?;
+        Ok(())
+    }
+
+    pub fn plain_writer(&self, writer: &WriterLock) -> Result<PlainWriter> {
+        super::gate::check_writer(self, writer)?;
+        let read = self.plain_read()?;
+        Ok(PlainWriter {
+            index: IndexWriter::open(self.directory())?,
+            scope: read.scope.clone(),
+            directory: self.directory().to_path_buf(),
+        })
+    }
+}
+
+/// The single writer of one collection's plain index. The caller holds the
+/// collection writer lock for its lifetime.
+pub struct PlainWriter {
+    index: IndexWriter,
+    scope: CurrentScope,
+    directory: std::path::PathBuf,
+}
+
+impl PlainWriter {
+    pub fn scope(&self) -> &CurrentScope {
+        &self.scope
+    }
+
+    /// Select the embedding pipeline, or turn vectors off with `None`.
+    pub fn configure_vectors(&mut self, setup: Option<&VectorSetup>) -> Result<bool> {
+        self.index.configure_vectors(setup)
+    }
+
+    /// Free space on the volume and the index size cap (D8), before a batch.
+    fn check_space(&self, growth: u64) -> Result<()> {
+        let mut stored = 0u64;
+        for name in [
+            index::DATABASE_FILE,
+            &format!("{}-wal", index::DATABASE_FILE),
+        ] {
+            if let Ok(metadata) = std::fs::metadata(self.directory.join(name)) {
+                stored = stored.saturating_add(metadata.len());
+            }
+        }
+        if stored.saturating_add(growth) > MAX_INDEX_BYTES {
+            return Err(anyhow::Error::new(IndexSizeCap {
+                index_bytes: stored,
+                cap_bytes: MAX_INDEX_BYTES,
+            }));
+        }
+        // A batch may briefly need its growth twice (database and WAL).
+        crate::capacity::probe(&self.directory)?.require_growth(growth.saturating_mul(2))
+    }
+
+    /// Publish one batch in one transaction.
+    pub fn publish(&mut self, publication: PlainPublication<'_>) -> Result<PlainCommit> {
+        let _stage = airk_core::stage_timing::scope("publish.plain");
+        ensure!(
+            publication
+                .changes
+                .windows(2)
+                .all(|pair| pair[0].path() < pair[1].path()),
+            "plain publication paths are unsorted or repeated"
+        );
+        let read = PlainRead::open(&self.directory)?;
+        ensure!(read.scope == self.scope, "plain index scope changed");
+        let mut plan =
+            CollectionPlan::from_state(read.collection_state()?, publication.configuration)?;
+        let mut files = Vec::with_capacity(publication.changes.len());
+        let mut resources = Vec::new();
+        let mut growth = 0u64;
+        let mut changed_artifacts = 0usize;
+        for change in publication.changes {
+            let path = change.path().to_owned();
+            let previous = read.input(&path)?;
+            match change {
+                PlainChange::Delete(path) => {
+                    plan.update(previous.as_ref().map(|input| &input.artifact), None)?;
+                    if previous.is_some() {
+                        changed_artifacts += 1;
+                    }
+                    resources.push(ResourceChange {
+                        key: source_measurement_key(&path),
+                        body: None,
+                    });
+                    files.push(FileChange::Delete(path));
+                }
+                PlainChange::Upsert(upsert) => {
+                    plan.update(
+                        previous.as_ref().map(|input| &input.artifact),
+                        Some(&upsert.input.artifact),
+                    )?;
+                    changed_artifacts += 1;
+                    let measurement = serde_json::to_vec(
+                        &airk_core::usage::SourceContextSize::measure(&upsert.captured.artifact)?,
+                    )?;
+                    resources.push(ResourceChange {
+                        key: source_measurement_key(&path),
+                        body: Some(measurement),
+                    });
+                    let entry = file_entry(*upsert)?;
+                    growth = growth
+                        .saturating_add(entry.payload.stored_bytes() as u64)
+                        .saturating_add(entry.record.len() as u64)
+                        .saturating_add(entry.metadata.len() as u64)
+                        .saturating_add(
+                            entry
+                                .chunks
+                                .iter()
+                                .map(|c| (c.citation.len() + c.terms.len()) as u64)
+                                .sum::<u64>(),
+                        );
+                    files.push(FileChange::Upsert(Box::new(entry)));
+                }
+            }
+        }
+        for resource in publication.resources {
+            ensure!(
+                !resource.key.starts_with(SOURCE_MEASUREMENT_PREFIX)
+                    && resource.key != "embedding-cache",
+                "plain publication resource key is reserved"
+            );
+            growth = growth.saturating_add(resource.body.as_ref().map_or(0, Vec::len) as u64);
+            resources.push(ResourceChange {
+                key: resource.key,
+                body: resource.body,
+            });
+        }
+        let mut state = plan.into_state();
+        if publication.recount
+            && let Some(state) = state.as_mut()
+        {
+            // Every stored file after this batch: unchanged rows from the
+            // snapshot, changed rows from the batch.
+            let mut artifacts = read.artifacts()?;
+            for change in &files {
+                match change {
+                    FileChange::Delete(path) => {
+                        artifacts.remove(path);
+                    }
+                    FileChange::Upsert(entry) => {
+                        artifacts
+                            .insert(entry.path.clone(), decode_record(&entry.record)?.artifact);
+                    }
+                }
+            }
+            state.recount(artifacts.values())?;
+        }
+        let next = read
+            .sequence()
+            .checked_add(1)
+            .context("index sequence overflow")?;
+        drop(read);
+        let mut meta = Vec::new();
+        if let Some(state) = &state {
+            meta.push((COLLECTION_STATE_KEY.to_owned(), state.canonical_bytes()?));
+        }
+        let lexical = !files.is_empty();
+        if lexical {
+            meta.push((
+                LEXICAL_COMMIT_KEY.to_owned(),
+                lexical_commit(&self.scope, next).as_bytes().to_vec(),
+            ));
+        }
+        self.check_space(growth)?;
+        let files_changed = files.len();
+        let commit = self.index.apply(Batch {
+            files,
+            stats: vec![],
+            resources,
+            change: None,
+            meta,
+        })?;
+        ensure!(
+            commit.sequence <= next,
+            "plain index sequence moved under the writer"
+        );
+        Ok(PlainCommit {
+            token: plain_token(&self.scope, commit.sequence),
+            files_changed,
+            chunks_added: commit.chunks_added,
+            changed_artifacts,
+        })
+    }
+}
+
+/// The engine entry of one changed file, per the mapping contract.
+fn file_entry(upsert: PlainUpsert) -> Result<FileEntry> {
+    let PlainUpsert {
+        input,
+        file,
+        captured,
+        vector_pending,
+    } = upsert;
+    let compact = &input.artifact;
+    let path = &compact.path;
+    let full = &captured.artifact;
+    ensure!(
+        full.path == *path
+            && full.content_hash == compact.content_hash
+            && compact.retained.as_ref().map(|r| r.object.as_str())
+                == Some(captured.encoded.digest.to_string().as_str()),
+        "captured extraction differs from its file record"
+    );
+    let mut chunks = Vec::with_capacity(full.chunks.len());
+    for (ordinal, chunk) in full.chunks.iter().enumerate() {
+        let citation = Citation {
+            path: path.clone(),
+            content_hash: compact.content_hash.clone(),
+            start_line: chunk.start_line,
+            end_line: chunk.end_line,
+            location: chunk.location.clone(),
+        };
+        let terms = airk_core::lexical::terms(&format!("{path} {}", chunk.text))
+            .iter()
+            .map(|term| lexical::token(term))
+            .collect::<Vec<_>>()
+            .join(" ");
+        chunks.push(ChunkEntry {
+            stable_id: lexical::stable_id(path, ordinal as u64)?,
+            citation: serde_json::to_string(&citation)?.into_bytes(),
+            terms,
+        });
+    }
+    let mut handles = vec![Handle {
+        kind: HandleKind::Artifact,
+        value: file.state.artifact_id.as_bytes().to_vec(),
+    }];
+    let mut units = std::collections::BTreeSet::new();
+    for record in &file.continuity {
+        let value = serde_json::to_vec(&record.key)?;
+        if units.insert(value.clone()) {
+            handles.push(Handle {
+                kind: HandleKind::Unit,
+                value,
+            });
+        }
+    }
+    Ok(FileEntry {
+        path: path.clone(),
+        source_hash: compact.content_hash.parse()?,
+        language: compact.language.clone(),
+        record: input.bytes()?,
+        metadata: serde_json::to_vec(&file)?,
+        stat: None,
+        selectors: postings::plain_selectors(full, input.postings_version)?,
+        payload: captured.encoded,
+        chunks,
+        handles,
+        vector_pending,
+    })
+}

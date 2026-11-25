@@ -6,7 +6,10 @@ use airk_core::{
 };
 use airk_store::{
     FileStore,
-    current::{CurrentRead, collection::CollectionState, resources::ResourceChange},
+    current::{
+        CurrentRead, collection::CollectionState, plain_writer::PlainRead,
+        resources::ResourceChange,
+    },
     quota::Reservation,
 };
 use anyhow::{Result, ensure};
@@ -183,17 +186,32 @@ fn ready(total: u64) -> DiscoveryReadiness {
 }
 
 pub(super) fn read_work(read: &CurrentRead, store: &FileStore) -> Result<Option<ScanWork>> {
-    read.resource(store, KEY)?
-        .map(|bytes| {
-            let work: ScanWork = serde_json::from_slice(&bytes)?;
-            work.validate()?;
-            ensure!(
-                serde_json::to_vec(&work)? == bytes,
-                "noncanonical scan work"
-            );
-            Ok(work)
-        })
-        .transpose()
+    read.resource(store, KEY)?.map(decode_work).transpose()
+}
+
+fn decode_work(bytes: Vec<u8>) -> Result<ScanWork> {
+    let work: ScanWork = serde_json::from_slice(&bytes)?;
+    work.validate()?;
+    ensure!(
+        serde_json::to_vec(&work)? == bytes,
+        "noncanonical scan work"
+    );
+    Ok(work)
+}
+
+/// The scan work stored in the plain index, for the write side.
+pub(super) fn read_plain_work(read: &PlainRead) -> Result<Option<ScanWork>> {
+    read.resource(KEY)?.map(decode_work).transpose()
+}
+
+pub(super) fn plain_readiness(read: &PlainRead) -> Result<DiscoveryReadiness> {
+    if let Some(work) = read_plain_work(read)? {
+        return Ok(work.readiness());
+    }
+    let total = read
+        .collection_state()?
+        .map_or(0, |state| state.counts.files);
+    Ok(ready(total))
 }
 
 pub(crate) fn trim_work_resource(

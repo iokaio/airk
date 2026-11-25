@@ -1,58 +1,31 @@
 // SPDX-License-Identifier: Apache-2.0
-//! One changed-path publication across retained evidence, SQLite FTS5 and DiskANN.
-use airk_core::{
-    embedding::{EmbeddingDescriptor, embedding_key},
-    graph_storage::{GraphRecordOverlay, GraphRecordReader, PreparedGraphDelta},
-    identity::Sha256Digest,
-    model_objects::ModelObjectSet,
-    vector_selection::VectorSelectionPolicy,
-};
-use airk_retrieval::{
-    embedding_batch::MAX_BATCH_CHUNKS,
-    model::{EmbeddingCacheContext, EmbeddingModel},
-    vector::mutable::MutableDiskIndex,
-    vector_units::{PreparedVectorUnit, visit_vector_units},
-};
+//! One changed-path publication into the plain index: one SQLite transaction.
+//!
+//! Every publication of the current index goes through `CurrentUpdater` and
+//! becomes one `PlainWriter::publish`. Extraction payloads travel with the
+//! batch (`PlainPayloads`); a caller without them (producer imports, policy
+//! trims, semantic rebinds) reuses the payload already stored for the file.
+//! Vectors are not computed here: a configured model marks selected files
+//! pending and selects the vector pipeline; embedding is a later step.
+use airk_core::{model_objects::ModelObjectSet, vector_selection::VectorSelectionPolicy};
+use airk_retrieval::model::{EmbeddingCacheContext, EmbeddingModel};
 use airk_store::{
     FileStore, WriterLock,
     current::{
-        ArtifactChange, ArtifactVectorChanges, CapturedInput, CurrentCommit, CurrentRead,
-        CurrentScope, MAX_PENDING_INPUTS, MAX_PENDING_VECTOR_INPUTS,
-        graph::{GraphOverlay, GraphOverlayLimits, GraphStatistics},
-        map::MapDomain,
-        vector_map::{OccurrencePointer, PathOccurrences, PreparedOccurrence},
+        ArtifactChange, CurrentCommit, CurrentScope, MAX_PENDING_INPUTS,
+        graph::GraphStatistics,
+        plain_writer::{
+            CapturedPayload, PlainChange, PlainPublication, PlainRead, PlainResource, PlainUpsert,
+        },
     },
+    index::VectorSetup,
     quota::{Quota, Reservation},
 };
 use anyhow::{Context, Result, ensure};
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    sync::Arc,
-};
+use std::collections::BTreeMap;
 
-const MAX_CAPTURED_BYTES: usize = 8 * 1024 * 1024 * 1024;
-
-pub(super) fn reclaim_current_objects(
-    store: &FileStore,
-    quota: &Quota,
-    scope: &CurrentScope,
-    writer: &WriterLock,
-) -> Result<()> {
-    if writer.has_object_captures() {
-        return Ok(());
-    }
-    let read = store.current_build_read(scope, writer)?;
-    if read.collection_state()?.is_none() {
-        return Ok(());
-    }
-    let plan = read.reclamation_plan(store)?;
-    drop(read);
-    let capacity = store.current_database_capacity(scope)?;
-    store
-        .current_write(writer, quota, scope, capacity)?
-        .reclaim_objects(&plan)?;
-    Ok(())
-}
+/// Extractions captured by the scan, by path, waiting for their batch.
+pub(crate) type PlainPayloads = BTreeMap<String, CapturedPayload>;
 
 pub struct SemanticUpdate<'a> {
     pub model: &'a EmbeddingModel,
@@ -82,15 +55,14 @@ pub enum CurrentUpdateStage {
 }
 
 /// The caller owns the ordinary collection writer lock across planning and
-/// publication. Read gates are acquired only during preparation and are all
-/// released before the exclusive publication gate. No live source is opened.
+/// publication. No live source is opened.
 pub struct CurrentUpdater<'a> {
     pub store: &'a FileStore,
     pub quota: &'a Quota,
     pub scope: &'a CurrentScope,
     pub writer: &'a WriterLock,
     pub reservation: &'a Reservation,
-    /// Applied configuration travels in the same authenticated transaction.
+    /// Applied configuration travels in the same transaction.
     pub configuration: Option<&'a airk_store::current::collection::CollectionConfiguration>,
 }
 
@@ -101,360 +73,15 @@ fn path(change: &ArtifactChange) -> &str {
     }
 }
 
-struct VectorMembership {
-    id: u32,
-    remaining: usize,
-}
-
-struct VectorPlan<'a> {
-    read: &'a CurrentRead,
-    replacing: bool,
-    recomputed_from: Option<u64>,
-    registry: BTreeMap<Sha256Digest, Option<u32>>,
-    memberships: BTreeMap<Sha256Digest, VectorMembership>,
-    occurrences: Vec<PreparedOccurrence>,
-    ordinals: BTreeMap<String, u32>,
-}
-
-struct PendingVectorUnit {
-    path: String,
-    source_hash: Sha256Digest,
-    payload_digest: Sha256Digest,
-    unit: PreparedVectorUnit,
-}
-
-/// One bounded batch after registry selection: `missing` lists the first unit
-/// index of each key that needs inference, in captured-unit order.
-struct SelectedBatch {
-    units: Vec<PendingVectorUnit>,
-    keys: Vec<Sha256Digest>,
-    missing: Vec<(Sha256Digest, usize)>,
-    vectors: Vec<Option<Vec<f32>>>,
-}
-
-impl SelectedBatch {
-    fn pending_keys(&self) -> BTreeSet<Sha256Digest> {
-        self.missing.iter().map(|(key, _)| *key).collect()
-    }
-}
-
-/// Registry and membership entries that the next batch's selection added
-/// before this batch's insertion. Insertion subtracts them, so its registry and
-/// membership limits keep their sequential counts; see `VectorPlan::existing`
-/// for the one selection-time bound that is instead conservative.
-#[derive(Clone, Copy, Default)]
-struct LookAhead {
-    registry: usize,
-    memberships: usize,
-}
-
-enum Planned {
-    Unit(PendingVectorUnit),
-    Stats(bool, airk_retrieval::vector_units::VectorUnitStats),
-}
-
-impl VectorPlan<'_> {
-    /// `pending` counts the keys the previous batch will still insert. Each may
-    /// add one membership, so the work limit stays sound before they land; it
-    /// can trip up to that many entries (at most one batch) earlier than a
-    /// fully sequential count would.
-    fn existing(&mut self, key: Sha256Digest, pending: usize) -> Result<Option<u32>> {
-        if let Some(binding) = self.memberships.get(&key) {
-            return Ok(Some(binding.id));
-        }
-        if self.replacing {
-            return Ok(None);
-        }
-        let Some(binding) = self.read.vector_binding(key)? else {
-            return Ok(None);
-        };
-        ensure!(
-            self.memberships.len() + pending < MAX_PENDING_VECTOR_INPUTS,
-            "current vector membership work limit exceeded"
-        );
-        let id = binding.graph_id;
-        self.memberships.insert(
-            key,
-            VectorMembership {
-                id,
-                remaining: binding.occurrence_ids.len(),
-            },
-        );
-        Ok(Some(id))
-    }
-
-    fn retire(&mut self, changes: &[ArtifactChange]) -> Result<()> {
-        self.retire_paths(changes.iter().map(path))
-    }
-
-    fn retire_paths<'a>(&mut self, paths: impl Iterator<Item = &'a str>) -> Result<()> {
-        let mut work = 0usize;
-        for path in paths {
-            let Some(index) = self.read.path_occurrences(path)? else {
-                continue;
-            };
-            for ordinal in 0..index.count {
-                work += 1;
-                ensure!(
-                    work <= MAX_PENDING_VECTOR_INPUTS,
-                    "current vector retirement work limit exceeded"
-                );
-                let id = index.occurrence_id(&self.read.head().scope, ordinal)?;
-                let bytes = self
-                    .read
-                    .map_get(MapDomain::Occurrence, id.as_bytes())?
-                    .context("current occurrence missing")?;
-                let pointer = OccurrencePointer::decode(&bytes, id)?;
-                ensure!(
-                    pointer.path == path
-                        && pointer.path_ordinal == ordinal
-                        && pointer.source_hash == index.source_hash,
-                    "current occurrence differs from changed path"
-                );
-                self.existing(pointer.embedding_key, 0)?
-                    .context("current vector binding missing")?;
-                let binding = self
-                    .read
-                    .vector_binding(pointer.embedding_key)?
-                    .context("current vector binding missing")?;
-                ensure!(
-                    binding.occurrence_ids.binary_search(&id).is_ok(),
-                    "current vector omits path occurrence"
-                );
-                let member = self
-                    .memberships
-                    .get_mut(&pointer.embedding_key)
-                    .expect("loaded above");
-                member.remaining = member
-                    .remaining
-                    .checked_sub(1)
-                    .context("current vector retirement underflow")?;
-            }
-        }
-        Ok(())
-    }
-
-    /// Decide which units of one bounded batch need inference. `pending` holds
-    /// the keys that the previous batch will insert: they count as registered,
-    /// exactly as they would after that batch's insertion.
-    fn select(
-        &mut self,
-        units: Vec<PendingVectorUnit>,
-        descriptor: &EmbeddingDescriptor,
-        bypass: bool,
-        pending: &BTreeSet<Sha256Digest>,
-    ) -> Result<SelectedBatch> {
-        crate::service_execution::checkpoint()?;
-        let mut keys = Vec::new();
-        let mut missing = BTreeMap::new();
-        for (index, unit) in units.iter().enumerate() {
-            let key = embedding_key(descriptor, unit.unit.input.as_bytes())?;
-            keys.push(key);
-            if self.registry.contains_key(&key) || pending.contains(&key) {
-                continue;
-            }
-            ensure!(
-                self.registry.len() + pending.len() < MAX_PENDING_VECTOR_INPUTS,
-                "current vector registry work limit exceeded"
-            );
-            if let Some(id) = self.existing(key, pending.len())?
-                && (!bypass
-                    || self
-                        .recomputed_from
-                        .is_some_and(|first_id| u64::from(id) >= first_id))
-            {
-                self.registry.insert(key, Some(id));
-            } else {
-                missing.entry(key).or_insert(index);
-            }
-        }
-        // Keep graph insertion in captured-unit order across file boundaries.
-        // Hash ordering is useful for deduplication, but changing insertion order
-        // changes approximate-search tie behavior for repeated passages.
-        let mut missing: Vec<_> = missing.into_iter().collect();
-        missing.sort_by_key(|(_, index)| *index);
-        Ok(SelectedBatch {
-            units,
-            keys,
-            missing,
-            vectors: Vec::new(),
-        })
-    }
-
-    /// Insert one embedded batch into the graph in captured-unit order, then
-    /// bind its occurrences. Runs strictly after the previous batch's insertion.
-    fn insert(
-        &mut self,
-        batch: SelectedBatch,
-        graph: &mut MutableDiskIndex,
-        stats: &mut airk_retrieval::model::EmbeddingCacheStats,
-        ahead: LookAhead,
-    ) -> Result<()> {
-        let _stage = airk_core::stage_timing::scope("publish.units.graph_insert");
-        let SelectedBatch {
-            units,
-            keys,
-            missing,
-            vectors,
-        } = batch;
-        ensure!(
-            vectors.len() == missing.len(),
-            "current embedding result count differs"
-        );
-        for ((key, _), vector) in missing.into_iter().zip(vectors) {
-            crate::service_execution::checkpoint()?;
-            ensure!(
-                self.registry.len() - ahead.registry < MAX_PENDING_VECTOR_INPUTS,
-                "current vector registry work limit exceeded"
-            );
-            let retained_members = if let Some(prior) = self.memberships.get(&key) {
-                graph.set_live(prior.id, key, false)?;
-                prior.remaining
-            } else {
-                0
-            };
-            let id = if let Some(vector) = vector {
-                ensure!(
-                    self.memberships.len() - ahead.memberships < MAX_PENDING_VECTOR_INPUTS,
-                    "current vector membership work limit exceeded"
-                );
-                let started = std::time::Instant::now();
-                let id = graph.insert(key, &vector)?;
-                stats.graph_insert_us +=
-                    u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
-                self.memberships.insert(
-                    key,
-                    VectorMembership {
-                        id,
-                        remaining: retained_members,
-                    },
-                );
-                stats.vector_graph_nodes += 1;
-                Some(id)
-            } else {
-                ensure!(
-                    retained_members == 0,
-                    "recomputed vector omitted retained occurrences"
-                );
-                None
-            };
-            self.registry.insert(key, id);
-            crate::service_execution::progress_semantic_prepared();
-        }
-        for (pending, key) in units.into_iter().zip(keys) {
-            let Some(id) = self.registry[&key] else {
-                continue;
-            };
-            ensure!(
-                self.occurrences.len() < MAX_PENDING_VECTOR_INPUTS,
-                "current vector occurrence work limit exceeded"
-            );
-            let member = self
-                .memberships
-                .get_mut(&key)
-                .context("current vector membership missing")?;
-            member.remaining = member
-                .remaining
-                .checked_add(1)
-                .context("current vector membership overflow")?;
-            ensure!(
-                member.remaining <= airk_store::current::vector_map::MAX_VECTOR_OCCURRENCES,
-                "current vector occurrence fan-out exceeded"
-            );
-            let index = PathOccurrences {
-                version: 1,
-                path: pending.path.clone(),
-                source_hash: pending.source_hash,
-                count: 0,
-            };
-            let ordinal = self.ordinals.entry(pending.path).or_default();
-            let index = PathOccurrences {
-                count: ordinal
-                    .checked_add(1)
-                    .context("current occurrence ordinal overflow")?,
-                ..index
-            };
-            self.occurrences.push(PreparedOccurrence {
-                graph_id: id,
-                pointer: OccurrencePointer {
-                    version: 1,
-                    embedding_key: key,
-                    occurrence_id: index.occurrence_id(&self.read.head().scope, *ordinal)?,
-                    path: index.path,
-                    path_ordinal: *ordinal,
-                    source_hash: index.source_hash,
-                    payload_digest: pending.payload_digest,
-                    object: pending.payload_digest,
-                    members: pending.unit.members,
-                },
-            });
-            *ordinal += 1;
-        }
-        crate::service_execution::progress_semantic_prepared();
-        Ok(())
-    }
-}
-
-/// Select `units`, then embed them while the previous batch's vectors enter the
-/// graph. Inference does not read the graph, so this keeps every decision of
-/// the sequential order (select, embed, insert per batch): the same registry
-/// choices, vectors, insertion order and occurrences, on two threads instead of one.
-fn pipeline_batch(
-    plan: &mut VectorPlan<'_>,
-    units: Vec<PendingVectorUnit>,
-    previous: Option<SelectedBatch>,
-    descriptor: &EmbeddingDescriptor,
-    semantic: &mut SemanticUpdate<'_>,
-    graph: &mut MutableDiskIndex,
-) -> Result<SelectedBatch> {
-    let pending = previous
-        .as_ref()
-        .map(SelectedBatch::pending_keys)
-        .unwrap_or_default();
-    let before = (plan.registry.len(), plan.memberships.len());
-    let mut next = plan.select(units, descriptor, semantic.cache.bypass, &pending)?;
-    let ahead = LookAhead {
-        registry: plan.registry.len() - before.0,
-        memberships: plan.memberships.len() - before.1,
-    };
-    semantic.cache.stats.vector_reused_inputs += (next.units.len() - next.missing.len()) as u64;
-    let texts = next
-        .missing
-        .iter()
-        .map(|(_, index)| next.units[*index].unit.input.as_str())
-        .collect::<Vec<_>>();
-    let mut inserted_stats = airk_retrieval::model::EmbeddingCacheStats::default();
-    let inserted_stats_ref = &mut inserted_stats;
-    // Native inference stays on this (compute-owner) thread. The graph helper
-    // is part of this worker's job: keep its owner bindings.
-    let inherited = crate::service_execution::Inherited::capture();
-    let (inserted, vectors) = std::thread::scope(|scope| {
-        let inserter = previous.map(|previous| {
-            scope.spawn(move || {
-                let _bound = inherited.bind();
-                plan.insert(previous, graph, inserted_stats_ref, ahead)
-            })
-        });
-        let vectors = if texts.is_empty() {
-            Ok(Vec::new())
-        } else {
-            let _stage = airk_core::stage_timing::scope("publish.units.embed");
-            semantic.model.embed_batch(&texts, &mut semantic.cache)
-        };
-        let inserted = match inserter {
-            Some(inserter) => inserter
-                .join()
-                .map_err(|_| anyhow::anyhow!("vector graph worker panicked"))
-                .and_then(|result| result),
-            None => Ok(()),
-        };
-        (inserted, vectors)
-    });
-    semantic.cache.stats.graph_insert_us += inserted_stats.graph_insert_us;
-    semantic.cache.stats.vector_graph_nodes += inserted_stats.vector_graph_nodes;
-    inserted?;
-    next.vectors = vectors?;
-    Ok(next)
+/// Options of one plain publication beyond its changes and resources.
+#[derive(Default)]
+pub(crate) struct PlainOptions<'a> {
+    pub payloads: PlainPayloads,
+    pub moves: Option<&'a BTreeMap<String, String>>,
+    /// Recount every file after this batch (a configuration change).
+    pub recount: bool,
+    /// The vector dimensions of the configured model, when known.
+    pub dimensions: Option<usize>,
 }
 
 impl CurrentUpdater<'_> {
@@ -477,7 +104,11 @@ impl CurrentUpdater<'_> {
         semantic: Option<SemanticUpdate<'_>>,
         observer: &mut dyn FnMut(CurrentUpdateStage),
     ) -> Result<CurrentUpdateResult> {
-        self.apply_resources_observed(changes, semantic, &[], None, None, None, observer)
+        let options = PlainOptions {
+            dimensions: semantic.as_ref().map(|s| s.model.dimensions()),
+            ..Default::default()
+        };
+        self.apply_plain(changes, &[], options, observer)
     }
 
     pub fn apply_with_resources(
@@ -486,731 +117,279 @@ impl CurrentUpdater<'_> {
         semantic: Option<SemanticUpdate<'_>>,
         resources: &[airk_store::current::resources::ResourceChange],
     ) -> Result<CurrentUpdateResult> {
-        self.apply_resources_observed(changes, semantic, resources, None, None, None, &mut |_| {})
+        let options = PlainOptions {
+            dimensions: semantic.as_ref().map(|s| s.model.dimensions()),
+            ..Default::default()
+        };
+        self.apply_plain(changes, resources, options, &mut |_| {})
     }
 
+    /// One scan batch, with the extractions the scan captured for it.
     pub(crate) fn apply_scanned(
         &self,
         changes: &[ArtifactChange],
-        semantic: Option<SemanticUpdate<'_>>,
         resources: &[airk_store::current::resources::ResourceChange],
-        moves: &BTreeMap<String, String>,
+        options: PlainOptions<'_>,
     ) -> Result<CurrentUpdateResult> {
-        self.apply_resources_observed(
-            changes,
-            semantic,
-            resources,
-            Some(moves),
-            None,
-            None,
-            &mut |_| {},
-        )
+        self.apply_plain(changes, resources, options, &mut |_| {})
     }
 
-    /// Attach vectors to already committed exact artifacts. The captured inputs
-    /// are validated against the current map and journaled without rewriting
-    /// their source, fact, posting or lexical rows.
-    pub(super) fn apply_enrichment(
-        &self,
-        inputs: &[CapturedInput],
-        semantic: SemanticUpdate<'_>,
-        work: &mut super::enrichment::SemanticWork,
-    ) -> Result<CurrentUpdateResult> {
-        ensure!(
-            semantic.cache.bypass == work.force_recompute
-                && semantic.objects.pipeline_digest == work.pipeline_digest
-                && semantic.selection.digest()? == work.selection_digest,
-            "semantic turn differs from its authenticated work policy"
-        );
-        self.apply_resources_observed(
-            &[],
-            Some(semantic),
-            &[],
-            None,
-            Some(inputs),
-            Some(work),
-            &mut |_| {},
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn apply_resources_observed(
+    fn apply_plain(
         &self,
         changes: &[ArtifactChange],
-        semantic: Option<SemanticUpdate<'_>>,
         resources: &[airk_store::current::resources::ResourceChange],
-        moves: Option<&BTreeMap<String, String>>,
-        semantic_inputs: Option<&[CapturedInput]>,
-        mut semantic_work: Option<&mut super::enrichment::SemanticWork>,
+        mut options: PlainOptions<'_>,
         observer: &mut dyn FnMut(CurrentUpdateStage),
     ) -> Result<CurrentUpdateResult> {
         let _publish = airk_core::stage_timing::scope("publish");
         crate::service_execution::progress_phase(airk_core::service_progress::WorkPhase::Preparing);
         ensure!(
-            (!changes.is_empty()
-                || self.configuration.is_some()
-                || !resources.is_empty()
-                || semantic_work.is_some())
-                && changes.len() <= MAX_PENDING_INPUTS
+            changes.len() <= MAX_PENDING_INPUTS
                 && changes
                     .windows(2)
                     .all(|pair| path(&pair[0]) < path(&pair[1])),
             "invalid current changed-path batch"
         );
-        ensure!(
-            semantic_inputs.is_none_or(|inputs| {
-                changes.is_empty()
-                    && inputs.len() <= MAX_PENDING_INPUTS
-                    && inputs
-                        .windows(2)
-                        .all(|pair| pair[0].artifact.path < pair[1].artifact.path)
-            }),
-            "invalid current semantic-only input batch"
-        );
-        let capacity = self.store.current_database_capacity(self.scope)?;
-        let read = {
-            let _stage = airk_core::stage_timing::scope("publish.open_read");
+        if !self.store.plain_index_present()? {
+            let configuration = self
+                .configuration
+                .context("the index is not initialized; run airk index")?;
             self.store
-                .current_build_read(self.scope, self.writer)
-                .context("open current update read")?
-        };
-        let mut control_resources = resources.to_vec();
+                .plain_create(self.writer, self.scope, configuration)?;
+        }
+        let read = self.store.plain_read()?;
+        ensure!(
+            read.scope() == self.scope,
+            "current publication scope differs from the index"
+        );
+        let applied = read.collection_state()?;
+        let configuration = self
+            .configuration
+            .or(applied.as_ref().map(|state| &state.configuration));
+        let next = read
+            .sequence()
+            .checked_add(1)
+            .context("current sequence overflow")?;
+        let resources = self.plain_resources(&read, resources, changes, next)?;
+        let roots = configuration.map(|c| c.roots.clone()).unwrap_or_default();
+        let model = configuration.and_then(|c| c.model.as_ref());
+        let selection = configuration.map(|c| &c.vector_selection);
+        let mut plain = Vec::with_capacity(changes.len());
+        let mut metadata_bytes = 0usize;
+        for change in changes {
+            match change {
+                ArtifactChange::Delete(path) => plain.push(PlainChange::Delete(path.clone())),
+                ArtifactChange::Upsert(input) => {
+                    let artifact = &input.artifact;
+                    let captured = match options.payloads.remove(&artifact.path) {
+                        Some(captured) => captured,
+                        None => self.stored_payload(&read, artifact)?,
+                    };
+                    let moved = options.moves.and_then(|moves| moves.get(&artifact.path));
+                    let file = {
+                        let _stage = airk_core::stage_timing::scope("publish.metadata");
+                        super::metadata::prepare(
+                            &read,
+                            &roots,
+                            input,
+                            &captured,
+                            moved.map(String::as_str),
+                            next,
+                        )
+                        .context("prepare current metadata")?
+                    };
+                    metadata_bytes = metadata_bytes
+                        .checked_add(serde_json::to_vec(&file)?.len())
+                        .context("current metadata budget overflow")?;
+                    ensure!(
+                        metadata_bytes <= airk_store::current::MAX_CURRENT_METADATA_READ_BYTES,
+                        "current captured metadata admission exceeded"
+                    );
+                    let vector_pending = match (model, selection) {
+                        (Some(_), Some(selection)) => {
+                            let profile = artifact
+                                .retained
+                                .as_ref()
+                                .and_then(|retained| retained.profile.as_ref())
+                                .context("current profile missing")?;
+                            selection
+                                .decision(&artifact.path, profile, &artifact.language)?
+                                .eligible
+                        }
+                        _ => false,
+                    };
+                    plain.push(PlainChange::Upsert(Box::new(PlainUpsert {
+                        input: input.as_ref().clone(),
+                        file,
+                        captured,
+                        vector_pending,
+                    })));
+                }
+            }
+        }
+        drop(read);
+        let mut writer = self.store.plain_writer(self.writer)?;
+        // Vectors follow the applied model: a new pipeline starts an empty
+        // generation and returns every selected file to pending.
+        if self.configuration.is_some() {
+            match model {
+                Some(objects) => {
+                    if let Some(dimensions) = options.dimensions {
+                        writer.configure_vectors(Some(&VectorSetup {
+                            dimensions: u32::try_from(dimensions)?,
+                            pipeline: objects.pipeline_digest,
+                        }))?;
+                    }
+                }
+                None => {
+                    writer.configure_vectors(None)?;
+                }
+            }
+        }
+        crate::service_execution::progress_prepared(changes.len() as u64);
+        observer(CurrentUpdateStage::Prepared);
+        crate::service_execution::progress_phase(
+            airk_core::service_progress::WorkPhase::Publishing,
+        );
+        observer(CurrentUpdateStage::Applying);
+        let committed = writer
+            .publish(PlainPublication {
+                changes: plain,
+                resources,
+                configuration: self.configuration,
+                recount: std::mem::take(&mut options.recount),
+            })
+            .context("publish current batch")?;
+        crate::service_execution::progress_committed(changes.len() as u64);
+        observer(CurrentUpdateStage::Committed);
+        Ok(CurrentUpdateResult {
+            commit: CurrentCommit {
+                token: committed.token,
+                maintenance_error: None,
+            },
+            lexical: LexicalPublicationWork {
+                changed: airk_store::current::lexical::LexicalWork {
+                    changed_artifacts: committed.changed_artifacts,
+                    added_documents: committed.chunks_added,
+                },
+            },
+            graph: GraphStatistics::default(),
+            occurrences: 0,
+        })
+    }
+
+    /// The batch form of an extraction that the caller did not capture: the
+    /// payload stored for this digest, else (for producers that still retain
+    /// objects) the old retained object.
+    fn stored_payload(
+        &self,
+        read: &PlainRead,
+        artifact: &airk_core::Artifact,
+    ) -> Result<CapturedPayload> {
+        let mut compact = artifact.clone();
+        compact.chunks.clear();
+        compact.facts.clear();
+        match read.captured(&compact) {
+            Ok(captured) => Ok(captured),
+            Err(stored) => {
+                let payload = self
+                    .store
+                    .load_extraction_payload(&compact)
+                    .map_err(|_| stored)
+                    .context("extraction payload unavailable; rebuild the index")?;
+                CapturedPayload::from_stored(&compact, serde_json::to_vec(&payload)?)
+            }
+        }
+    }
+
+    /// Resource bodies for the batch. The source-control witness is bound to
+    /// the publication it describes, as before.
+    fn plain_resources(
+        &self,
+        read: &PlainRead,
+        resources: &[airk_store::current::resources::ResourceChange],
+        changes: &[ArtifactChange],
+        next: u64,
+    ) -> Result<Vec<PlainResource>> {
         let control_key = airk_core::source_control::CONTROL_BASELINE_RESOURCE;
-        if !resources.iter().any(|resource| resource.key == control_key) {
+        let mut keys = std::collections::BTreeSet::new();
+        let mut plain = Vec::with_capacity(resources.len() + 1);
+        for resource in resources {
+            ensure!(
+                airk_store::current::resources::KEYS.contains(&resource.key.as_str())
+                    && keys.insert(resource.key.as_str()),
+                "unknown or duplicate current resource"
+            );
+            if resource.key == "embedding-cache" {
+                continue;
+            }
+            let body = resource
+                .reference
+                .as_ref()
+                .map(|reference| self.store.read_current_resource(reference))
+                .transpose()?;
+            let body = if resource.key == control_key {
+                body.map(|bytes| self.bind_control(&bytes, next))
+                    .transpose()?
+            } else {
+                body
+            };
+            plain.push(PlainResource {
+                key: resource.key.clone(),
+                body,
+            });
+        }
+        if !keys.contains(control_key) {
             let pure_semantic = changes.is_empty()
                 && self.configuration.is_none()
-                && (semantic_inputs.is_some() || !resources.is_empty())
+                && !resources.is_empty()
                 && resources.iter().all(|resource| {
                     matches!(
                         resource.key.as_str(),
                         "semantic-work" | "semantic-policy" | "embedding-cache"
                     )
                 });
-            let mut carry = None;
-            if pure_semantic && let Some(reference) = read.resource_reference(control_key)? {
-                ensure!(
-                    reference.bytes <= airk_core::source_control::MAX_CONTROL_BASELINE_BYTES,
-                    "retained control witness exceeds bound"
-                );
-                let bytes = self.store.read_current_resource(&reference)?;
+            let mut carried = None;
+            if pure_semantic && let Some(bytes) = read.resource(control_key)? {
                 let baseline: airk_core::source_control::SourceControlBaseline =
                     serde_json::from_slice(&bytes)?;
                 baseline.validate()?;
-                let state = read
-                    .collection_state()?
-                    .context("semantic carry lacks applied configuration")?;
-                let same_configuration = baseline.configuration
-                    == airk_core::identity::framed_digest(
-                        b"airk/refresh-applied-configuration/1",
-                        &[&serde_json::to_vec(&state.configuration)?],
-                    );
-                // A predecessor may preserve unknown resource-map entries.
-                // Never bless such a stale witness through semantic carry.
-                if same_configuration
-                    && baseline
-                        .matches_publication(read.head().scope.incarnation, read.head().sequence)
-                {
-                    if let Some(semantic) = semantic.as_ref() {
-                        ensure!(
-                            serde_json::to_vec(&state.configuration.model)?
-                                == serde_json::to_vec(&Some(semantic.objects.clone()))?
-                                && state.configuration.vector_selection.digest()?
-                                    == semantic.selection.digest()?,
-                            "semantic carry changed model/selection configuration"
-                        );
-                    }
-                    if let Some(inputs) = semantic_inputs {
-                        for input in inputs {
-                            let current = read
-                                .artifact(&input.artifact.path)?
-                                .context("semantic carry source missing")?;
-                            ensure!(
-                                serde_json::to_vec(&current)?
-                                    == serde_json::to_vec(&input.artifact)?,
-                                "semantic carry changed source/extraction/profile binding"
-                            );
-                        }
-                    }
-                    carry = Some(reference);
-                }
-            }
-            control_resources.push(airk_store::current::resources::ResourceChange {
-                key: control_key.into(),
-                reference: carry,
-            });
-        }
-        // Resource bytes are paid by the same reservation as this publication.
-        // The locked base determines the exact successor, before encoding the
-        // witness. Neither a caller-selected token nor the self-containing map
-        // root participates in this binding.
-        if let Some(resource) = control_resources
-            .iter_mut()
-            .find(|resource| resource.key == control_key)
-            && let Some(reference) = resource.reference.as_ref()
-        {
-            ensure!(
-                reference.bytes <= airk_core::source_control::MAX_CONTROL_BASELINE_BYTES,
-                "retained control witness exceeds bound"
-            );
-            let bytes = self.store.read_current_resource(reference)?;
-            let mut baseline: airk_core::source_control::SourceControlBaseline =
-                serde_json::from_slice(&bytes)?;
-            baseline.validate()?;
-            ensure!(
-                serde_json::to_vec(&baseline)? == bytes,
-                "noncanonical retained control baseline"
-            );
-            baseline.bind_publication(
-                read.head().scope.incarnation,
-                read.head()
-                    .sequence
-                    .checked_add(1)
-                    .context("control successor sequence overflow")?,
-            )?;
-            let bytes = serde_json::to_vec(&baseline)?;
-            resource.reference = Some(self.store.retain_current_resource_owned(
-                self.writer,
-                &bytes,
-                self.reservation,
-            )?);
-        }
-        let resources = control_resources.as_slice();
-        let trusted_cache = read
-            .resource(self.store, "embedding-cache")?
-            .as_deref()
-            .map(airk_store::vector_cache::VectorCacheManifest::from_bytes)
-            .transpose()?;
-        let owned_cache = semantic
-            .as_ref()
-            .filter(|s| !s.defer && s.cache.cache.is_none())
-            .map(|s| {
-                airk_store::vector_cache::VectorCache::new(
-                    self.store.directory(),
-                    self.reservation,
-                    &s.model.cache_descriptor()?,
-                    trusted_cache.as_ref(),
-                )
-            })
-            .transpose()?;
-        let mut semantic = semantic.map(|s| SemanticUpdate {
-            model: s.model,
-            objects: s.objects,
-            selection: s.selection,
-            defer: s.defer,
-            cache: EmbeddingCacheContext {
-                cache: s.cache.cache.or(owned_cache
-                    .as_ref()
-                    .map(|c| c as &dyn airk_core::embedding::EmbeddingCache)),
-                bypass: s.cache.bypass,
-                stats: s.cache.stats,
-                max_workers: s.cache.max_workers,
-                working_memory_bytes: s.cache.working_memory_bytes,
-            },
-        });
-        let base = read.head().clone();
-        let applied = read.collection_state()?;
-        let configuration = self
-            .configuration
-            .or(applied.as_ref().map(|state| &state.configuration));
-        let metadata = {
-            let _stage = airk_core::stage_timing::scope("publish.metadata");
-            super::metadata::prepare(
-                self.store,
-                self.writer,
-                &read,
-                changes,
-                configuration,
-                self.reservation,
-                moves,
-            )
-            .context("prepare current metadata")?
-        };
-        if let (Some(configuration), Some(semantic)) = (configuration, semantic.as_ref()) {
-            ensure!(
-                configuration.vector_selection.digest()? == semantic.selection.digest()?,
-                "current vector selection differs from applied configuration"
-            );
-        }
-        let captured_model = if let Some(semantic) = &semantic {
-            Some(semantic.objects.clone())
-        } else if let Some(configuration) = self.configuration {
-            configuration.model.clone()
-        } else {
-            applied
-                .as_ref()
-                .and_then(|state| state.configuration.model.clone())
-        };
-        ensure!(
-            captured_model.is_none()
-                || semantic.is_some()
-                || changes
-                    .iter()
-                    .all(|change| matches!(change, ArtifactChange::Delete(_))),
-            "current semantic model is required for changed artifacts"
-        );
-        let replacing = semantic
-            .as_ref()
-            .map(|s| -> Result<bool> {
-                Ok((s.cache.bypass && semantic_inputs.is_none())
-                    || base.graph_head.scope.specification
-                        != airk_retrieval::vector::mutable::specification(
-                            s.model.dimensions(),
-                            s.objects.pipeline_digest,
-                        )?)
-            })
-            .transpose()?
-            .unwrap_or_else(|| {
-                self.configuration.is_some_and(|c| c.model.is_none())
-                    && applied
-                        .as_ref()
-                        .is_some_and(|s| s.configuration.model.is_some())
-            });
-        let graph_limits = GraphOverlayLimits::for_indexing(self.reservation);
-        let overlay = Arc::new(if replacing {
-            let dimensions = semantic.as_ref().map_or(1, |s| s.model.dimensions());
-            let pipeline = semantic.as_ref().map_or_else(
-                || airk_core::identity::framed_digest(b"current-lexical-only/1", &[]),
-                |s| s.objects.pipeline_digest,
-            );
-            let mut instance = [0; 16];
-            getrandom::fill(&mut instance)
-                .map_err(|e| anyhow::anyhow!("allocate graph identity: {e}"))?;
-            let mut scope = base.graph_head.scope.clone();
-            scope.graph_instance = airk_core::identity::Incarnation::from_bytes(instance);
-            scope.specification =
-                airk_retrieval::vector::mutable::specification(dimensions, pipeline)?;
-            scope.record_bytes = airk_retrieval::vector::mutable::record_bytes(dimensions)?;
-            GraphOverlay::empty(self.reservation, scope, graph_limits)
-                .context("create replacement graph overlay")?
-        } else {
-            GraphOverlay::new(self.reservation, read.clone(), graph_limits)
-                .context("open current graph overlay")?
-        });
-        let recomputed_from = if let Some(work) = semantic_work.as_deref_mut()
-            && work.force_recompute
-        {
-            let graph = overlay.scope().graph_instance;
-            let count = overlay.counts()?.allocated_count;
-            if work
-                .recompute_boundary
-                .as_ref()
-                .is_none_or(|boundary| boundary.graph != graph)
-            {
-                work.recompute_boundary = Some(super::enrichment::RecomputeBoundary {
-                    graph,
-                    first_id: count,
-                });
-            }
-            let boundary = work.recompute_boundary.as_ref().expect("set above");
-            ensure!(
-                boundary.first_id <= count,
-                "forced semantic boundary exceeds authenticated graph"
-            );
-            Some(boundary.first_id)
-        } else {
-            None
-        };
-        let mut plan = VectorPlan {
-            read: &read,
-            replacing,
-            recomputed_from,
-            registry: BTreeMap::new(),
-            memberships: BTreeMap::new(),
-            occurrences: Vec::new(),
-            ordinals: BTreeMap::new(),
-        };
-        if !replacing {
-            let _stage = airk_core::stage_timing::scope("publish.retire");
-            plan.retire(changes)?;
-            if let Some(inputs) = semantic_inputs {
-                plan.retire_paths(inputs.iter().map(|input| input.artifact.path.as_str()))?;
-            }
-        }
-        let descriptor = semantic
-            .as_ref()
-            .map(|semantic| -> Result<_> {
-                let descriptor = semantic.model.cache_descriptor()?;
-                ensure!(
-                    descriptor.identity()? == semantic.objects.pipeline_digest
-                        && crate::shared_models::descriptor(self.store, &semantic.objects)?
-                            .identity()?
-                            == descriptor.identity()?,
-                    "current model objects differ from loaded pipeline"
-                );
-                semantic.selection.validate()?;
-                Ok(descriptor)
-            })
-            .transpose()?;
-        let mut graph = semantic
-            .as_ref()
-            .map(|semantic| {
-                if replacing || base.graph_head.allocated_count == 0 {
-                    MutableDiskIndex::create(
-                        overlay.clone(),
-                        semantic.model.dimensions(),
-                        semantic.objects.pipeline_digest,
-                    )
-                } else {
-                    MutableDiskIndex::open_overlay(
-                        overlay.clone(),
-                        semantic.model.dimensions(),
-                        semantic.objects.pipeline_digest,
-                    )
-                }
-            })
-            .transpose()?;
-        let inputs = semantic_inputs
-            .map(|inputs| inputs.iter().collect::<Vec<_>>())
-            .unwrap_or_else(|| {
-                changes
-                    .iter()
-                    .filter_map(|change| match change {
-                        ArtifactChange::Upsert(input) => Some(input.as_ref()),
-                        ArtifactChange::Delete(_) => None,
+                let same_configuration = read.collection_state()?.is_some_and(|state| {
+                    serde_json::to_vec(&state.configuration).is_ok_and(|configuration| {
+                        baseline.configuration
+                            == airk_core::identity::framed_digest(
+                                b"airk/refresh-applied-configuration/1",
+                                &[&configuration],
+                            )
                     })
-                    .collect()
-            });
-        // One persistent planning producer overlaps source verification and
-        // tokenization with inference/graph work. Bounded semantic units contain
-        // at most 16 KiB input and 64 members; two batches fit in this channel.
-        // Full extraction payloads stay on the producer, one file at a time.
-        let before_units = semantic.as_ref().map_or(0, |s| s.cache.stats.vector_units);
-        let planning = semantic.as_ref().map(|s| (s.model, s.selection, s.defer));
-        let store = self.store;
-        // The producer is part of this worker's job: keep its owner bindings.
-        let inherited = crate::service_execution::Inherited::capture();
-        let units_stage = airk_core::stage_timing::scope("publish.units");
-        std::thread::scope(|scope| -> Result<()> {
-            let (sender, receiver) =
-                std::sync::mpsc::sync_channel::<Result<Planned>>(MAX_BATCH_CHUNKS * 2);
-            let producer = scope.spawn(move || {
-                let _bound = inherited.bind();
-                let result = (|| -> Result<()> {
-                    let mut captured_bytes = 0usize;
-                    for input in inputs {
-                        let reference = input
-                            .artifact
-                            .retained
-                            .as_ref()
-                            .context("current changed extraction missing")?;
-                        captured_bytes = captured_bytes
-                            .checked_add(input.artifact.bytes)
-                            .and_then(|n| n.checked_add(reference.object_bytes))
-                            .context("current changed-byte overflow")?;
-                        ensure!(
-                            captured_bytes <= MAX_CAPTURED_BYTES,
-                            "current changed batch exceeds evidence byte budget"
-                        );
-                        if reference.legacy_origin.is_some() {
-                            ensure!(
-                                planning.is_none(),
-                                "legacy saved evidence cannot enter semantic planning"
-                            );
-                            store.load_legacy_saved_artifact(&input.artifact)?;
-                            if reference.raw_source {
-                                store.verify_retained_source(&input.artifact)?;
-                            }
-                            continue;
-                        }
-                        let retained = {
-                            let _stage = airk_core::stage_timing::scope("publish.units.load");
-                            store.load_retrieval_artifact(&input.artifact)?
-                        };
-                        {
-                            let _stage =
-                                airk_core::stage_timing::scope("publish.units.verify_source");
-                            store.verify_retained_source(&input.artifact)?;
-                        }
-                        let Some((model, selection, defer)) = planning else {
-                            continue;
-                        };
-                        let eligible = selection
-                            .decision(
-                                &input.artifact.path,
-                                &retained.profile,
-                                &input.artifact.language,
-                            )?
-                            .eligible;
-                        if !eligible {
-                            if sender
-                                .send(Ok(Planned::Stats(false, Default::default())))
-                                .is_err()
-                            {
-                                return Ok(());
-                            }
-                            continue;
-                        }
-                        if defer {
-                            continue;
-                        }
-                        let source_hash = input.artifact.content_hash.parse()?;
-                        let plan_stage = airk_core::stage_timing::scope("publish.units.plan");
-                        let stats = visit_vector_units(&retained.payload, model, |unit| {
-                            sender
-                                .send(Ok(Planned::Unit(PendingVectorUnit {
-                                    path: input.artifact.path.clone(),
-                                    source_hash,
-                                    payload_digest: retained.payload_digest,
-                                    unit,
-                                })))
-                                .map_err(|_| anyhow::anyhow!("vector planning consumer stopped"))
-                        })?;
-                        drop(plan_stage);
-                        if sender.send(Ok(Planned::Stats(true, stats))).is_err() {
-                            return Ok(());
-                        }
-                    }
-                    Ok(())
-                })();
-                if let Err(error) = result {
-                    let _ = sender.send(Err(error));
+                });
+                if same_configuration
+                    && baseline.matches_publication(read.scope().incarnation, read.sequence())
+                {
+                    carried = Some(self.bind_control(&bytes, next)?);
                 }
-            });
-            let result = (|| -> Result<()> {
-                let mut units = Vec::with_capacity(MAX_BATCH_CHUNKS);
-                // The previous batch, embedded and awaiting graph insertion.
-                let mut embedded: Option<SelectedBatch> = None;
-                for message in receiver.iter() {
-                    let message = message?;
-                    let semantic = semantic
-                        .as_mut()
-                        .context("semantic planner without a model")?;
-                    match message {
-                        Planned::Stats(eligible, stats) => {
-                            semantic.cache.stats.vector_eligible_artifacts += u64::from(eligible);
-                            semantic.cache.stats.vector_excluded_artifacts += u64::from(!eligible);
-                            semantic.cache.stats.vector_units += stats.units;
-                            semantic.cache.stats.vector_body_bytes += stats.body_bytes;
-                            semantic.cache.stats.vector_planning_us += stats.planning_us;
-                        }
-                        Planned::Unit(unit) => units.push(unit),
-                    }
-                    if units.len() == MAX_BATCH_CHUNKS {
-                        let full =
-                            std::mem::replace(&mut units, Vec::with_capacity(MAX_BATCH_CHUNKS));
-                        embedded = Some(pipeline_batch(
-                            &mut plan,
-                            full,
-                            embedded.take(),
-                            descriptor.as_ref().expect("semantic descriptor"),
-                            semantic,
-                            graph.as_mut().expect("semantic graph"),
-                        )?);
-                    }
-                }
-                if !units.is_empty() {
-                    embedded = Some(pipeline_batch(
-                        &mut plan,
-                        units,
-                        embedded.take(),
-                        descriptor.as_ref().expect("semantic descriptor"),
-                        semantic.as_mut().expect("semantic model"),
-                        graph.as_mut().expect("semantic graph"),
-                    )?);
-                }
-                if let Some(last) = embedded {
-                    let semantic = semantic.as_mut().expect("semantic model");
-                    plan.insert(
-                        last,
-                        graph.as_mut().expect("semantic graph"),
-                        &mut *semantic.cache.stats,
-                        LookAhead::default(),
-                    )?;
-                }
-                Ok(())
-            })();
-            // Release backpressure before joining after any consumer failure.
-            drop(receiver);
-            producer
-                .join()
-                .map_err(|_| anyhow::anyhow!("vector planning worker panicked"))?;
-            result
-        })?;
-        drop(units_stage);
-        let set_live_stage = airk_core::stage_timing::scope("publish.set_live");
-        for membership in plan.memberships.values() {
-            overlay.set_live(membership.id, membership.remaining != 0)?;
-        }
-        drop(set_live_stage);
-        drop(graph);
-        if let Some(semantic) = semantic.as_mut() {
-            semantic.cache.stats.vector_registry_rows = semantic
-                .cache
-                .stats
-                .vector_registry_rows
-                .max(plan.registry.len() as u64);
-        }
-        let occurrences = std::mem::take(&mut plan.occurrences);
-        drop(plan);
-        let mut resources = resources.to_vec();
-        if let Some(work) = semantic_work {
-            let units = semantic
-                .as_ref()
-                .context("semantic progress without model")?
-                .cache
-                .stats
-                .vector_units
-                .checked_sub(before_units)
-                .context("semantic unit count underflow")?;
-            work.completed_units = work
-                .completed_units
-                .checked_add(units)
-                .context("semantic unit count overflow")?;
-            if work.pending.is_empty() {
-                if work.all_units_countable {
-                    work.selected_units = Some(work.completed_units);
-                }
-                work.fully_ready_unix_ms = Some(super::enrichment::now_unix_ms()?);
             }
-            resources.push(work.resource_change(self.store, self.writer, self.reservation)?);
-        }
-        if let Some(cache) = &owned_cache {
-            let started = std::time::Instant::now();
-            let manifest = cache.finalize()?;
-            if let Some(semantic) = semantic.as_mut() {
-                let statistics = cache.statistics()?;
-                let stats = &mut semantic.cache.stats;
-                stats.cache_finalize_us = stats.cache_finalize_us.saturating_add(
-                    u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
-                );
-                stats.cache_file_opens =
-                    stats.cache_file_opens.saturating_add(statistics.file_opens);
-                stats.cache_read_bytes =
-                    stats.cache_read_bytes.saturating_add(statistics.read_bytes);
-                stats.cache_written_bytes = stats
-                    .cache_written_bytes
-                    .saturating_add(statistics.written_bytes);
-                stats.cache_record_verification_bytes = stats
-                    .cache_record_verification_bytes
-                    .saturating_add(statistics.record_verification_bytes);
-                stats.cache_index_verification_bytes = stats
-                    .cache_index_verification_bytes
-                    .saturating_add(statistics.index_verification_bytes);
-                stats.cache_full_pack_verification_bytes = stats
-                    .cache_full_pack_verification_bytes
-                    .saturating_add(statistics.full_pack_verification_bytes);
-                stats.cache_syncs = stats.cache_syncs.saturating_add(statistics.syncs);
-                stats.cache_index_hits = stats
-                    .cache_index_hits
-                    .saturating_add(statistics.index_cache_hits);
-                stats.cache_index_peak_bytes = stats
-                    .cache_index_peak_bytes
-                    .max(statistics.index_cache_peak_bytes);
-                stats.cache_packs_written = stats
-                    .cache_packs_written
-                    .saturating_add(statistics.packs_written);
-                stats.cache_packs_reused = stats
-                    .cache_packs_reused
-                    .saturating_add(statistics.packs_reused);
-                stats.cache_compacted_records = stats
-                    .cache_compacted_records
-                    .saturating_add(statistics.compacted_records);
-            }
-            let reference = self.store.retain_current_resource_owned(
-                self.writer,
-                &manifest.canonical_bytes()?,
-                self.reservation,
-            )?;
-            resources.push(airk_store::current::resources::ResourceChange {
-                key: "embedding-cache".into(),
-                reference: Some(reference),
-            });
-        } else if captured_model.is_none()
-            && trusted_cache.is_some()
-            && !resources.iter().any(|r| r.key == "embedding-cache")
-        {
-            resources.push(airk_store::current::resources::ResourceChange {
-                key: "embedding-cache".into(),
-                reference: None,
+            plain.push(PlainResource {
+                key: control_key.into(),
+                body: carried,
             });
         }
-        drop(semantic);
-        drop(read);
-        let seal_stage = airk_core::stage_timing::scope("publish.seal");
-        let sealed = Arc::try_unwrap(overlay)
-            .map_err(|_| anyhow::anyhow!("current graph retained preparation reader"))?
-            .seal()
-            .context("seal current graph overlay")?;
-        drop(seal_stage);
-        let sealed = if replacing {
-            sealed.replacing(base.graph_head.clone())?
-        } else {
-            sealed
-        };
-        let mut target = base.clone();
-        target.sequence = target
-            .sequence
-            .checked_add(1)
-            .context("current sequence overflow")?;
-        target.lexical_sequence = target.sequence;
-        target.graph_head = sealed.descriptor().target.clone();
-        let mut writer = {
-            let _stage = airk_core::stage_timing::scope("publish.open_write");
-            self.store
-                .current_write(self.writer, self.quota, self.scope, capacity)?
-        };
-        let prepare_stage = airk_core::stage_timing::scope("publish.journal_prepare");
-        let (pending, lexical_work) = writer
-            .prepare_artifacts_with_optional_projections(
-                &base.token()?,
-                target,
-                &sealed,
-                ArtifactVectorChanges {
-                    artifacts: changes,
-                    vector_inputs: semantic_inputs,
-                    occurrences: &occurrences,
-                    configuration: self.configuration,
-                },
-                captured_model,
-                &metadata.references,
-                &resources,
-                &metadata.optional,
-            )
-            .context("prepare current journal")?;
-        drop(prepare_stage);
-        crate::service_execution::progress_prepared(
-            semantic_inputs.map_or(changes.len(), |inputs| inputs.len()) as u64,
+        Ok(plain)
+    }
+
+    fn bind_control(&self, bytes: &[u8], next: u64) -> Result<Vec<u8>> {
+        ensure!(
+            bytes.len() <= airk_core::source_control::MAX_CONTROL_BASELINE_BYTES,
+            "retained control witness exceeds bound"
         );
-        observer(CurrentUpdateStage::Prepared);
-        crate::service_execution::progress_phase(
-            airk_core::service_progress::WorkPhase::Publishing,
+        let mut baseline: airk_core::source_control::SourceControlBaseline =
+            serde_json::from_slice(bytes)?;
+        baseline.validate()?;
+        ensure!(
+            serde_json::to_vec(&baseline)? == bytes,
+            "noncanonical retained control baseline"
         );
-        {
-            let _stage = airk_core::stage_timing::scope("publish.mark_applying");
-            writer
-                .mark_applying(&pending)
-                .context("mark current journal applying")?;
-        }
-        observer(CurrentUpdateStage::Applying);
-        let mut committed = {
-            let _stage = airk_core::stage_timing::scope("publish.commit");
-            writer
-                .commit(&pending, pending.target.lexical_commit)
-                .context("commit current journal")?
-        };
-        crate::service_execution::progress_committed(
-            semantic_inputs.map_or(changes.len(), |inputs| inputs.len()) as u64,
-        );
-        observer(CurrentUpdateStage::Committed);
-        drop(writer);
-        let cleanup = {
-            let _stage = airk_core::stage_timing::scope("publish.reclaim");
-            reclaim_current_objects(self.store, self.quota, self.scope, self.writer)
-        };
-        if let Err(error) = cleanup {
-            let message = format!("current object cleanup: {error:#}");
-            committed.maintenance_error = Some(match committed.maintenance_error {
-                Some(previous) => format!("{previous}; {message}"),
-                None => message,
-            });
-        }
-        Ok(CurrentUpdateResult {
-            commit: committed,
-            lexical: LexicalPublicationWork {
-                changed: lexical_work,
-            },
-            graph: sealed.statistics().clone(),
-            occurrences: occurrences.len(),
-        })
+        baseline.bind_publication(self.scope.incarnation, next)?;
+        Ok(serde_json::to_vec(&baseline)?)
     }
 }

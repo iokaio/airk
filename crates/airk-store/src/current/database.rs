@@ -24,14 +24,9 @@ pub const OWNER_FILE: &str = "current-owner.json";
 /// directory with the 1.1 snapshot/catalog layout. The caller must first reset
 /// the old managed derived collection under its writer and reader gates.
 pub(crate) fn reject_legacy_collection(directory: &Path) -> Result<()> {
-    for name in [
-        "index.sqlite3",
-        "index.sqlite3-wal",
-        "index.sqlite3-shm",
-        "index.sqlite3-journal",
-        "snapshot.json",
-        "generations",
-    ] {
+    // `index.sqlite3` is the plain index of AIRK 1.9 (`crate::index`); the
+    // 1.1.x layout is recognized by its snapshot and generation folders.
+    for name in ["snapshot.json", "generations"] {
         ensure!(
             !directory.join(name).try_exists()?,
             "AIRK 1.1.x collection state is incompatible with 1.2.0; reset the managed collection and rebuild"

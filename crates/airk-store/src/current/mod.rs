@@ -17,6 +17,7 @@ pub mod map;
 pub mod metadata;
 pub mod native_projection;
 pub mod native_range;
+pub mod plain_writer;
 pub mod policy_capsule;
 pub mod postings;
 #[cfg(test)]
