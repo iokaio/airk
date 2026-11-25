@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Ordered retained display text and original locations in bounded owned pages.
-use super::{CurrentRead, map::MapDomain, metadata::FileMetadataRef, resources::*};
+use super::{CurrentRead, resources::*};
 use crate::FileStore;
 use airk_core::{
     Artifact, DocumentLocation,
@@ -354,25 +354,11 @@ pub struct SelectedTextRange {
     pub truncated: bool,
 }
 impl CurrentRead {
+    /// The plain index keeps no text range projection.
     pub(crate) fn text_range_reference(&self, path: &str) -> Result<Option<TextRangeReference>> {
-        let Some(bytes) = self.map_get(MapDomain::FileMetadata, path.as_bytes())? else {
-            return Ok(None);
-        };
-        let reference: FileMetadataRef = serde_json::from_slice(&bytes)?;
-        reference.validate_projection_declaration()?;
-        ensure!(
-            reference.path == path && serde_json::to_vec(&reference)? == bytes,
-            "text range metadata mismatch"
-        );
-        if let Some(text) = &reference.text_ranges {
-            ensure!(
-                self.query_projection_version()?
-                    .is_some_and(|version| version >= 4),
-                "unsupported text range capability"
-            );
-            text.validate()?;
-        }
-        Ok(reference.text_ranges)
+        self.require_path(path)?;
+        self.live()?;
+        Ok(None)
     }
     pub fn text_range_projection<'a>(
         &'a self,

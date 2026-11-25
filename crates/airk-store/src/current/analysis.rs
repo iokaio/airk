@@ -67,14 +67,13 @@ impl AnalysisEvidence {
 
 impl CurrentRead {
     pub fn analysis(&self, store: &FileStore) -> Result<Option<AnalysisEvidence>> {
-        let Some(reference) = self.resource_reference("analysis")? else {
+        let Some(bytes) = self.resource(store, "analysis")? else {
             return Ok(None);
         };
         ensure!(
-            reference.bytes <= 64 << 20,
+            bytes.len() <= 64 << 20,
             "current analysis byte bound exceeded"
         );
-        let bytes = store.read_current_resource(&reference)?;
         let mut evidence: AnalysisEvidence = serde_json::from_slice(&bytes)?;
         ensure!(
             evidence.canonical_bytes()? == bytes

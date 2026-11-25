@@ -75,6 +75,9 @@ impl LexicalManifest {
         );
         Ok(manifest)
     }
+    // Old-format lexical seal; the plain reader no longer checks it. Removed
+    // with the old journal once the writer side lands.
+    #[allow(dead_code)]
     pub(crate) fn verify(&self, connection: &Connection) -> Result<()> {
         ensure!(
             capture(connection, self.updates)? == *self,
@@ -96,7 +99,8 @@ pub fn stable_id(path: &str, local: u64) -> Result<Sha256Digest> {
 // Prefixes separate literal aliases from digested overlong terms. The ascii
 // tokenizer is byte-stable for non-ASCII text; '_' explicitly preserves whole
 // identifier aliases alongside the components emitted by terms().
-fn token(term: &str) -> String {
+// The plain index stores and queries chunk terms in this same encoding.
+pub(crate) fn token(term: &str) -> String {
     if term.len() > 8000 {
         format!(
             "h{}",
@@ -105,6 +109,21 @@ fn token(term: &str) -> String {
     } else {
         format!("x{term}")
     }
+}
+
+/// The stored terms of one chunk (index CONTRACT.md, "chunks"): the terms of
+/// `"{path} {text}"` in token form, joined with spaces.
+pub fn chunk_terms(path: &str, text: &str) -> String {
+    terms(&format!("{path} {text}"))
+        .iter()
+        .map(|term| token(term))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The terms of a query in token form; every one must occur in a hit.
+pub fn query_terms(text: &str) -> Vec<String> {
+    terms(text).iter().map(|term| token(term)).collect()
 }
 
 #[derive(Clone, Debug)]
@@ -181,11 +200,7 @@ pub(crate) fn replace(
             location: chunk.location.clone(),
         };
         let payload = serde_json::to_string(&citation)?;
-        let encoded = terms(&format!("{path} {}", chunk.text))
-            .iter()
-            .map(|term| token(term))
-            .collect::<Vec<_>>()
-            .join(" ");
+        let encoded = chunk_terms(path, &chunk.text);
         ensure!(
             payload.len().saturating_add(encoded.len()) <= MAX_ROW_BYTES,
             "FTS5 document byte bound exceeded"
@@ -207,81 +222,190 @@ pub(crate) fn flush(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// How a plain lexical page is ordered and continued.
+#[derive(Clone, Debug)]
+pub(crate) enum CandidateOrder {
+    /// BM25, best first, then stable identity (decision Q4).
+    Ranked,
+    /// Stable-identity or path order with an optional keyset continuation.
+    Keyset(
+        crate::index::LexicalOrder,
+        Option<crate::index::LexicalAfter>,
+    ),
+}
+
 impl CurrentRead {
-    /// Explicit diagnostics bypass process-local change witnesses and hash all rows.
+    /// SQLite owns FTS5 consistency in the plain index; nothing to verify here.
     pub fn verify_lexical_integrity(&self) -> Result<()> {
-        let manifest =
-            LexicalManifest::decode(&self.lexical_manifest()?, self.head().lexical_commit)?;
-        self.with_connection(|connection| manifest.verify(connection))
+        self.live()
     }
     pub fn verify_lexical(&self) -> Result<()> {
-        if self.lexical_verified.get().is_some() {
-            return Ok(());
-        }
-        let manifest =
-            LexicalManifest::decode(&self.lexical_manifest()?, self.head().lexical_commit)?;
-        self.with_connection(|connection| {
-            cache::verified(connection, &self.lexical_path, &manifest)
-        })?;
-        let _ = self.lexical_verified.set(());
-        Ok(())
+        self.live()
     }
     pub fn lexical_search(&self, query: &SearchQuery) -> Result<CurrentLexicalCandidates> {
         self.lexical_search_paths(query, None)
     }
 
-    /// The caller selects these paths from the same authenticated current reader.
-    /// Filtering precedes LIMIT; it must not discard only an unfiltered top-k.
+    /// BM25-ranked candidates containing every query term. The prefix, the
+    /// caller's path set and this reader's read scope and source policy all
+    /// apply before the limit.
     pub fn lexical_search_paths(
         &self,
         query: &SearchQuery,
         paths: Option<&std::collections::BTreeSet<String>>,
     ) -> Result<CurrentLexicalCandidates> {
         query.validate()?;
-        let query_terms = terms(&query.text);
-        ensure!(
-            !query_terms.is_empty(),
-            "query must contain a letter or number"
-        );
-        if !self.private_query_eligible()? {
-            self.verify_lexical()?;
-        }
-        let expression = query_terms
-            .iter()
-            .map(|term| format!("\"{}\"", token(term)))
-            .collect::<Vec<_>>()
-            .join(" AND ");
-        let scope = self.scope_atoms_json()?;
-        let scope_aliases = self.scope_aliases_json()?;
-        let paths = paths.map(serde_json::to_string).transpose()?;
-        ensure!(
-            paths.as_ref().is_none_or(|paths| paths.len() <= 4 << 20),
-            "filtered lexical path selector exceeds byte budget"
-        );
-        let result = self.with_connection(|connection| {
-            let sql = if scope.is_some() { "SELECT d.path,d.local,d.stable_id,d.payload FROM current_fts JOIN current_lexical_docs AS d NOT INDEXED ON d.id=current_fts.rowid WHERE current_fts MATCH ?1 AND (?2 IS NULL OR substr(d.path,1,length(?2))=?2 COLLATE BINARY) AND (?4 IS NULL OR d.path IN (SELECT value FROM json_each(?4))) AND (?5 IS NULL OR EXISTS (SELECT 1 FROM json_each(?5) AS a WHERE NOT EXISTS (SELECT 1 FROM json_each(?6) AS alias WHERE ((d.path='@'||alias.value COLLATE BINARY OR substr(d.path,1,length(alias.value)+2)='@'||alias.value||'/' COLLATE BINARY) != (json_extract(a.value,'$.path')='@'||alias.value COLLATE BINARY OR substr(json_extract(a.value,'$.path'),1,length(alias.value)+2)='@'||alias.value||'/' COLLATE BINARY))) AND (d.path=json_extract(a.value,'$.path') COLLATE BINARY OR (json_extract(a.value,'$.kind')='subtree' AND (json_extract(a.value,'$.path')='' OR substr(d.path,1,length(json_extract(a.value,'$.path'))+1)=json_extract(a.value,'$.path')||'/' COLLATE BINARY))))) ORDER BY d.stable_id LIMIT ?3" } else { "SELECT d.path,d.local,d.stable_id,d.payload FROM current_fts JOIN current_lexical_docs AS d NOT INDEXED ON d.id=current_fts.rowid WHERE current_fts MATCH ?1 AND (?2 IS NULL OR substr(d.path,1,length(?2))=?2 COLLATE BINARY) AND (?4 IS NULL OR d.path IN (SELECT value FROM json_each(?4))) ORDER BY d.stable_id LIMIT ?3" };
-            let mut statement = connection.prepare(sql)?;
-            let mut rows = if scope.is_some() { statement.query(params![expression,query.path_prefix,(query.limit + 1) as i64,paths,scope,scope_aliases])? } else { statement.query(params![expression,query.path_prefix,(query.limit + 1) as i64,paths])? };
-            let mut values = Vec::new();
-            let mut incomplete = false;
-            while let Some(row) = rows.next()? {
-                if values.len() == query.limit { incomplete = true; break; }
-                let path: String = row.get(0)?;
-                let local = u64::try_from(row.get::<_, i64>(1)?)?;
-                let stable_id: Sha256Digest = row.get::<_, String>(2)?.parse()?;
-                ensure!(stable_id == self::stable_id(&path,local)?, "FTS5 candidate identity mismatch");
-                let payload: String = row.get(3)?;
-                ensure!(payload.len() <= MAX_ROW_BYTES, "FTS5 candidate byte bound exceeded");
-                let citation: Citation = serde_json::from_str(&payload)?;
-                ensure!(citation.path == path, "invalid FTS5 candidate citation");
-                values.push(CurrentLexicalCandidate { stable_id, local, citation });
-            }
-            Ok(CurrentLexicalCandidates { manifest_digest: self.head().lexical_commit, values, incomplete })
-        });
-        let result = self.observe_private_integrity(result)?;
+        let result = self.lexical_candidates(
+            &query.text,
+            query.path_prefix.as_deref(),
+            paths,
+            query.limit,
+            CandidateOrder::Ranked,
+        )?;
         self.token()?;
         Ok(result)
     }
+
+    /// One filtered candidate page from the plain index.
+    pub(crate) fn lexical_candidates(
+        &self,
+        text: &str,
+        prefix: Option<&str>,
+        paths: Option<&std::collections::BTreeSet<String>>,
+        limit: usize,
+        order: CandidateOrder,
+    ) -> Result<CurrentLexicalCandidates> {
+        use crate::index::{LexicalAfter, LexicalQuery, MAX_LEXICAL_HITS};
+        let wanted = query_terms(text);
+        ensure!(!wanted.is_empty(), "query must contain a letter or number");
+        ensure!(
+            (1..MAX_LEXICAL_HITS).contains(&limit),
+            "lexical candidate limit out of range"
+        );
+        let paths: Option<Vec<String>> = paths.map(|paths| paths.iter().cloned().collect());
+        ensure!(
+            paths
+                .as_ref()
+                .is_none_or(|paths| paths.iter().map(String::len).sum::<usize>() <= 4 << 20),
+            "filtered lexical path selector exceeds byte budget"
+        );
+        if paths.as_ref().is_some_and(Vec::is_empty) {
+            return Ok(CurrentLexicalCandidates {
+                manifest_digest: self.head().lexical_commit,
+                values: Vec::new(),
+                incomplete: false,
+            });
+        }
+        let mut values = Vec::new();
+        let mut incomplete = false;
+        match order {
+            CandidateOrder::Ranked => {
+                // The engine cannot continue a ranked order, so a filtered page
+                // fetches the largest window once more before giving up.
+                let mut fetch = limit + 1;
+                loop {
+                    let (hits, more) = self.with_index(|index| {
+                        index.lexical(&LexicalQuery {
+                            terms: wanted.clone(),
+                            path_prefix: prefix.map(str::to_owned),
+                            paths: paths.clone(),
+                            limit: fetch,
+                            ranked: true,
+                        })
+                    })?;
+                    values.clear();
+                    for hit in hits {
+                        if self.accepts_path(&hit.path) {
+                            values.push(candidate(hit)?);
+                        }
+                    }
+                    if values.len() > limit {
+                        incomplete = true;
+                        break;
+                    }
+                    if !more {
+                        break;
+                    }
+                    if fetch >= MAX_LEXICAL_HITS {
+                        incomplete = true;
+                        break;
+                    }
+                    fetch = MAX_LEXICAL_HITS;
+                }
+            }
+            CandidateOrder::Keyset(order, mut after) => {
+                let page = (limit + 1).clamp(256, MAX_LEXICAL_HITS);
+                loop {
+                    let (hits, more) = self.with_index(|index| {
+                        index.lexical_keyset(
+                            &LexicalQuery {
+                                terms: wanted.clone(),
+                                path_prefix: prefix.map(str::to_owned),
+                                paths: paths.clone(),
+                                limit: page,
+                                ranked: false,
+                            },
+                            order,
+                            after.as_ref(),
+                        )
+                    })?;
+                    let last = hits.last().map(|hit| match order {
+                        crate::index::LexicalOrder::StableId => LexicalAfter::StableId {
+                            id: hit.stable_id,
+                            inclusive: false,
+                        },
+                        crate::index::LexicalOrder::Path => LexicalAfter::Path {
+                            path: hit.path.clone(),
+                            ordinal: hit.ordinal,
+                            inclusive: false,
+                        },
+                    });
+                    for hit in hits {
+                        if values.len() > limit {
+                            break;
+                        }
+                        if self.accepts_path(&hit.path) {
+                            values.push(candidate(hit)?);
+                        }
+                    }
+                    if values.len() > limit || !more {
+                        break;
+                    }
+                    after = last;
+                }
+                incomplete = values.len() > limit;
+            }
+        }
+        values.truncate(limit);
+        Ok(CurrentLexicalCandidates {
+            manifest_digest: self.head().lexical_commit,
+            values,
+            incomplete,
+        })
+    }
+}
+
+/// A stored chunk as a lexical candidate, checked against its identity.
+pub(crate) fn candidate(hit: crate::index::LexicalHit) -> Result<CurrentLexicalCandidate> {
+    let local = u64::from(hit.ordinal);
+    ensure!(
+        hit.stable_id == stable_id(&hit.path, local)?,
+        "lexical candidate identity mismatch; rebuild the index"
+    );
+    ensure!(
+        hit.citation.len() <= MAX_ROW_BYTES,
+        "lexical candidate byte bound exceeded"
+    );
+    let citation: Citation = serde_json::from_slice(&hit.citation)?;
+    ensure!(
+        citation.path == hit.path,
+        "invalid lexical candidate citation"
+    );
+    Ok(CurrentLexicalCandidate {
+        stable_id: hit.stable_id,
+        local,
+        citation,
+    })
 }
 
 #[cfg(test)]

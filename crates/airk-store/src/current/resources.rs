@@ -326,18 +326,36 @@ impl FileStore {
 }
 
 impl CurrentRead {
+    /// The identity and size of a stored resource body. The plain index has
+    /// no analysis projection, so that key is always absent. The reference
+    /// names no file: read the body with [`Self::resource`].
     pub fn resource_reference(&self, key: &str) -> Result<Option<ResourceReference>> {
         ensure!(KEYS.contains(&key), "unknown current resource");
-        self.map_get(MapDomain::Metadata, key.as_bytes())?
-            .as_deref()
-            .map(decode)
-            .transpose()
+        if key == "analysis-projection" {
+            self.live()?;
+            return Ok(None);
+        }
+        Ok(self.resource_body(key)?.map(|bytes| ResourceReference {
+            digest: framed_digest(b"current-resource/1", &[&bytes]),
+            bytes: bytes.len(),
+            encoding: None,
+            projection: None,
+        }))
     }
-    pub fn resource(&self, store: &FileStore, key: &str) -> Result<Option<Vec<u8>>> {
-        self.resource_reference(key)?
-            .as_ref()
-            .map(|r| store.read_current_resource(r))
-            .transpose()
+    /// The stored body of a resource. `store` is unused: bodies live in the index.
+    pub fn resource(&self, _store: &FileStore, key: &str) -> Result<Option<Vec<u8>>> {
+        ensure!(KEYS.contains(&key), "unknown current resource");
+        if key == "analysis-projection" {
+            self.live()?;
+            return Ok(None);
+        }
+        let body = self.resource_body(key)?;
+        ensure!(
+            body.as_ref()
+                .is_none_or(|body| body.len() <= MAX_RESOURCE_BYTES),
+            "current resource exceeds byte budget"
+        );
+        Ok(body)
     }
 }
 

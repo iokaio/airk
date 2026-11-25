@@ -103,7 +103,6 @@ fn edges(artifact: &Artifact) -> Vec<RelationshipHit> {
 impl CurrentRead {
     fn type_navigation(
         &self,
-        store: &FileStore,
         query: &RelationshipQuery,
         private: bool,
         files: &mut usize,
@@ -153,8 +152,8 @@ impl CurrentRead {
         *files += 1;
         *work += bytes;
         let result = (|| {
-            let artifact = store.load_retained_bounded(&compact, retained.object_bytes as u64)?;
-            store.verify_retained_source(&compact)?;
+            let artifact = self.load_retained_bounded(&compact, retained.object_bytes as u64)?;
+            self.verify_retained_source(&compact)?;
             let mut navigation = navigation::derive(&artifact, &query.symbol);
             if artifact.facts.len() <= navigation::MAX_FACTS {
                 navigation.verified = Some(navigation::VerifiedSource {
@@ -232,7 +231,7 @@ impl CurrentRead {
         let mut files = 0;
         let mut work = self.resource_reference("analysis")?.map_or(0, |r| r.bytes);
         let mut remaining = query.max_bytes;
-        let navigation = self.type_navigation(store, query, private, &mut files, &mut work)?;
+        let navigation = self.type_navigation(query, private, &mut files, &mut work)?;
         if navigation.truncated {
             response.mark_truncated(Stop::TypeNavigationIncomplete);
         }
@@ -392,9 +391,9 @@ impl CurrentRead {
                             .collect()
                     } else {
                         let result = (|| {
-                            let artifact = store
-                                .load_retained_bounded(&compact, retained.object_bytes as u64)?;
-                            store.verify_retained_source(&compact)?;
+                            let artifact =
+                                self.load_retained_bounded(&compact, retained.object_bytes as u64)?;
+                            self.verify_retained_source(&compact)?;
                             Ok(edges(&artifact))
                         })();
                         if private {

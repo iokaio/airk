@@ -446,37 +446,20 @@ pub struct QueryPhysicalTurn {
 impl super::CurrentRead {
     /// A producer declaration, not query authority. The owning native policy
     /// must admit consumers before this can replace strict evidence checks.
+    /// The plain index keeps no native edge declarations.
     pub fn native_edges_declared_empty(&self, path: &str) -> Result<bool> {
-        let Some(bytes) = self.map_get(super::map::MapDomain::FileMetadata, path.as_bytes())?
-        else {
-            return Ok(false);
-        };
-        let metadata: super::metadata::FileMetadataRef = serde_json::from_slice(&bytes)?;
-        ensure!(
-            metadata.path == path
-                && serde_json::to_vec(&metadata)? == bytes
-                && (!metadata.native_edges_empty
-                    || (metadata.native_edges.is_none() && metadata.native_facts.is_some())),
-            "invalid empty native edge declaration"
-        );
-        Ok(metadata.native_edges_empty)
+        self.require_path(path)?;
+        self.live()?;
+        Ok(false)
     }
+    /// The plain index keeps no native edge projection.
     pub(crate) fn native_edge_reference(
         &self,
         path: &str,
     ) -> Result<Option<(ResourceReference, Sha256Digest)>> {
-        let Some(bytes) = self.map_get(super::map::MapDomain::FileMetadata, path.as_bytes())?
-        else {
-            return Ok(None);
-        };
-        let metadata: super::metadata::FileMetadataRef = serde_json::from_slice(&bytes)?;
-        ensure!(
-            metadata.path == path && serde_json::to_vec(&metadata)? == bytes,
-            "native edge metadata binding mismatch"
-        );
-        Ok(metadata
-            .native_edges
-            .map(|reference| (reference, metadata.digest)))
+        self.require_path(path)?;
+        self.live()?;
+        Ok(None)
     }
     pub fn import_certification_bytes(&self) -> Result<Option<u64>> {
         let analysis = self.resource_reference("analysis")?;
@@ -540,62 +523,14 @@ impl super::CurrentRead {
         )?))
     }
 
+    /// The plain index keeps no native edge projection.
     pub fn native_edge_projection<'a>(
         &'a self,
-        store: &'a FileStore,
+        _store: &'a FileStore,
         path: &str,
     ) -> Result<Option<CurrentQueryProjection<'a>>> {
-        let Some(bytes) = self.map_get(super::map::MapDomain::FileMetadata, path.as_bytes())?
-        else {
-            return Ok(None);
-        };
-        let metadata: super::metadata::FileMetadataRef = serde_json::from_slice(&bytes)?;
-        ensure!(
-            metadata.path == path && serde_json::to_vec(&metadata)? == bytes,
-            "native edge metadata binding mismatch"
-        );
-        let Some(reference) = metadata.native_edges else {
-            return Ok(None);
-        };
-        ensure!(
-            self.query_projection_version()?
-                .is_some_and(|version| version >= 2),
-            "native edge capability missing"
-        );
-        let artifact = self
-            .artifact(path)?
-            .context("native edge artifact missing")?;
-        let retained = artifact
-            .retained
-            .as_ref()
-            .context("native edge extraction missing")?;
-        let header = store.projection_header(&reference)?;
-        let binding = ProjectionBinding::NativeEdges {
-            path: path.into(),
-            source: artifact.content_hash.parse()?,
-            payload: retained.object.parse()?,
-            profile: retained
-                .profile
-                .as_ref()
-                .context("native edge profile missing")?
-                .identity()?,
-            metadata: metadata.digest,
-        };
-        ensure!(
-            header.binding == binding && header.facts == 0,
-            "native edge component expired"
-        );
-        let query_limit = MAX_BYTES / 4 + (header.edges + header.pages) * 128;
-        Ok(Some(CurrentQueryProjection {
-            read: self,
-            store,
-            reference,
-            header,
-            roster_cache: Default::default(),
-            query_pages: Default::default(),
-            query_bytes: Default::default(),
-            query_limit,
-        }))
+        self.native_edge_reference(path)?;
+        Ok(None)
     }
 
     pub fn imported_projection<'a>(

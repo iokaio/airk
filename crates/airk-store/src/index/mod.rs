@@ -13,7 +13,8 @@ mod vectors;
 mod writer;
 
 pub use reader::{
-    FileRow, IndexReader, LexicalHit, LexicalQuery, PathLookup, PathPage, UnitRow, VectorState,
+    FileRow, IndexReader, LexicalAfter, LexicalHit, LexicalOrder, LexicalQuery, MAX_LEXICAL_HITS,
+    MAX_PAGE, PathLookup, PathPage, UnitRow, VectorState,
 };
 pub use schema::IncompatibleIndex;
 pub use vectors::{LiveRows, VectorFile, VectorHit, VectorMatrix};

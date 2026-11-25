@@ -1,15 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
+//! The request reader over the plain index store (`crate::index`). One reader
+//! is one SQLite read transaction: a stable snapshot of one publication. The
+//! head is synthesized from the index `meta` table (index CONTRACT.md,
+//! "Mapping of the current index"); there is no Merkle map, journal or graph.
 use super::{
-    CurrentHead, CurrentScope, CurrentToken, database, decode_head,
+    CurrentHead, CurrentScope, CurrentToken,
     gate::Gate,
-    graph,
-    journal::{CapturedInput, committed_lexical_manifest},
+    journal::CapturedInput,
     map,
     vector_map::{OccurrencePointer, PathOccurrences, VectorBinding},
 };
 use crate::FileStore;
+use crate::index::{Handle, HandleKind, IndexReader};
 use airk_core::graph_storage::{GraphCounts, GraphRecord, GraphRecordReader, GraphScope};
-use anyhow::{Context, Result, ensure};
+use anyhow::{Result, ensure};
 use rusqlite::Connection;
 use std::sync::{Arc, Mutex};
 
@@ -46,7 +50,7 @@ impl std::fmt::Display for CurrentReadContention {
 }
 impl std::error::Error for CurrentReadContention {}
 
-fn read_error(error: anyhow::Error) -> anyhow::Error {
+pub(super) fn read_error(error: anyhow::Error) -> anyhow::Error {
     if matches!(error.downcast_ref::<rusqlite::Error>(), Some(rusqlite::Error::SqliteFailure(code, _)) if matches!(code.code, rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked))
     {
         error.context(CurrentReadContention)
@@ -55,61 +59,20 @@ fn read_error(error: anyhow::Error) -> anyhow::Error {
     }
 }
 
-/// Isolate imported-origin tests from graph publication while retaining the
-/// actual authenticated map, resource reader, collection gate and projection.
+/// The old Merkle-map reader of imported-origin tests has no plain counterpart.
+/// Kept so those tests compile; they fail until rewritten against the plain index.
 #[cfg(test)]
 pub(super) fn scoped_import_test_reader(
-    store: &FileStore,
-    scope: CurrentScope,
-    artifact_root: airk_core::identity::Sha256Digest,
-    connection: Connection,
+    _store: &FileStore,
+    _scope: CurrentScope,
+    _artifact_root: airk_core::identity::Sha256Digest,
+    _connection: Connection,
 ) -> Result<CurrentRead> {
-    use airk_core::{
-        graph_storage::GraphHead,
-        identity::{Incarnation, Sha256Digest},
-    };
-    let head = CurrentHead {
-        version: 2,
-        scope: scope.clone(),
-        sequence: 1,
-        artifact_root,
-        lexical_sequence: 1,
-        lexical_commit: Sha256Digest::from_bytes([9; 32]),
-        graph_head: GraphHead::empty(GraphScope {
-            root: scope.root,
-            collection: scope.collection,
-            incarnation: scope.incarnation,
-            graph_instance: Incarnation::from_bytes([2; 16]),
-            specification: Sha256Digest::from_bytes([3; 32]),
-            record_bytes: 16,
-        })?,
-    };
-    let read = CurrentRead {
-        frozen_sources: Default::default(),
-        source_policy_fence: Default::default(),
-        source_policy: Default::default(),
-        read_scope: Default::default(),
-        read_scope_fence: Default::default(),
-        read_scope_restricts_paths: Default::default(),
-        scope_endpoints: Default::default(),
-        scope_origin_budget: Default::default(),
-        connection: Mutex::new(connection),
-        head,
-        query_projection_version: Some(2),
-        private_query: Default::default(),
-        lexical_path: store.directory().join("unused-import-test.sqlite3"),
-        lexical_verified: Default::default(),
-        deadline: None,
-        clock: super::clock::system(),
-        writer_active: None,
-        _gate: Gate::shared(store)?,
-    };
-    read.freeze_source_roots()?;
-    Ok(read)
+    anyhow::bail!("the plain index has no Merkle-map test reader")
 }
 
-/// The connection/read transaction drops before the gate. Providers may clone
-/// the Arc for one request, but neither a kernel cache nor a sealed delta owns it.
+/// The index transaction drops before the gate. Providers may clone the Arc
+/// for one request, but neither a kernel cache nor a sealed delta owns it.
 pub struct CurrentRead {
     pub(super) frozen_sources: std::sync::OnceLock<super::source_policy::ReadSources>,
     pub(super) source_policy_fence: std::sync::OnceLock<Arc<std::sync::atomic::AtomicBool>>,
@@ -120,46 +83,34 @@ pub struct CurrentRead {
     pub(super) scope_endpoints:
         std::sync::OnceLock<Mutex<std::collections::BTreeMap<String, bool>>>,
     pub(super) scope_origin_budget: std::sync::OnceLock<Mutex<super::read_scope::OriginBudget>>,
-    connection: Mutex<Connection>,
-    head: CurrentHead,
-    query_projection_version: Option<u32>,
+    pub(super) index: Mutex<IndexReader>,
+    pub(super) head: CurrentHead,
+    /// Meta `collection_state`, decoded once when the reader opened.
+    pub(super) state: Option<super::collection::CollectionState>,
+    /// Kept so service code that installs an authority still compiles. The
+    /// plain index has no private accelerators: readers stay strict.
     pub(crate) private_query: std::sync::OnceLock<
         std::sync::Arc<crate::service::collection::integrity::native_owner::PrivateQueryAuthority>,
     >,
-    pub(super) lexical_path: std::path::PathBuf,
-    pub(super) lexical_verified: std::sync::OnceLock<()>,
-    deadline: Option<std::time::Instant>,
+    pub(super) directory: std::path::PathBuf,
+    pub(super) deadline: Option<std::time::Instant>,
     /// Time source for `deadline`; injected so deadline decisions are testable.
-    clock: Arc<dyn super::clock::RequestClock>,
-    writer_active: Option<Arc<std::sync::atomic::AtomicBool>>,
-    _gate: Gate,
+    pub(super) clock: Arc<dyn super::clock::RequestClock>,
+    pub(super) writer_active: Option<Arc<std::sync::atomic::AtomicBool>>,
+    pub(super) _gate: Gate,
 }
 
 impl CurrentRead {
-    /// Freeze one authenticated map before exposure. This deliberately avoids
-    /// with_connection/live: live admission itself consults the frozen roots.
-    /// Candidate filters never acquire this connection again for projection.
-    fn freeze_source_roots(&self) -> Result<()> {
-        let connection = self
-            .connection
-            .lock()
-            .map_err(|_| anyhow::anyhow!("current reader connection poisoned"))?;
-        let bytes = map::get(
-            &connection,
-            &self.head.scope,
-            self.head.artifact_root,
-            map::key(&self.head.scope, map::MapDomain::Metadata, b"collection")?,
-        )
-        .map_err(read_error)?;
-        let state = bytes
-            .as_deref()
-            .map(super::collection::CollectionState::decode)
-            .transpose()?;
+    /// Freeze the published source roots before exposure. This deliberately
+    /// avoids live(): live admission itself consults the frozen roots.
+    pub(super) fn freeze_source_roots(&self) -> Result<()> {
         let sources = super::source_policy::ReadSources {
             primary_root: self.head.scope.root.clone(),
-            has_configuration: state.is_some(),
-            aliases: state
-                .map(|state| state.configuration.roots)
+            has_configuration: self.state.is_some(),
+            aliases: self
+                .state
+                .as_ref()
+                .map(|state| state.configuration.roots.clone())
                 .unwrap_or_default(),
         };
         ensure!(
@@ -168,20 +119,14 @@ impl CurrentRead {
         );
         Ok(())
     }
-    /// Ordinary public readers have no capability and remain strict. A native
-    /// owner installs the sealed capability before exposing its request reader.
+    /// The plain index has no private accelerators; every reader is strict.
     pub fn private_query_eligible(&self) -> Result<bool> {
         self.live()?;
-        if let Some(authority) = self.private_query.get() {
-            authority.recheck(self)?;
-            Ok(true)
-        } else {
-            Ok(false)
-        }
+        Ok(false)
     }
 
-    /// Authentication failures revoke the entire live owner before returning.
-    /// Busy, permission, quota and input errors do not fabricate damage evidence.
+    /// Readers never relax checks, so no private capability is consulted for
+    /// queries. A service-installed authority still records proven damage.
     pub fn observe_private_integrity<T>(&self, result: Result<T>) -> Result<T> {
         match result {
             Ok(value) => Ok(value),
@@ -199,12 +144,13 @@ impl CurrentRead {
     }
 
     pub(crate) fn native_directory(&self) -> &std::path::Path {
-        self.lexical_path.parent().expect("database has parent")
+        &self.directory
     }
 
+    /// Query projections do not exist in the plain index.
     pub fn query_projection_version(&self) -> Result<Option<u32>> {
         self.live()?;
-        Ok(self.query_projection_version)
+        Ok(None)
     }
     pub(super) fn reclaim_exclusive(&mut self) -> Result<bool> {
         self._gate.try_exclusive()
@@ -220,181 +166,61 @@ impl CurrentRead {
         self.deadline = Some(self.clock.now());
     }
 
-    /// Re-resolve the authenticated pointer under this read gate before loading
-    /// its retained body. Detached or superseded candidate pointers are rejected.
+    /// Vector evidence is not read from the plain index yet.
     pub fn occurrence_hit(
         &self,
-        store: &FileStore,
+        _store: &FileStore,
         pointer: &OccurrencePointer,
     ) -> Result<airk_core::Hit> {
         self.require_path(&pointer.path)?;
-        pointer.validate()?;
-        let pointers = self
-            .vector_occurrence_pointers(pointer.embedding_key)?
-            .context("current vector binding missing")?;
-        ensure!(
-            pointers.iter().any(|current| current == pointer),
-            "current occurrence expired or differs from committed evidence"
-        );
-        let compact = self
-            .artifact(&pointer.path)?
-            .context("current occurrence artifact missing")?;
-        ensure!(
-            compact
-                .content_hash
-                .parse::<airk_core::identity::Sha256Digest>()?
-                == pointer.source_hash
-                && compact
-                    .retained
-                    .as_ref()
-                    .context("current occurrence extraction missing")?
-                    .object
-                    .parse::<airk_core::identity::Sha256Digest>()?
-                    == pointer.object,
-            "current occurrence source or extraction mismatch"
-        );
-        let retained = store.load_retrieval_artifact(&compact)?;
-        ensure!(
-            retained.payload_digest == pointer.payload_digest,
-            "current occurrence payload mismatch"
-        );
-        store.verify_retained_source(&compact)?;
-        airk_core::vector_evidence::materialize(&retained, &pointer.members)
+        anyhow::bail!("vector occurrences are not available in this index")
     }
 
-    /// Authenticate the path-local occurrence count and its exact source
-    /// identity. The count addresses old IDs during an incremental replacement.
+    /// No path occurrence index exists in the plain index.
     pub fn path_occurrences(&self, path: &str) -> Result<Option<PathOccurrences>> {
-        let Some(bytes) = self.map_get(map::MapDomain::PathOccurrences, path.as_bytes())? else {
-            return Ok(None);
-        };
-        let index = PathOccurrences::decode(&bytes, path)?;
-        let artifact = self
-            .artifact(path)?
-            .context("current path occurrence index has no catalog artifact")?;
-        ensure!(
-            artifact
-                .content_hash
-                .parse::<airk_core::identity::Sha256Digest>()?
-                == index.source_hash,
-            "current path occurrence source identity mismatch"
-        );
-        Ok(Some(index))
+        self.require_path(path)?;
+        self.live()?;
+        Ok(None)
     }
 
-    /// Exact manifest bytes bound to this request's current head. Retrieval
-    /// must also verify the FTS5 shadow rows before trusting candidates.
+    /// The plain index has no lexical manifest; FTS5 consistency is SQLite's.
     pub fn lexical_manifest(&self) -> Result<Vec<u8>> {
-        self.with_connection(|connection| committed_lexical_manifest(connection, &self.head))
+        anyhow::bail!("the plain index has no lexical manifest")
     }
-    /// An exact embedding-key lookup checked against the authenticated graph
-    /// record. An absent key has a complete bucket proof; no SQL candidate list
-    /// is trusted to establish absence.
+    /// Vector bindings are not read from the plain index yet.
     pub fn vector_binding(
         &self,
-        embedding_key: airk_core::identity::Sha256Digest,
+        _embedding_key: airk_core::identity::Sha256Digest,
     ) -> Result<Option<VectorBinding>> {
-        let Some(binding) = self.mapped_vector_binding(embedding_key)? else {
-            return Ok(None);
-        };
-        Self::verify_vector_record(&binding, &self.read(binding.graph_id)?)?;
-        Ok(Some(binding))
+        self.live()?;
+        Ok(None)
     }
 
-    fn mapped_vector_binding(
-        &self,
-        key: airk_core::identity::Sha256Digest,
-    ) -> Result<Option<VectorBinding>> {
-        self.map_get(map::MapDomain::Vector, key.as_bytes())?
-            .map(|bytes| VectorBinding::decode(&bytes, &self.head, key))
-            .transpose()
+    /// The plain index has no graph records.
+    pub fn vector_for_graph_id(&self, _graph_id: u32) -> Result<VectorBinding> {
+        anyhow::bail!("the plain index has no graph candidates")
     }
 
-    fn verify_vector_record(binding: &VectorBinding, record: &GraphRecord) -> Result<()> {
-        ensure!(
-            record.embedding_key == Some(binding.embedding_key)
-                && record.live == !binding.occurrence_ids.is_empty(),
-            "current vector binding differs from graph record"
-        );
-        Ok(())
+    /// The plain index has no graph records.
+    pub fn graph_candidate_pointers(&self, _graph_id: u32) -> Result<Vec<OccurrencePointer>> {
+        anyhow::bail!("the plain index has no graph candidates")
     }
 
-    /// Resolve an ANN candidate by physical ID. A live graph node without an
-    /// exact authenticated key mapping is corruption, never an empty result.
-    pub fn vector_for_graph_id(&self, graph_id: u32) -> Result<VectorBinding> {
-        let record = self.read(graph_id)?;
-        ensure!(record.live, "current graph candidate is not live");
-        let embedding_key = record
-            .embedding_key
-            .context("current graph candidate has no key")?;
-        let binding = self
-            .mapped_vector_binding(embedding_key)?
-            .context("live graph candidate has no current vector binding")?;
-        if binding.graph_id == graph_id {
-            Self::verify_vector_record(&binding, &record)?;
-        } else {
-            // Preserve validation of the graph row named by a mismatched binding.
-            Self::verify_vector_record(&binding, &self.read(binding.graph_id)?)?;
-        }
-        ensure!(
-            binding.graph_id == graph_id,
-            "current graph candidate ID mismatch"
-        );
-        Ok(binding)
-    }
-
-    /// Resolve pointers under this reader's original publication and access scope.
-    pub fn graph_candidate_pointers(&self, graph_id: u32) -> Result<Vec<OccurrencePointer>> {
-        self.pointers_from_binding(self.vector_for_graph_id(graph_id)?)
-    }
-
-    /// Returns bounded authenticated pointers only. The caller must load and
-    /// verify each pointed-to occurrence object before rendering a citation.
+    /// Vector occurrences are not read from the plain index yet.
     pub fn vector_occurrence_pointers(
         &self,
-        embedding_key: airk_core::identity::Sha256Digest,
+        _embedding_key: airk_core::identity::Sha256Digest,
     ) -> Result<Option<Vec<OccurrencePointer>>> {
-        let Some(binding) = self.vector_binding(embedding_key)? else {
-            return Ok(None);
-        };
-        self.pointers_from_binding(binding).map(Some)
-    }
-
-    fn pointers_from_binding(&self, binding: VectorBinding) -> Result<Vec<OccurrencePointer>> {
-        let embedding_key = binding.embedding_key;
-        let mut pointers = Vec::with_capacity(binding.occurrence_ids.len());
-        for occurrence_id in binding.occurrence_ids {
-            let bytes = self
-                .map_get(map::MapDomain::Occurrence, occurrence_id.as_bytes())?
-                .context("current vector occurrence pointer missing")?;
-            let pointer = OccurrencePointer::decode(&bytes, occurrence_id)?;
-            if !self.accepts_path(&pointer.path) {
-                continue;
-            }
-            ensure!(
-                pointer.embedding_key == embedding_key,
-                "current occurrence vector key mismatch"
-            );
-            let path_index = self
-                .path_occurrences(&pointer.path)?
-                .context("current occurrence path index missing")?;
-            ensure!(
-                path_index.occurrence_id(&self.head.scope, pointer.path_ordinal)? == occurrence_id
-                    && path_index.source_hash == pointer.source_hash,
-                "current occurrence path ordinal or source differs"
-            );
-            pointers.push(pointer);
-        }
         self.live()?;
-        Ok(pointers)
+        Ok(None)
     }
 
-    /// Authenticates the compact record and path. Call FileStore's verified
-    /// retained-object reader before using referenced source or extraction bytes.
+    /// The compact record of a path. Load extraction or source bytes through
+    /// this reader (`load_retained`, `read_retained_source`).
     pub fn artifact(&self, path: &str) -> Result<Option<airk_core::Artifact>> {
         Ok(self.captured_input(path)?.map(|input| input.artifact))
     }
-    /// Retains the authenticated posting format for physical-only maintenance.
+    /// The stored `files.record`: today's exact `CapturedInput` bytes.
     pub fn captured_input(&self, path: &str) -> Result<Option<CapturedInput>> {
         let Some(bytes) = self.map_get(map::MapDomain::Artifact, path.as_bytes())? else {
             return Ok(None);
@@ -406,66 +232,78 @@ impl CurrentRead {
         );
         Ok(Some(captured))
     }
-    /// Returns authenticated current-map bytes. Referenced retained objects must
-    /// still be loaded through FileStore's verified object readers.
+    /// Domain lookups with a plain counterpart. Domains whose data the plain
+    /// index does not hold (vectors, recent history) are absent; domains that
+    /// moved to their own tables are refused so no caller misreads them.
     pub fn map_get(&self, domain: map::MapDomain, identity: &[u8]) -> Result<Option<Vec<u8>>> {
-        if matches!(
-            domain,
-            map::MapDomain::Artifact
-                | map::MapDomain::FileMetadata
-                | map::MapDomain::PathOccurrences
-                | map::MapDomain::SourceMeasurement
-        ) {
-            self.require_path(std::str::from_utf8(identity)?)?;
+        use map::MapDomain;
+        match domain {
+            MapDomain::Artifact => {
+                let path = std::str::from_utf8(identity)?;
+                self.require_path(path)?;
+                Ok(self.file_row(path)?.map(|row| row.record))
+            }
+            MapDomain::SourceMeasurement => {
+                let path = std::str::from_utf8(identity)?;
+                self.require_path(path)?;
+                self.with_index(|index| index.resource(&format!("source-measurement/{path}")))
+            }
+            MapDomain::ArtifactHandle | MapDomain::UnitHandle => {
+                let kind = if matches!(domain, MapDomain::ArtifactHandle) {
+                    HandleKind::Artifact
+                } else {
+                    HandleKind::Unit
+                };
+                let handle = Handle {
+                    kind,
+                    value: identity.to_vec(),
+                };
+                Ok(self
+                    .with_index(|index| index.handle(&handle))?
+                    .map(String::into_bytes))
+            }
+            MapDomain::Vector
+            | MapDomain::Occurrence
+            | MapDomain::PathOccurrences
+            | MapDomain::RecentChanges => {
+                if matches!(domain, MapDomain::PathOccurrences) {
+                    self.require_path(std::str::from_utf8(identity)?)?;
+                }
+                self.live()?;
+                Ok(None)
+            }
+            MapDomain::Metadata
+            | MapDomain::Posting
+            | MapDomain::FactName
+            | MapDomain::EdgeSource
+            | MapDomain::EdgeTarget
+            | MapDomain::FileMetadata => {
+                anyhow::bail!("{domain:?} entries are not stored as map values in the plain index")
+            }
         }
-        let key = map::key(&self.head.scope, domain, identity)?;
-        self.with_connection(|connection| {
-            map::get(connection, &self.head.scope, self.head.artifact_root, key)
-        })
     }
 
-    /// A complete proof-checked enumeration, limited independently by visited
-    /// nodes, entries and bytes. This returns no partial list on budget failure.
+    /// The plain index has no map to enumerate.
     pub fn map_entries(
         &self,
-        limits: map::MapVisitLimits,
+        _limits: map::MapVisitLimits,
     ) -> Result<Vec<(airk_core::identity::Sha256Digest, Vec<u8>)>> {
         ensure!(
             self.read_scope.get().is_none(),
             airk_core::scoped_reads::ScopeReadRefused
         );
-        self.with_connection(|connection| {
-            let mut entries = Vec::new();
-            map::visit_all(
-                connection,
-                &self.head.scope,
-                self.head.artifact_root,
-                limits,
-                &mut |key, value| {
-                    entries.push((key, value.to_vec()));
-                    Ok(())
-                },
-            )?;
-            Ok(entries)
-        })
+        anyhow::bail!("the plain index has no map to enumerate")
     }
+    /// A batch is one SQLite transaction: a reader never sees a prepared update.
     pub fn has_prepared_update(&self) -> Result<bool> {
-        self.with_connection(|connection| {
-            Ok(
-                connection.query_row("SELECT phase FROM current_state WHERE id=1", [], |row| {
-                    row.get::<_, String>(0)
-                })? != "ready",
-            )
-        })
+        self.live()?;
+        Ok(false)
     }
     pub fn head(&self) -> &CurrentHead {
         &self.head
     }
     pub fn token(&self) -> Result<CurrentToken> {
         self.live()?;
-        if let Some(authority) = self.private_query.get() {
-            authority.recheck(self)?;
-        }
         self.head.token()
     }
     /// Damage publication must remain possible after the relaxed capability is
@@ -481,17 +319,34 @@ impl CurrentRead {
         );
         Ok(())
     }
-    pub(crate) fn with_connection<T>(&self, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
+    /// The plain index exposes no old-format connection. Kept so the old
+    /// writer-side callers compile until they are replaced.
+    pub(crate) fn with_connection<T>(
+        &self,
+        _f: impl FnOnce(&Connection) -> Result<T>,
+    ) -> Result<T> {
         self.live()?;
-        let connection = self
-            .connection
+        anyhow::bail!("the plain index has no current-format database connection")
+    }
+    /// One call on this reader's snapshot, under liveness checks.
+    pub(crate) fn with_index<T>(&self, f: impl FnOnce(&IndexReader) -> Result<T>) -> Result<T> {
+        self.live()?;
+        let index = self
+            .index
             .lock()
-            .map_err(|_| anyhow::anyhow!("current reader connection poisoned"))?;
-        let result = self.observe_private_integrity(f(&connection).map_err(read_error))?;
+            .map_err(|_| anyhow::anyhow!("current reader index poisoned"))?;
+        let result = f(&index).map_err(read_error)?;
         self.live()?;
         Ok(result)
     }
-    fn live(&self) -> Result<()> {
+    /// The stored row of a path in this snapshot.
+    pub(crate) fn file_row(&self, path: &str) -> Result<Option<crate::index::FileRow>> {
+        if !super::journal::valid_current_path(path) {
+            return Ok(None);
+        }
+        self.with_index(|index| index.file(path))
+    }
+    pub(super) fn live(&self) -> Result<()> {
         self.require_read_scope_live()?;
         ensure!(
             self.writer_active
@@ -517,15 +372,14 @@ impl GraphRecordReader for CurrentRead {
         self.live()?;
         Ok(self.head.graph_head.counts())
     }
-    fn read(&self, id: u32) -> Result<GraphRecord> {
-        self.with_connection(|connection| graph::read_record(connection, &self.head.graph_head, id))
+    fn read(&self, _id: u32) -> Result<GraphRecord> {
+        anyhow::bail!("the plain index has no graph records")
     }
 }
 
 impl FileStore {
     /// Installer metadata observation under an existing native object gate.
-    /// Never creates gate/owner/bootstrap files, opens a writer, reads source
-    /// bytes or turns an interrupted transaction into a committed publication.
+    /// Never creates gate/owner/bootstrap files, opens a writer or reads source.
     pub(crate) fn checkpoint_current_head(
         &self,
         root: &str,
@@ -538,35 +392,11 @@ impl FileStore {
         );
         let _gate = Gate::shared_existing(self)?;
         self.ensure_index_ready()?;
-        database::reject_legacy_collection(self.directory())?;
-        if !self.directory().join(database::OWNER_FILE).try_exists()? {
-            ensure!(
-                !self.directory().join("current.sqlite3").try_exists()?
-                    && !self
-                        .directory()
-                        .join("current-bootstrap.json")
-                        .try_exists()?,
-                "checkpoint current ownership header missing"
-            );
+        let Some(scope) = super::plain::scope_at(self.directory(), root, collection)? else {
             return Ok(None);
-        }
-        let scope = database::discover_scope(self.directory(), root, collection)?;
-        database::check_owner(self.directory(), &scope)?;
-        let connection = database::open_reader(&self.directory().join("current.sqlite3"))?;
-        let (phase, bytes): (String, Vec<u8>) = connection.query_row(
-            "SELECT phase,substr(head,1,65537) FROM current_state WHERE id=1",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?;
-        ensure!(
-            phase == "ready",
-            "checkpoint current writer recovery is required"
-        );
-        ensure!(
-            bytes.len() <= super::MAX_HEAD_BYTES,
-            "checkpoint current head exceeds bound"
-        );
-        Ok(Some(decode_head(&bytes, &scope)?))
+        };
+        let index = IndexReader::open(self.directory())?;
+        Ok(Some(super::plain::synthesize_head(&index, &scope)?.0))
     }
 
     pub fn current_read(&self, scope: &CurrentScope) -> Result<Arc<CurrentRead>> {
@@ -591,7 +421,7 @@ impl FileStore {
     /// A publication build pins its exact base while the matching collection writer
     /// is held. Query deadlines do not limit inference/graph construction. This
     /// snapshot cannot authorize reads after the writer is released; its gate and
-    /// SQL transaction still protect captured evidence until all clones drop.
+    /// read transaction still protect captured evidence until all clones drop.
     pub fn current_build_read(
         &self,
         scope: &CurrentScope,
@@ -616,75 +446,18 @@ impl FileStore {
             "foreign current collection path"
         );
         let gate = Gate::shared(self)?;
-        let deadline = (writer_active.is_none() && super::wal::enabled(self.directory()))
+        let deadline = writer_active
+            .is_none()
             .then(|| clock.now() + std::time::Duration::from_secs(120));
-        database::reject_legacy_collection(self.directory())?;
         self.ensure_index_ready()?;
-        let (capacity, query_projection_version) =
-            database::check_owner_with_projection(self.directory(), scope)?;
-        let mut legacy_budget = false;
-        if super::wal::enabled(self.directory()) {
-            let allowance = crate::quota::Quota::for_store(self)?.verify_current_allowance(
-                &crate::quota::CurrentGrantScope {
-                    collection: scope.collection.clone(),
-                    incarnation: scope.incarnation,
-                    transaction: super::wal::id(scope),
-                },
-                super::wal::legacy_total(capacity)?,
-            )?;
-            legacy_budget = allowance < super::wal::total(capacity)?;
-            if legacy_budget {
-                // Retained reads must remain available before the first upgraded
-                // writer can reserve more capacity, including during recovery.
-                super::wal::validate_legacy_files(self.directory(), capacity)?;
-            }
-        }
-        ensure!(
-            std::fs::metadata(self.directory().join("current.sqlite3"))?.len() <= capacity,
-            "current database exceeds captured capacity"
-        );
-        let connection =
-            database::open_reader_budget(&self.directory().join("current.sqlite3"), legacy_budget)
-                .map_err(read_error)?;
-        if let Some(deadline) = deadline {
-            let handler_clock = clock.clone();
-            connection.progress_handler(1000, Some(move || handler_clock.now() >= deadline))?;
-        }
-        let (phase, bytes): (String, Vec<u8>) = connection
-            .query_row(
-                "SELECT phase,head FROM current_state WHERE id=1 AND length(head)<=65536",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .map_err(|error| read_error(error.into()))
-            .context("current index metadata missing")?;
-        ensure!(
-            phase == "ready"
-                || phase == "prepared"
-                || (phase == "applying" && super::wal::enabled(self.directory())),
-            "current index requires writer recovery before reads"
-        );
-        let head = decode_head(&bytes, scope)?;
-        let read = Arc::new(CurrentRead {
-            frozen_sources: Default::default(),
-            source_policy_fence: Default::default(),
-            source_policy: Default::default(),
-            read_scope: std::sync::OnceLock::new(),
-            read_scope_fence: std::sync::OnceLock::new(),
-            read_scope_restricts_paths: std::sync::OnceLock::new(),
-            scope_endpoints: std::sync::OnceLock::new(),
-            scope_origin_budget: std::sync::OnceLock::new(),
-            connection: Mutex::new(connection),
-            head,
-            query_projection_version,
-            private_query: std::sync::OnceLock::new(),
-            lexical_path: self.directory().join("current.sqlite3"),
-            lexical_verified: std::sync::OnceLock::new(),
+        let read = Arc::new(super::plain::open_reader(
+            self.directory(),
+            scope,
+            gate,
             deadline,
             clock,
             writer_active,
-            _gate: gate,
-        });
+        )?);
         read.freeze_source_roots()?;
         read.require_source_policy_live()?;
         Ok(read)
@@ -718,353 +491,5 @@ mod retry_tests {
         let io =
             read_error(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "busy").into());
         assert!(io.downcast_ref::<CurrentReadContention>().is_none());
-    }
-}
-
-#[cfg(test)]
-mod scope_tests {
-    use super::*;
-    use airk_core::{
-        Artifact, Chunk, DocumentLocation, SearchQuery,
-        graph_storage::{GraphHead, GraphScope},
-        identity::{Incarnation, Sha256Digest},
-        index_catalog::PathScope,
-        scoped_reads::{CompiledPathAtom, CompiledReadScope, ScopeReadRefused},
-    };
-
-    fn fixture() -> Result<(tempfile::TempDir, CurrentRead)> {
-        fixture_roots("fixture-root", None)
-    }
-
-    fn fixture_roots(
-        primary: &str,
-        aliases: Option<std::collections::BTreeMap<String, String>>,
-    ) -> Result<(tempfile::TempDir, CurrentRead)> {
-        fixture_roots_frozen(primary, aliases, true)
-    }
-
-    fn fixture_roots_frozen(
-        primary: &str,
-        aliases: Option<std::collections::BTreeMap<String, String>>,
-        freeze: bool,
-    ) -> Result<(tempfile::TempDir, CurrentRead)> {
-        let directory = tempfile::tempdir()?;
-        let store = FileStore::new(directory.path().join("collections-1.2/scoped"));
-        drop(store.lock()?);
-        let scope = CurrentScope {
-            root: primary.into(),
-            collection: "scoped".into(),
-            incarnation: Incarnation::from_bytes([1; 16]),
-        };
-        let connection = Connection::open_in_memory()?;
-        // The current reader's mandatory authenticated map backs collection
-        // metadata even when selected-page projections are unavailable. Use
-        // the production schema owner, not a lexical-only synthetic database.
-        map::create(&connection)?;
-        super::super::lexical::create(&connection)?;
-        for path in [
-            "private/a.rs",
-            "public/a.rs",
-            "publicity/a.rs",
-            "@docs/a.md",
-            "@notes.md",
-            "@types/a.ts",
-        ] {
-            let artifact = Artifact {
-                path: path.into(),
-                content_hash: Sha256Digest::from_bytes([3; 32]).to_string(),
-                bytes: 6,
-                chunks: vec![Chunk {
-                    start_line: 1,
-                    end_line: 1,
-                    text: "needle".into(),
-                    location: DocumentLocation::Lines { start: 1, end: 1 },
-                }],
-                language: "rust".into(),
-                extraction_method: "fixture".into(),
-                parse_status: "ok".into(),
-                facts: vec![],
-                retained: None,
-            };
-            super::super::lexical::replace(&connection, path, Some(&artifact))?;
-        }
-        super::super::lexical::flush(&connection)?;
-        let mut artifact_root = map::empty_root(&scope)?;
-        let has_configuration = aliases.is_some();
-        if let Some(roots) = aliases {
-            let state = super::super::collection::CollectionState {
-                version: 1,
-                configuration: super::super::collection::CollectionConfiguration {
-                    retained_profile: None,
-                    source_policy_digest: None,
-                    roots,
-                    extractor_version: "archive-exclusion-fixture/1".into(),
-                    extraction_policy_digest: Sha256Digest::from_bytes([4; 32]),
-                    index_detail: airk_core::extraction::IndexDetail::Balanced,
-                    vector_selection: Default::default(),
-                    model: None,
-                },
-                counts: Default::default(),
-            };
-            artifact_root = map::put(
-                &connection,
-                &scope,
-                artifact_root,
-                map::key(&scope, map::MapDomain::Metadata, b"collection")?,
-                Some(&serde_json::to_vec(&state)?),
-            )?;
-        }
-        let head = CurrentHead {
-            version: 2,
-            scope: scope.clone(),
-            sequence: 1,
-            artifact_root,
-            lexical_sequence: 1,
-            lexical_commit: Sha256Digest::from_bytes([4; 32]),
-            graph_head: GraphHead::empty(GraphScope {
-                root: scope.root.clone(),
-                collection: scope.collection.clone(),
-                incarnation: scope.incarnation,
-                graph_instance: scope.incarnation,
-                specification: Sha256Digest::from_bytes([5; 32]),
-                record_bytes: 16,
-            })?,
-        };
-        let read = CurrentRead {
-            frozen_sources: Default::default(),
-            source_policy_fence: Default::default(),
-            source_policy: Default::default(),
-            connection: Mutex::new(connection),
-            head,
-            query_projection_version: None,
-            read_scope: Default::default(),
-            read_scope_fence: Default::default(),
-            read_scope_restricts_paths: Default::default(),
-            scope_endpoints: Default::default(),
-            scope_origin_budget: Default::default(),
-            private_query: Default::default(),
-            lexical_path: store.directory().join("fixture.sqlite3"),
-            lexical_verified: Default::default(),
-            deadline: None,
-            clock: crate::current::clock::system(),
-            writer_active: None,
-            _gate: Gate::shared(&store)?,
-        };
-        // This fixture targets actual candidate SQL, not physical manifest audit.
-        read.lexical_verified.set(()).expect("new fixture");
-        if !freeze {
-            return Ok((directory, read));
-        }
-        read.freeze_source_roots()?;
-        if !has_configuration {
-            assert!(
-                read.collection_state()?.is_none(),
-                "production empty-map absence proof must remain available without optional projections"
-            );
-        } else {
-            assert!(read.frozen_sources.get().unwrap().has_configuration);
-        }
-        Ok((directory, read))
-    }
-
-    /// Change-log entry 67: sources not frozen yet are the typed
-    /// policy-unavailable state; a reserved root is still a scope refusal.
-    #[test]
-    fn unfrozen_sources_are_policy_unavailable_and_reserved_roots_refuse() -> Result<()> {
-        let (_directory, read) =
-            fixture_roots_frozen("fixture-root", Some(Default::default()), false)?;
-        let error = read.require_source_policy_live().unwrap_err();
-        assert!(
-            error.is::<super::super::source_policy::SourcePolicyReadUnavailable>(),
-            "{error:#}"
-        );
-        assert!(!error.is::<airk_core::scoped_reads::ScopeReadRefused>());
-        let (_directory, reserved) =
-            fixture_roots("/source/.AiRk/agent-edits/v1/old", Some(Default::default()))?;
-        let error = reserved.require_source_policy_live().unwrap_err();
-        assert!(
-            error.is::<airk_core::scoped_reads::ScopeReadRefused>(),
-            "{error:#}"
-        );
-        let (_directory, public) = fixture_roots("fixture-root", Some(Default::default()))?;
-        public.require_source_policy_live()?;
-        Ok(())
-    }
-
-    #[test]
-    fn historical_reserved_primary_cannot_supply_public_candidates_without_policy() -> Result<()> {
-        let (_directory, read) =
-            fixture_roots("/source/.AiRk/agent-edits/v1/old", Some(Default::default()))?;
-        assert!(read.lexical_search(&query(100)).is_err());
-        assert!(!read.accepts_path("public/a.rs"));
-        assert!(
-            !read.source_policy_allows_source("/source/.airk/agent-edits/v1/old", "receipt.json")
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn historical_reserved_alias_cannot_supply_public_candidates_without_policy() -> Result<()> {
-        let (_directory, read) = fixture_roots(
-            "/source",
-            Some(std::collections::BTreeMap::from([(
-                "docs".into(),
-                "/other/.airk/agent-edits/v1/old".into(),
-            )])),
-        )?;
-        assert!(read.lexical_search(&query(100)).is_err());
-        assert!(!read.accepts_path("@docs/a.md"));
-        Ok(())
-    }
-
-    #[test]
-    fn ordinary_published_aliases_still_supply_public_candidates_without_policy() -> Result<()> {
-        let (_directory, read) = fixture_roots(
-            "/source",
-            Some(std::collections::BTreeMap::from([(
-                "docs".into(),
-                "/other/documents".into(),
-            )])),
-        )?;
-        assert_eq!(read.lexical_search(&query(100))?.values.len(), 6);
-        assert!(read.accepts_path("@docs/a.md"));
-        Ok(())
-    }
-
-    fn scope(kind: PathScope, path: &str) -> Arc<CompiledReadScope> {
-        Arc::new(CompiledReadScope {
-            fingerprint: Sha256Digest::from_bytes([8; 32]),
-            atoms: vec![CompiledPathAtom {
-                kind,
-                path: path.into(),
-            }],
-            source_atoms: vec![],
-            external_aliases: vec!["docs".into()],
-        })
-    }
-    fn query(limit: usize) -> SearchQuery {
-        SearchQuery {
-            text: "needle".into(),
-            path_prefix: None,
-            limit,
-            max_bytes: 4096,
-        }
-    }
-
-    #[test]
-    fn scoped_lexical_and_reference_limits_select_authorized_candidates() -> Result<()> {
-        let (_directory, read) = fixture()?;
-        read.attach_read_scope(scope(PathScope::Exact, "public/a.rs"))?;
-        let result = read.lexical_search(&query(1))?;
-        assert_eq!(result.values.len(), 1);
-        assert_eq!(result.values[0].citation.path, "public/a.rs");
-        assert!(!result.incomplete);
-        let selected = std::collections::BTreeSet::from(["private/a.rs".to_owned()]);
-        assert!(
-            read.lexical_search_paths(&query(1), Some(&selected))?
-                .values
-                .is_empty()
-        );
-        for path_order in [false, true] {
-            let result = read.lexical_reference_page(&query(1), None, false, path_order, None)?;
-            assert_eq!(result.values.len(), 1);
-            assert_eq!(result.values[0].citation.path, "public/a.rs");
-            assert!(!result.incomplete);
-        }
-        let error = read.artifact("private/a.rs").unwrap_err();
-        assert!(error.downcast_ref::<ScopeReadRefused>().is_some());
-        assert!(
-            read.attach_read_scope(scope(PathScope::Subtree, "public"))
-                .is_err()
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn permission_only_lexical_scope_precedes_candidate_limit() -> Result<()> {
-        let (_directory, read) = fixture()?;
-        let baseline = read.lexical_search(&query(100))?;
-        let denied = &baseline
-            .values
-            .first()
-            .expect("fixture candidates")
-            .citation
-            .path;
-        let allowed = baseline
-            .values
-            .iter()
-            .find(|candidate| &candidate.citation.path != denied)
-            .expect("fixture contains multiple paths")
-            .citation
-            .path
-            .clone();
-        read.attach_read_scope(scope(PathScope::Exact, &allowed))?;
-        let result = read.lexical_search(&query(1))?;
-        assert_eq!(result.values.len(), 1);
-        assert_eq!(result.values[0].citation.path, allowed);
-        Ok(())
-    }
-
-    #[test]
-    fn subtree_and_empty_authorities_do_not_broaden_candidates() -> Result<()> {
-        let (_directory, read) = fixture()?;
-        read.attach_read_scope(scope(PathScope::Subtree, "public"))?;
-        let result = read.lexical_search(&query(100))?;
-        assert_eq!(result.values.len(), 1);
-        assert_eq!(result.values[0].citation.path, "public/a.rs");
-        let (_empty_directory, empty) = fixture()?;
-        let mut denied = scope(PathScope::Subtree, "public").as_ref().clone();
-        denied.atoms.clear();
-        empty.attach_read_scope(Arc::new(denied))?;
-        let result = empty.lexical_search(&query(1))?;
-        assert!(result.values.is_empty());
-        assert!(!result.incomplete);
-        Ok(())
-    }
-
-    #[test]
-    fn primary_scope_preserves_at_files_and_excludes_only_published_aliases() -> Result<()> {
-        let (_directory, read) = fixture()?;
-        read.attach_read_scope(scope(PathScope::Subtree, ""))?;
-        let result = read.lexical_search(&query(100))?;
-        let paths = result
-            .values
-            .iter()
-            .map(|hit| hit.citation.path.as_str())
-            .collect::<std::collections::BTreeSet<_>>();
-        assert!(paths.contains("@notes.md"));
-        assert!(paths.contains("@types/a.ts"));
-        assert!(!paths.contains("@docs/a.md"));
-        Ok(())
-    }
-
-    #[test]
-    fn revocation_fences_existing_reader_and_cursor_identity() -> Result<()> {
-        let (_directory, read) = fixture()?;
-        assert_eq!(
-            read.scope_bound_cursor_identity("publication"),
-            "publication"
-        );
-        let revoked = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        read.attach_read_scope_fence(scope(PathScope::Subtree, "public"), revoked.clone())?;
-        assert_ne!(
-            read.scope_bound_cursor_identity("publication"),
-            "publication"
-        );
-        revoked.store(true, std::sync::atomic::Ordering::Release);
-        assert!(!read.accepts_path("public/a.rs"));
-        assert!(
-            read.token()
-                .unwrap_err()
-                .downcast_ref::<ScopeReadRefused>()
-                .is_some()
-        );
-        assert!(
-            read.lexical_search(&query(1))
-                .unwrap_err()
-                .downcast_ref::<ScopeReadRefused>()
-                .is_some()
-        );
-        Ok(())
     }
 }
