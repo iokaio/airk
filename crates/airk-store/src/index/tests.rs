@@ -479,6 +479,39 @@ fn vectors_are_searchable_after_commit_and_shared_by_key() -> Result<()> {
     assert_eq!(reader.rows_for_paths(&["src/b.py".into()])?, [0]);
     let subset = matrix.search(&[1.0, 0.0], 5, Some(&[0]))?;
     assert_eq!(subset.iter().map(|hit| hit.row).collect::<Vec<_>>(), [0]);
+    let tied = matrix.search(&[0.5, 0.5], 2, Some(&[1, 0]))?;
+    assert_eq!(tied.iter().map(|hit| hit.row).collect::<Vec<_>>(), [0, 1]);
+    assert_eq!(matrix.search(&[0.5, 0.5], 1, Some(&[1, 0]))?, tied[..1]);
+    #[cfg(feature = "test-support")]
+    {
+        let mut all = Vec::new();
+        reader.visit_scoped_vector_occurrences(None, None, 2, |row, path, ordinal| {
+            all.push((row, path.to_owned(), ordinal));
+            Ok(())
+        })?;
+        assert_eq!(
+            all,
+            [
+                (0, "src/a.rs".into(), 0),
+                (0, "src/b.py".into(), 0),
+                (1, "src/a.rs".into(), 1),
+            ]
+        );
+        let mut filtered = Vec::new();
+        reader.visit_scoped_vector_occurrences(
+            Some(r#"["src/a.rs"]"#),
+            Some("src/"),
+            2,
+            |row, path, ordinal| {
+                filtered.push((row, path.to_owned(), ordinal));
+                Ok(())
+            },
+        )?;
+        assert_eq!(
+            filtered,
+            [(0, "src/a.rs".into(), 0), (1, "src/a.rs".into(), 1)]
+        );
+    }
     Ok(())
 }
 

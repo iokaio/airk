@@ -13,6 +13,14 @@ retained artifact and extraction before materializing a citation.
 The branch reports incomplete results when its candidate or evidence
 budget truncates the selected scope.
 
+A test-support build can emit a private vector census when
+`AIRK_PRIVATE_VECTOR_CENSUS_PATHS` holds a JSON array of cohort target
+paths. For each embedding, the trace records one-based occurrence ranks
+among all authorized live rows and occurrences in the pinned publication.
+It includes the query digest, publication and pipeline and emits only
+target path and ordinal positions. It does not widen the ordinary
+Search response. Use it only in isolated evaluation services.
+
 ## Permanent denies and the scoped path roster (22 November 2026)
 
 Before this fix, `filtered_paths` built a bounded path roster whenever the

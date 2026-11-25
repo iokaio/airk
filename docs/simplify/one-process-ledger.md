@@ -19834,3 +19834,33 @@ lists and fusion for the instruction, focused and fact-derived query
 forms. Existing service traces are capped, and the stored corpus audit
 does not by itself provide exact ranks. After the census, finish the label
 and fidelity audits and query-time checks before choosing any pilot.
+
+### 25 November 2026 — Native exact vector rank capture
+
+The Store and Kernel now expose sparse occurrence ranks in a test-support
+CUDA lifetime. The capture uses canonical dot products and row tie order,
+applies the pinned reader's scope, and counts other authorized occurrences
+before projecting the target paths. The settled CUDA launcher accepts a
+SHA-256-pinned target roster. The replay driver binds each event to its
+query, model pipeline and publication. This advances the vector branch of
+the census. The live replay, lexical and fusion measurements remain open.
+
+Self-review used the verified Windows SID and the warm
+`answer-eval-r1/answer-loop/target-cuda` target with Cargo 1.98.0,
+Nextest 0.9.148, locked offline input and incremental 1. The older offline
+prescription was refused because its Cargo.lock hash differs. The current
+batch reused the exact build-environment digest and owned cache from the
+successful Step 8 receipt. D: had 395,946,455,040 bytes free at admission.
+The batch reserved 16 GiB above the 200 GiB campaign free-space floor.
+
+Store and Kernel test-support Clippy passed in 46.93 seconds. Nextest
+selected one exact-vector regression and passed it with 919 skipped, after
+77 seconds of compilation. The native execution receipt is
+`answer-loop/L5C/windows-completion-vector-census-r1/execution.json`,
+SHA-256 `d069e59e739338ec78f736b34eb80205c0cec63be7da7a3780ac8fb06944d217`.
+It records the commands, logs, timings and 415 checked outputs. Thirteen
+CUDA launcher tests and one trace-binding test passed on Python 3.13.
+Scoped Rust formatting, whitespace and repository checks passed. The
+workspace formatting probe found existing differences outside the changed
+files, which this work leaves for their owners. No matching CUDA image
+or new rank result was produced by these checks.

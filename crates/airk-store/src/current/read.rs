@@ -318,6 +318,84 @@ impl CurrentRead {
         })
     }
 
+    /// Exact ranks for the named paths in a private, pinned vector census.
+    #[cfg(feature = "test-support")]
+    pub fn audit_vector_occurrence_ranks(
+        &self,
+        pipeline: airk_core::identity::Sha256Digest,
+        query: &[f32],
+        paths: Option<&[String]>,
+        prefix: Option<&str>,
+        targets: &std::collections::BTreeSet<String>,
+    ) -> Result<Vec<(usize, String, u32)>> {
+        const MAX_CENSUS_ROWS: u64 = 250_000;
+        const MAX_CENSUS_TARGETS: usize = 512;
+        ensure!(
+            !targets.is_empty() && targets.len() <= MAX_CENSUS_TARGETS,
+            "invalid vector census target count"
+        );
+        let paths = paths.map(serde_json::to_string).transpose()?;
+        self.with_index(|index| {
+            let (setup, _, committed) = index.vector_setup()?.context("vector setup missing")?;
+            ensure!(
+                committed <= MAX_CENSUS_ROWS && setup.pipeline == pipeline,
+                "vector census matrix exceeds the admitted cohort or pipeline"
+            );
+            let mut counts = vec![0_usize; usize::try_from(committed)?];
+            let mut matched = std::collections::BTreeMap::new();
+            index.visit_scoped_vector_occurrences(
+                paths.as_deref(),
+                prefix,
+                committed,
+                |row, path, ordinal| {
+                    if !self.accepts_path(path) {
+                        return Ok(());
+                    }
+                    let count = &mut counts[usize::try_from(row)?];
+                    if *count == 0 {
+                        self.live()?;
+                    }
+                    *count += 1;
+                    if targets.contains(path) {
+                        matched.entry(row).or_insert_with(Vec::new).push((
+                            *count,
+                            path.to_owned(),
+                            ordinal,
+                        ));
+                    }
+                    Ok(())
+                },
+            )?;
+            let live: Vec<_> = counts
+                .iter()
+                .enumerate()
+                .filter(|(_, count)| **count > 0)
+                .map(|(row, _)| u64::try_from(row))
+                .collect::<std::result::Result<_, _>>()?;
+            let matrix = index
+                .load_vectors()?
+                .context("indexed vectors disappeared")?;
+            let ranked = matrix.search(query, live.len(), Some(&live))?;
+            ensure!(
+                ranked.len() == live.len(),
+                "vector census did not rank every live row"
+            );
+            let mut preceding = 0;
+            let mut result = Vec::new();
+            for hit in ranked {
+                if let Some(positions) = matched.remove(&hit.row) {
+                    result.extend(
+                        positions
+                            .into_iter()
+                            .map(|(offset, path, ordinal)| (preceding + offset, path, ordinal)),
+                    );
+                }
+                preceding += counts[usize::try_from(hit.row)?];
+            }
+            Ok(result)
+        })
+    }
+
     /// No path occurrence index exists in the plain index.
     pub fn path_occurrences(&self, path: &str) -> Result<Option<PathOccurrences>> {
         self.require_path(path)?;

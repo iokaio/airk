@@ -258,6 +258,25 @@ def card_capture_environment(enabled, model, dispatch_observer):
     return {"AIRK_ARBITER_EVALUATION_CARD_CAPTURE": "true"}
 
 
+def vector_census_environment(path, expected):
+    if path is None and expected is None:
+        return {}
+    require(path is not None and expected is not None and re.fullmatch(r"[a-f0-9]{64}", expected),
+            "the vector census needs an audit input and its SHA-256")
+    raw = Path(path).read_bytes()
+    require(len(raw) <= 1024 * 1024 and hashlib.sha256(raw).hexdigest() == expected,
+            "vector census input length or digest differs")
+    collections = json.loads(raw)["collections"]
+    require({entry["repository"] for entry in collections} == set(FX.DEFAULT_REPOSITORIES)
+            and len(collections) == len(FX.DEFAULT_REPOSITORIES), "wrong vector census repositories")
+    paths = [path for entry in collections for path in entry["paths"]]
+    require(all(isinstance(path, str) and path for path in paths), "vector census paths must be nonempty strings")
+    paths = sorted(set(paths))
+    encoded = json.dumps(paths, separators=(",", ":"))
+    require(0 < len(paths) <= 512 and len(encoded) < 24_000, "vector census path roster exceeds launch bounds")
+    return {"AIRK_PRIVATE_VECTOR_CENSUS_PATHS": encoded}
+
+
 def worker(args):
     """fixture.py's worker with the CUDA selector and its pinned inputs in the service environment."""
     # fixture.py's worker launches SELECTORS[args.selector] and adds the change-set
@@ -281,6 +300,7 @@ def worker(args):
     FX.ENVIRONMENT.update(math_environment())
     FX.ENVIRONMENT.update(DECISION_ENVIRONMENT)
     FX.ENVIRONMENT.update(card_capture_environment(args.card_capture, args.model, args.dispatch_observer))
+    FX.ENVIRONMENT.update(vector_census_environment(args.vector_census_input, args.vector_census_sha256))
     if args.synthetic_root:
         FX.REPOSITORIES[SYNTHETIC] = Path(args.synthetic_root)
         FX.EXCLUSIONS[SYNTHETIC] = []
@@ -343,6 +363,10 @@ def start(args):
     images = FX.image_pins(Path(args.image))
     math_environment()
     capture = card_capture_environment(args.card_capture, args.model, args.dispatch_observer)
+    census = vector_census_environment(args.vector_census_input, args.vector_census_sha256)
+    if census:
+        require(args.reuse_settled and tuple(args.repositories) == tuple(FX.DEFAULT_REPOSITORIES),
+                "vector census requires the settled evaluation pair")
     # Pins checked before launch.
     pair = None
     if args.model == PAIR:
@@ -365,6 +389,7 @@ def start(args):
         **({"card_capture": True} if capture else {}),
         **({"reuse_settled": True} if args.reuse_settled else {}),
         **({"search": args.search} if args.search is not None else {}),
+        **({"vector_census_sha256": args.vector_census_sha256} if census else {}),
         "cuda": ({"pair": str(args.pair), "pair_sha256": args.pair_sha256} if pair
                  else {k: str(v) for k, v in MODELS[args.model].items()}),
         "cuda_rows": pair["profiles"] if pair else CUDA_PROFILES,
@@ -382,6 +407,9 @@ def start(args):
         argv.append("--reuse-settled")
     if args.search is not None:
         argv += ["--search", args.search]
+    if census:
+        argv += ["--vector-census-input", str(Path(args.vector_census_input).resolve()),
+                 "--vector-census-sha256", args.vector_census_sha256]
     if args.seed_cpu:
         argv += ["--seed-cpu", args.seed_cpu]
     if args.synthetic_root:
@@ -644,6 +672,8 @@ def main():
                          default=list(FX.DEFAULT_REPOSITORIES))
         sub.add_argument("--restart-from")
         sub.add_argument("--search", choices=FX.SEARCH_SWITCHES)
+        sub.add_argument("--vector-census-input", type=Path)
+        sub.add_argument("--vector-census-sha256")
         sub.add_argument("--reuse-settled", action="store_true",
                          help="require unchanged settled indexes on a same-install CUDA restart")
         sub.add_argument("--seed-cpu", choices=SEEDS)

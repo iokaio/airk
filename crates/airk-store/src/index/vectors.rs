@@ -238,6 +238,11 @@ impl VectorMatrix {
             Some(subset) => subset.to_vec(),
             None => (0..self.rows()).collect(),
         };
+        if limit >= rows.len() {
+            let mut hits: Vec<_> = rows.into_iter().filter_map(score).collect();
+            hits.sort_unstable_by(better);
+            return Ok(hits);
+        }
         let threads = std::thread::available_parallelism()
             .map_or(1, usize::from)
             .min(16)

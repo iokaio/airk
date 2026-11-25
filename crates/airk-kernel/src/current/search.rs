@@ -956,6 +956,14 @@ fn vector_candidates(
         (branch_limit * 4).clamp(64, 1000)
     };
     let paths = filtered_paths.map(|scope| scope.paths.iter().cloned().collect::<Vec<_>>());
+    #[cfg(feature = "test-support")]
+    trace_vector_census(
+        query,
+        read,
+        &embeddings,
+        objects.pipeline_digest,
+        paths.as_deref(),
+    )?;
     let (selected, mut incomplete) = if embeddings.len() == 1 {
         read.ranked_vector_units(
             objects.pipeline_digest,
@@ -1020,6 +1028,43 @@ fn vector_candidates(
         incomplete,
         kind: v2::BranchKind::Vector,
     })
+}
+
+#[cfg(feature = "test-support")]
+fn trace_vector_census(
+    query: &SearchQuery,
+    read: &CurrentRead,
+    embeddings: &[Vec<f32>],
+    pipeline: Sha256Digest,
+    paths: Option<&[String]>,
+) -> Result<()> {
+    use sha2::{Digest, Sha256};
+    let Some(raw) = std::env::var_os("AIRK_PRIVATE_VECTOR_CENSUS_PATHS") else {
+        return Ok(());
+    };
+    let targets = serde_json::from_str(raw.to_str().context("invalid census paths")?)?;
+    let ranks = embeddings
+        .iter()
+        .map(|embedding| {
+            read.audit_vector_occurrence_ranks(
+                pipeline,
+                embedding,
+                paths,
+                query.path_prefix.as_deref(),
+                &targets,
+            )
+        })
+        .collect::<Result<Vec<_>>>()?;
+    eprintln!(
+        "AIRK_SEARCH_VECTOR_CENSUS {}",
+        serde_json::json!({
+            "query_sha256": format!("{:x}", Sha256::digest(query.text.as_bytes())),
+            "publication": read.token()?,
+            "pipeline": pipeline,
+            "ranks": ranks,
+        })
+    );
+    Ok(())
 }
 
 #[cfg(feature = "test-support")]

@@ -61,6 +61,8 @@ decisions D1 to D8 and section 5. Kernel uses this engine through the current in
   publication fails and no progress or units become visible.
 - Search is exact: one dot product per row (vectors are unit length),
   best first, ties to the lower row; an optional row subset filters it.
+  A request for every selected row sorts the full scan once and uses the
+  same score and tie-breaker as a bounded request.
 - Retired generation files are removed when a writer opens or reconfigures;
   a reader of an old snapshot may briefly fail to load them.
 

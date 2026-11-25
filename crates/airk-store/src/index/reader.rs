@@ -593,6 +593,34 @@ impl IndexReader {
         rows.map(|row| Ok(u64::try_from(row?)?)).collect()
     }
 
+    /// Visit in the same row-local order used to resolve vector hits.
+    #[cfg(feature = "test-support")]
+    pub(crate) fn visit_scoped_vector_occurrences(
+        &self,
+        paths: Option<&str>,
+        prefix: Option<&str>,
+        committed: u64,
+        mut visit: impl FnMut(u64, &str, u32) -> Result<()>,
+    ) -> Result<()> {
+        let mut statement = self.connection.prepare(
+            "SELECT v.row,f.path,u.ordinal FROM vector_rows v
+             JOIN units u ON u.embedding_key=v.embedding_key
+             JOIN files f ON f.id=u.file_id
+             WHERE v.row<?1 AND (?2 IS NULL OR substr(f.path,1,length(?2))=?2)
+             AND (?3 IS NULL OR f.path IN (SELECT value FROM json_each(?3)))
+             ORDER BY v.row,f.path,u.ordinal",
+        )?;
+        let mut rows = statement.query(params![i64::try_from(committed)?, prefix, paths])?;
+        while let Some(row) = rows.next()? {
+            visit(
+                u64::try_from(row.get::<_, i64>(0)?)?,
+                row.get_ref(1)?.as_str()?,
+                u32::try_from(row.get::<_, i64>(2)?)?,
+            )?;
+        }
+        Ok(())
+    }
+
     /// A bounded slice of occurrences; filter before applying the limit.
     pub(crate) fn scoped_units_for_row(
         &self,

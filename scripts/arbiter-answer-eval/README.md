@@ -753,6 +753,27 @@ branch. A note classified as union-only uses the earliest prefix with enough
 distinct lines at a single accepted location. A null element means coverage
 was absent in that bounded branch. A null list means the query was untraced.
 
+### Full vector rank census
+
+Stage a test-support CUDA image and reopen the authenticated settled
+evaluation pair with both optional stages off. Pass
+`--search semantic_subqueries --vector-census-input <audit-input.json>
+--vector-census-sha256 <sha256>` to `gpu_fixture.py start` alongside
+the settled reuse arguments. The launcher admits only the pinned two-repo
+audit roster. The native service keeps the ordinary Search budget and
+writes sparse exact ranks to the private service log.
+
+Run `python -I -B scripts/arbiter-answer-eval/vector_rank_replay.py` with
+the frozen cohort, snapshots, audit input, native audit log, Ready handle,
+and their SHA-256 pins. Give it an unused `--output` under the private
+campaign root. It sends the frozen instructions and the fact sentences
+only to the isolated evaluation service. It reports instruction and
+focused vector ranks, fact-derived vector ranks, and instruction ranks
+in the delivered reply. Empty focused lists mean the native split did
+not supply another embedding. Treat the labeled fact queries only as
+diagnostics. The report covers the vector component of the rank census.
+Run the lexical, fusion, label and source-fidelity checks separately.
+
 ### Wider Search shortlist coverage
 
 Run the paired Search collector with a fixture launched under the private
