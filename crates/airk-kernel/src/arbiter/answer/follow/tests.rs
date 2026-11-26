@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Follow-up term extraction and its de-duplication.
-use super::super::gather::{Cause, Observed};
+use super::super::gather::{Cause, Dispatch, Observed};
 use super::super::retrieve::NeedKind;
 use super::*;
 use crate::arbiter::answer::tests::{hit, reply, scope};
@@ -205,4 +205,188 @@ fn a_rejected_literal_is_skipped_whole() {
         error_strings("it's 'fine' but the call failed: 'retry refused'"),
         ["retry refused"]
     );
+}
+
+fn keep(
+    gather: &mut Gathering,
+    scope: &ScopeBinding,
+    read: Dispatch,
+    hits: Vec<Value>,
+) -> Result<()> {
+    assert_eq!(read.revision, gather.revision);
+    let part = read.part;
+    gather.offer(read);
+    let taken = gather.take(part, 1);
+    assert_eq!(taken.len(), 1);
+    assert!(matches!(
+        gather.observe(taken[0].seq, Ok(reply(scope, hits)))?,
+        Observed::Retained(_)
+    ));
+    Ok(())
+}
+
+fn read_source(gather: &mut Gathering, path: &str) -> Result<Dispatch> {
+    gather.dispatch(
+        ("read_file", v3::LoopRead::ReadFile),
+        json!({"path":path,"start_line":5,"end_line":15,"max_bytes":3072}),
+        (1, Some(2), 1),
+        Cause::Structural,
+        FollowUp::Excerpt,
+        Step::Leaf,
+        path,
+    )
+}
+
+#[test]
+fn source_call_joins_a_distinct_cited_hash_bound_range_after_rename_and_move() -> Result<()> {
+    for (literal, origin, target) in [
+        ("flush.stage-a", "shell/outbound.ts", "worker/receive.ts"),
+        ("/v3/stages/flush", "moved/client.ts", "routing/typed.ts"),
+    ] {
+        let scope = scope();
+        let mut gather = Gathering::new(v3::BudgetV3::default(), scope.clone())?;
+        let source = read_source(&mut gather, origin)?;
+        keep(
+            &mut gather,
+            &scope,
+            source,
+            vec![hit(origin, 5, 15, &format!("relay.emit('{literal}', payload);"))],
+        )?;
+        let search = gather.dispatch(
+            ("search", v3::LoopRead::Search),
+            json!({"query":"locate the receiver", "full_chunks":true, "limit":4}),
+            (1, Some(2), 1),
+            Cause::NeedSearch,
+            FollowUp::Keyword,
+            Step::Search,
+            "locate the receiver",
+        )?;
+        let receiver = hit(target, 32, 42, &format!("routes.bind(\"{literal}\", apply);"));
+        let hash = receiver["citation"]["content_hash"].clone();
+        keep(&mut gather, &scope, search, vec![receiver])?;
+        let spans = super::super::coverage::spans(&gather, 1, 2, 1);
+        let found = candidates(
+            &gather,
+            1,
+            &need("locate the receiver"),
+            &spans,
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+        )?;
+        assert_eq!(found[0].tool, "read_file");
+        assert_eq!(
+            Value::Object(found[0].arguments.clone()),
+            json!({"path":target,"start_line":32,"end_line":42,
+                   "known_hash":hash,"max_bytes":3072})
+        );
+        assert_eq!(
+            found[0].key,
+            read_key("read_file", &found[0].arguments, &gather.revision)?
+        );
+        assert_eq!(found[0].term, format!("{target}:32-42"));
+        assert!(!found.iter().any(|candidate| candidate.term == literal));
+    }
+    Ok(())
+}
+
+#[test]
+fn tokenized_join_search_is_navigation_and_only_exact_contrasting_call_advances() -> Result<()> {
+    let scope = scope();
+    let mut gather = Gathering::new(v3::BudgetV3::default(), scope.clone())?;
+    let origin = "sending/outbound.ts";
+    let source = read_source(&mut gather, origin)?;
+    let sender = hit(origin, 5, 15, "client.send('pipe.open-lane', payload);");
+    keep(&mut gather, &scope, source, vec![sender.clone()])?;
+    let spans = super::super::coverage::spans(&gather, 1, 2, 1);
+    let task = need("locate the receiver");
+    let found = candidates(
+        &gather,
+        1,
+        &task,
+        &spans,
+        &BTreeSet::new(),
+        &BTreeSet::new(),
+    )?;
+    let discovery = &found[0];
+    assert_eq!(discovery.operation, v3::LoopRead::Search);
+    assert_eq!(
+        Value::Object(discovery.arguments.clone()),
+        json!({"query":"pipe.open-lane","mode":"lexical","limit":4,
+               "max_bytes":4096,"full_chunks":true})
+    );
+    let read = gather.dispatch(
+        (discovery.tool, discovery.operation),
+        Value::Object(discovery.arguments.clone()),
+        (1, Some(2), 2),
+        Cause::FollowUp,
+        discovery.kind,
+        discovery.step,
+        &discovery.term,
+    )?;
+    let target = "handled/route.ts";
+    let receiver = hit(target, 20, 30, "schema.route(\"pipe.open-lane\", parse);");
+    let hash = receiver["citation"]["content_hash"].clone();
+    keep(
+        &mut gather,
+        &scope,
+        read,
+        vec![
+            hit("other/near.ts", 20, 30, "schema.route('pipe.open-lane-extra', parse);"),
+            hit("other/case.ts", 20, 30, "schema.route('Pipe.open-lane', parse);"),
+            hit("other/call.ts", 20, 30, "client.send('pipe.open-lane', payload);"),
+            receiver,
+        ],
+    )?;
+    assert!(only_join_discovery(&gather, 1, 2, 2));
+    assert!(!only_join_discovery(&gather, 1, 2, 1));
+    assert!(!only_join_discovery(&gather, 1, 1, 2));
+    let spans = super::super::coverage::spans(&gather, 1, 2, 2);
+    assert!(spans.is_empty());
+    assert_eq!(gather.records[1].body["hits"].as_array().unwrap().len(), 4);
+    let exact = candidates(
+        &gather,
+        1,
+        &task,
+        &spans,
+        &BTreeSet::new(),
+        &BTreeSet::new(),
+    )?;
+    assert_eq!(exact[0].operation, v3::LoopRead::ReadFile);
+    assert_eq!(
+        Value::Object(exact[0].arguments.clone()),
+        json!({"path":target,"start_line":20,"end_line":30,
+               "known_hash":hash,"max_bytes":3072})
+    );
+    let tried = BTreeSet::from([exact[0].key]);
+    let remaining = candidates(&gather, 1, &task, &spans, &BTreeSet::new(), &tried)?;
+    assert!(!remaining.iter().any(|candidate| candidate.tool == "read_file"));
+    Ok(())
+}
+
+#[test]
+fn faked_escaped_multiline_or_incomplete_calls_do_not_supply_join_tokens() {
+    let text = r#"
+const quoted = "fake('from.string')";
+const nested = "a multiline string
+  fake('from.string');
+";
+send("has\.escape");
+send('two.
+lines');
+send('joined.route' + suffix);
+send(value, 'second.arg');
+send("unfinished.route
+still unmatched");
+send('/path/v1', handle);
+send(`dynamic.${name}`);
+// shadow('from.comment');
+/*
+  shadow('from.block');
+*/
+"#;
+    let calls: Vec<_> = call_literals(text)
+        .into_iter()
+        .map(|literal| (literal.text, literal.site))
+        .collect();
+    assert_eq!(calls, [("/path/v1", "send")]);
 }

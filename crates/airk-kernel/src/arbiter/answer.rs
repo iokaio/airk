@@ -1111,7 +1111,7 @@ impl Loop<'_> {
             let need = self.parts[part].needs[index].need.id;
             let mut spans = coverage::spans(&self.gather, id, need, round);
             coverage::rank(&mut spans);
-            let assessed = self.assess(id, &self.parts[part].needs[index], spans);
+            let assessed = self.assess(id, &self.parts[part].needs[index], spans, round);
             let state = &mut self.parts[part].needs[index];
             state.history.extend(assessed.spans.iter().cloned());
             state.coverage = assessed.coverage;
@@ -1130,7 +1130,20 @@ impl Loop<'_> {
         last.new_evidence = new_evidence;
     }
 
-    fn assess(&self, part: u8, state: &NeedState, spans: Vec<coverage::Span>) -> Assessed {
+    fn assess(
+        &self,
+        part: u8,
+        state: &NeedState,
+        spans: Vec<coverage::Span>,
+        round: u8,
+    ) -> Assessed {
+        if follow::only_join_discovery(&self.gather, part, state.need.id, round) {
+            return Assessed {
+                spans,
+                coverage: state.coverage,
+                evidence: state.evidence.clone(),
+            };
+        }
         let structural: Vec<usize> = self
             .gather
             .records
@@ -1138,6 +1151,7 @@ impl Loop<'_> {
             .enumerate()
             .filter(|(_, record)| {
                 !record.failure
+                    && !follow::is_join_search(record)
                     && coverage::record_hits(record).is_empty()
                     && record
                         .uses
@@ -1266,7 +1280,7 @@ impl Loop<'_> {
         for (part, index, mut spans) in entries {
             coverage::rank(&mut spans);
             let id = self.parts[part].id;
-            let assessed = self.assess(id, &self.parts[part].needs[index], spans);
+            let assessed = self.assess(id, &self.parts[part].needs[index], spans, round);
             let state = &self.parts[part].needs[index];
             let candidates = follow::candidates(
                 &self.gather,
@@ -1278,15 +1292,16 @@ impl Loop<'_> {
             )?;
             let need = state.need.id;
             let covered = assessed.coverage == v3::Coverage::Covered;
-            let roster = coverage::may_offer_covered(state.need.kind, assessed.coverage)
-                .then(|| {
-                    coverage::cards(
-                        need,
-                        &assessed.spans,
-                        &Self::alternatives(need, &candidates),
-                    )
-                })
-                .filter(|roster| roster.len() >= 2 || covered);
+            let roster = (!follow::only_join_discovery(&self.gather, id, need, round)
+                && coverage::may_offer_covered(state.need.kind, assessed.coverage))
+            .then(|| {
+                coverage::cards(
+                    need,
+                    &assessed.spans,
+                    &Self::alternatives(need, &candidates),
+                )
+            })
+            .filter(|roster| roster.len() >= 2 || covered);
             let logged = roster.is_some();
             if let Some(roster) = roster {
                 segs.push(model::Seg {

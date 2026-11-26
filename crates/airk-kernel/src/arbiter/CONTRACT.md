@@ -813,3 +813,13 @@ sub-need, part, and total call bounds. The probe and its loaded and retained
 bytes are charged to the same total budgets. The private kernel outcome
 tracks the source record that prompted it. Excerpt evidence alone joins the
 public records. The published request and reply schemas are unchanged.
+
+
+A later round can follow an exact quoted action or route from a cited
+native source read. A known second occurrence with an independent source
+context permits a hash-bound Read File. With no known target, lexical
+Search proposes source locations to verify. A round that only discovered
+navigation targets leaves the need's prior coverage in place. An exact
+spelling alone establishes a possible join. The canonical read and normal
+coverage checks still determine what the range supports. The current
+public contract funds one follow-up read per need per later round.

@@ -72,7 +72,7 @@ pub(crate) fn spans(gather: &Gathering, part: u8, need: u8, round: u8) -> Vec<Sp
     let mut own = Vec::new();
     let mut shared = Vec::new();
     for (index, record) in gather.records.iter().enumerate() {
-        if record.failure {
+        if record.failure || super::follow::is_join_search(record) {
             continue;
         }
         let lane = if record.used_by(part, Some(need), round) {

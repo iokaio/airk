@@ -21554,3 +21554,9 @@ Compare fresh ordinary source-tool sessions at 24 against the same frozen
 three-round comparison unchanged. The actor cap and the native
 per-request limit are independent. The separately approved judged product
 baseline remains paused at the Windows review.
+
+### 26 November 2026 — Gather Context source-derived follow-ups
+
+- Added a bounded follow-up for exact punctuated first arguments observed in a cited source read. It reopens an observed contrasting call at a new indexed range or searches within the request scope to nominate one. Lexical hits alone leave coverage unchanged. The same bounded canonical Read File, scope, hash and per-need deduplication apply to confirmation. This changes internal action choice without changing the public operation or reply shape.
+- Windows focused kernel Clippy and Nextest passed with the pinned offline lock, incremental warm CUDA target and effective account and token owner TYAI\tdotn. The transfer unit cases include renamed literals, moved paths, a misleading search hit and rejection of fabricated or incomplete calls. Nextest ran 10 tests with 491 filtered. The receipt retains commands, source hashes, target and timings at `answer-eval-r1/passes/gather-context-m3-check-r1/execution.json`, SHA-256 `1fb4986fac48ce3db1aadf5c69e9903c96df9328b50cf8dc3983cdb8130355c8`.
+- Next run the changed composition against retained evidence and extend verification to the complete request path with a renamed joined target. Compare the native candidate on the existing frozen publications and complete the hosted control and 24-call diagnostic. The 132-call native budget remains in effect.
