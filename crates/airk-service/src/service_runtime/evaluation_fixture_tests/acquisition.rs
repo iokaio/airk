@@ -91,13 +91,13 @@ async fn actual_large_finalization_and_cached_verification_keep_native_control_a
         let prior = saved.clone();
         let restart_configuration = prior.clone();
         let (captured, ready) = tokio::sync::oneshot::channel();
-        let factory: EvaluationFactory = Box::new(move |lease, gate| {
-            let owner = if let Some(configuration) = &prior {
+        let factory: EvaluationFactory = Box::new(move |lease, gate, settlement| {
+            let owner = if prior.is_some() {
                 EvaluationOwner::reopen_same_configuration(
                     lease,
                     gate,
                     source.iter().map(|entry| entry.profile.clone()).collect(),
-                    configuration,
+                    settlement.context("actual acquisition stationary restart proof missing")?,
                 )?
             } else {
                 EvaluationOwner::new(
@@ -136,17 +136,7 @@ async fn actual_large_finalization_and_cached_verification_keep_native_control_a
         let mut service = tokio::spawn(async move {
             if let Some(configuration) = restart_configuration {
                 let guard: EvaluationStartupGuard = Box::new(move |lease| {
-                    EvaluationOwner::verify_restart_settled(lease)?;
-                    let store = airk_store::service::arbiter::ConfigurationStore::open(
-                        lease.clone(),
-                        configuration.installation,
-                        configuration.catalog,
-                    )?;
-                    ensure!(
-                        store.load()? == configuration,
-                        "actual acquisition restart configuration changed"
-                    );
-                    Ok(())
+                    EvaluationOwner::stationary_restart(lease, &configuration)
                 });
                 serve_restarted_evaluation_fixture(&root, factory, guard).await
             } else {

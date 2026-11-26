@@ -1266,6 +1266,45 @@ class Scenarios(unittest.TestCase):
 
 
 class SettledIndexReuseTests(unittest.TestCase):
+    def test_source_io_receipts_survive_event_rollover_and_detect_new_jobs(self):
+        import sqlite3
+        from unittest.mock import patch
+
+        connect = sqlite3.connect
+
+        def registry(events, source_jobs):
+            connection = connect(":memory:")
+            connection.executescript(
+                "CREATE TABLE service_jobs(id TEXT, project TEXT, kind TEXT, state TEXT);"
+                "CREATE TABLE service_events(seq INTEGER PRIMARY KEY, project TEXT, job TEXT, "
+                "job_kind TEXT, kind TEXT, observed_ms INTEGER);")
+            connection.executemany("INSERT INTO service_jobs VALUES(?, ?, ?, ?)", source_jobs)
+            connection.executemany("INSERT INTO service_events VALUES(?, ?, ?, ?, ?, ?)", events)
+            return connection
+
+        durable = [("old-index", "a", "index", "succeeded"), ("old-vector", "b", "vectors", "succeeded"),
+                   ("verify", "a", "verify", "succeeded")]
+        source_events = [(1, "a", "old-index", "index", "job_succeeded", 1),
+                         (2, "b", "old-vector", "vectors", "job_succeeded", 2)]
+        audit_events = [(seq, "a", "verify", "verify", "job_progress", seq) for seq in range(3, 1027)]
+        with patch.object(sqlite3, "connect", return_value=registry(source_events, durable)) as opened:
+            before = fixture.source_io_jobs("control")
+            self.assertTrue(opened.call_args.args[0].endswith("/service-1.4.sqlite3?mode=ro"))
+            self.assertTrue(opened.call_args.kwargs["uri"])
+        self.assertEqual(before, {("a", "old-index", "index"), ("b", "old-vector", "vectors")})
+
+        with patch.object(sqlite3, "connect", return_value=registry(audit_events, durable)):
+            fixture.require_same_source_io_jobs("control", before)
+        for kind in ("index", "vectors"):
+            with (self.subTest(kind=kind),
+                  patch.object(sqlite3, "connect", return_value=registry(
+                      audit_events, [*durable, ("fresh", "a", kind, "pending")]))):
+                with self.assertRaisesRegex(ValueError, "new indexing or vector jobs"):
+                    fixture.require_same_source_io_jobs("control", before)
+        with patch.object(sqlite3, "connect", return_value=registry(audit_events, durable[1:])):
+            with self.assertRaisesRegex(ValueError, "lost indexing or vector job receipts"):
+                fixture.require_same_source_io_jobs("control", before)
+
     def test_read_only_reuse_requires_identical_publication_and_no_new_jobs(self):
         from unittest.mock import Mock, patch
 

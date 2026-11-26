@@ -306,6 +306,195 @@ fn work_accepted_between_preflight_and_actual_startup_is_refused() -> Result<()>
     );
     Ok(())
 }
+#[test]
+fn verify_admitted_after_stationary_restart_does_not_refuse_reopen() -> Result<()> {
+    use airk_core::{
+        arbiter::{ModelChoice, Task},
+        catalog_setup::{IndexSetupRequest, SetupCompletion, SetupPreparationReview, SetupSource},
+        identity::Incarnation,
+        service::{JobKind, ProjectRegistration, RequestKey},
+    };
+    use airk_store::service::{
+        ServiceLease,
+        arbiter::ConfigurationStore,
+        registry::{ServiceRegistry, catalog::setup::NativeIndexPreparation},
+    };
+    let fixture = tempfile::tempdir()?;
+    let directory = fixture.path().canonicalize()?;
+    let control = directory.join("control");
+    let source = directory.join("source");
+    let data = directory.join("data");
+    std::fs::create_dir(&control)?;
+    std::fs::create_dir(&source)?;
+    let lease = Arc::new(first_start::ensure_catalog(ServiceLease::acquire(
+        &control,
+    )?)?);
+    let instance = Incarnation::from_bytes([86; 16]);
+    let mut registry = ServiceRegistry::open(&control, instance)?;
+    let catalog = registry
+        .catalog_state()?
+        .context("activated catalog missing")?;
+    let (namespace, epoch) = registry.request_epoch()?;
+    assert_eq!(namespace, catalog.namespace);
+    let registration = ProjectRegistration::new(
+        source
+            .to_str()
+            .context("fixture source path is not UTF-8")?
+            .into(),
+        data.to_str()
+            .context("fixture data path is not UTF-8")?
+            .into(),
+        "fixture".into(),
+    )?;
+    let setup = IndexSetupRequest {
+        caller: instance,
+        key: RequestKey {
+            namespace,
+            epoch,
+            nonce: Incarnation::from_bytes([87; 16]),
+        },
+        expected_catalog_revision: catalog.revision,
+        name: "Restart race fixture".into(),
+        registration: registration.clone(),
+        sources: vec![SetupSource {
+            canonical_path: registration.root.clone(),
+            aliases: vec![],
+            owner: true,
+        }],
+        setup_watch: false,
+    };
+    let reserved = registry.reserve_index_setup(&setup)?;
+    // Only the registry metadata and job admission are tested here.
+    let native = NativeIndexPreparation::from_validated_native_review(
+        registration.clone(),
+        setup.sources.clone(),
+        Sha256Digest::from_bytes([88; 32]),
+        Sha256Digest::from_bytes([89; 32]),
+        SetupPreparationReview {
+            expected_catalog_revision: reserved.catalog_revision,
+            expected_source_revision: reserved.source_revision,
+        },
+    )?;
+    let prepared = registry.record_index_preparation(
+        instance,
+        &setup.key,
+        reserved.request_digest,
+        &native,
+    )?;
+    let ready = registry.complete_index_setup(
+        instance,
+        &setup.key,
+        reserved.request_digest,
+        &SetupCompletion {
+            legacy_adoption: None,
+            prepared_digest: prepared
+                .preparation
+                .context("prepared review missing")?
+                .digest,
+            expected_catalog_revision: prepared.catalog_revision,
+            expected_source_revision: prepared.source_revision,
+        },
+    )?;
+    let gate = airk_catalog_control::catalog_admission::NativeCatalogAdmission::new(
+        instance,
+        namespace,
+        ready.catalog_revision,
+        1,
+    )?;
+    let binding = airk_endpoint::http_endpoint::installation_binding(lease.root(), namespace)?;
+    let config = ConfigurationStore::open(lease.clone(), binding.installation, namespace)?;
+    let saved = config.initialize_checked(None, || Ok(()))?;
+    // Reviewed setup requests ModelSetup and Index even with source watching
+    // off. Withdraw these unadmitted intents through the native fixture lease.
+    assert!(registry.project_setup_pending(registration.binding)?);
+    assert!(
+        registry
+            .pending_job_observation(registration.binding)?
+            .is_none()
+    );
+    let mut project_lease =
+        airk_store::service::ProjectLease::acquire(lease.root(), registration.binding)?;
+    registry.admit_worker(&mut project_lease)?;
+    registry.set_background_pending(&project_lease, JobKind::ModelSetup, false)?;
+    registry.set_background_pending(&project_lease, JobKind::Index, false)?;
+    assert!(!registry.project_background_pending(registration.binding)?);
+    assert!(!registry.has_unsettled_configuration(registration.binding)?);
+    assert!(registry.pending_projects(1)?.is_empty());
+    drop(project_lease);
+
+    let settlement = EvaluationOwner::stationary_restart(&lease, &saved)
+        .context("capture stationary proof before Verify admission")?;
+    let for_foreign_lease = EvaluationOwner::stationary_restart(&lease, &saved)
+        .context("capture stationary proof for foreign-lease refusal")?;
+    let for_changed_config = EvaluationOwner::stationary_restart(&lease, &saved)
+        .context("capture stationary proof for changed-configuration refusal")?;
+
+    let verify = registry.enqueue(
+        registration.binding,
+        instance,
+        &RequestKey {
+            namespace,
+            epoch,
+            nonce: Incarnation::from_bytes([90; 16]),
+        },
+        JobKind::Verify,
+    )?;
+    assert_eq!(verify.kind, JobKind::Verify);
+    assert_eq!(registry.pending_projects(1)?, [registration.binding]);
+    assert!(EvaluationOwner::stationary_restart(&lease, &saved).is_err());
+
+    // Reuse the native Focus ABI with the current policy. This test loads no weights.
+    let mut profile = airk_retrieval::arbiter::runtime::catalog_profiles()?
+        .into_iter()
+        .find(|profile| profile.model == ModelChoice::FocusQwenReranker06B)
+        .context("native Focus test descriptor missing")?;
+    let policy = airk_retrieval::arbiter::compiler::focus::policy_digest()?;
+    profile.policy = policy;
+    profile.task_policies = [(Task::FocusRank, policy)].into_iter().collect();
+    profile.qualification = None;
+    profile.qualified_targets.clear();
+    profile.downloads.clear();
+    let reopened = EvaluationOwner::reopen_same_configuration(
+        lease.clone(),
+        gate.clone(),
+        vec![profile.clone()],
+        settlement,
+    )
+    .context("reopen using stationary proof after Verify admission")?;
+    assert_eq!(reopened.configuration()?.into_result(), saved);
+    assert_eq!(registry.pending_projects(1)?, [registration.binding]);
+    reopened.into_owner_for(&lease, &gate)?;
+
+    let foreign = tempfile::tempdir()?;
+    let foreign_lease = Arc::new(ServiceLease::acquire(foreign.path())?);
+    let Err(wrong_lease) = EvaluationOwner::reopen_same_configuration(
+        foreign_lease,
+        gate.clone(),
+        vec![],
+        for_foreign_lease,
+    ) else {
+        anyhow::bail!("restart proof admitted a different service lease");
+    };
+    assert_eq!(
+        wrong_lease.to_string(),
+        "Restart settlement belongs to another service lease"
+    );
+
+    let mut changed = saved.clone();
+    changed.revision += 1;
+    config.apply(saved.revision, &changed)?;
+    let Err(wrong_configuration) =
+        EvaluationOwner::reopen_same_configuration(lease, gate, vec![profile], for_changed_config)
+    else {
+        anyhow::bail!("restart proof admitted a changed configuration");
+    };
+    assert_eq!(
+        wrong_configuration.to_string(),
+        "Private evaluation requires an unconfigured owner or exact saved restart configuration"
+    );
+    Ok(())
+}
+
 fn env_request() -> Result<Option<Vec<u8>>> {
     let Some(path) = std::env::var_os("AIRK_ARBITER_EVALUATION_RESTART") else {
         return Ok(None);

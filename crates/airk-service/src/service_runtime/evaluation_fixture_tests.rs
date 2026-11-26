@@ -744,26 +744,7 @@ async fn run_actual_private_arbiter_fixture(
     let restart_guard: Option<EvaluationStartupGuard> = restart.as_ref().map(|saved| {
         let expected = saved.configuration.clone();
         Box::new(move |lease: &Arc<airk_store::service::ServiceLease>| {
-            EvaluationOwner::verify_restart_settled(lease)?;
-            let registry =
-                airk_store::service::registry::ServiceRegistry::open_saved(lease.root())?;
-            let catalog = registry
-                .catalog_state()?
-                .context("Restart catalog missing before startup")?;
-            ensure!(
-                catalog.activated && catalog.namespace == expected.catalog,
-                "Restart catalog identity changed before supervisor startup"
-            );
-            let store = airk_store::service::arbiter::ConfigurationStore::open(
-                lease.clone(),
-                expected.installation,
-                expected.catalog,
-            )?;
-            ensure!(
-                store.load()? == expected,
-                "Restart configuration changed before supervisor startup"
-            );
-            Ok(())
+            EvaluationOwner::stationary_restart(lease, &expected)
         }) as EvaluationStartupGuard
     });
     let source = prepared.clone();
@@ -774,7 +755,7 @@ async fn run_actual_private_arbiter_fixture(
         .map(|_| Arc::new(std::sync::OnceLock::new()));
     #[cfg(all(windows, target_arch = "x86_64", feature = "gpu-cuda"))]
     let capture_lease = lease_witness.clone();
-    let factory: EvaluationFactory = Box::new(move |lease, gate| {
+    let factory: EvaluationFactory = Box::new(move |lease, gate, settlement| {
         #[cfg(all(windows, target_arch = "x86_64", feature = "gpu-cuda"))]
         if let Some(witness) = capture_lease {
             witness
@@ -794,7 +775,7 @@ async fn run_actual_private_arbiter_fixture(
                 lease,
                 gate,
                 source.iter().map(|entry| entry.profile.clone()).collect(),
-                &saved.configuration,
+                settlement.context("actual stationary restart proof missing")?,
             )?
         } else {
             EvaluationOwner::new(

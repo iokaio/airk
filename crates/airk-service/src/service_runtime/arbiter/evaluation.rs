@@ -387,6 +387,16 @@ impl airk_retrieval::arbiter::runtime::AssetSource for CudaAnswerAssets {
         Ok(bytes)
     }
 }
+/// In-process proof of the stationary restart check under the actual service lease.
+pub struct EvaluationRestartSettlement {
+    #[cfg(test)]
+    ownership: Arc<airk_store::service::ServiceLease>,
+    #[cfg(test)]
+    configuration: Configuration,
+    #[cfg(not(test))]
+    _private: std::convert::Infallible,
+}
+
 impl EvaluationOwner {
     pub(in crate::service_runtime) fn into_owner_for(
         self,
@@ -411,10 +421,39 @@ impl EvaluationOwner {
         ownership: Arc<airk_store::service::ServiceLease>,
         gate: airk_catalog_control::catalog_admission::NativeCatalogAdmission,
         profiles: Vec<Profile>,
-        expected: &Configuration,
+        settlement: EvaluationRestartSettlement,
     ) -> Result<Self> {
-        Self::verify_restart_settled(&ownership)?;
-        Self::new_bound(ownership, gate, profiles, Some(expected))
+        ensure!(
+            Arc::ptr_eq(&ownership, &settlement.ownership),
+            "Restart settlement belongs to another service lease"
+        );
+        Self::new_bound(ownership, gate, profiles, Some(&settlement.configuration))
+    }
+    #[cfg(test)]
+    pub(in crate::service_runtime) fn stationary_restart(
+        ownership: &Arc<airk_store::service::ServiceLease>,
+        expected: &Configuration,
+    ) -> Result<EvaluationRestartSettlement> {
+        use airk_store::service::{arbiter::ConfigurationStore, registry::ServiceRegistry};
+        Self::verify_restart_settled(ownership)?;
+        let registry = ServiceRegistry::open_saved(ownership.root())?;
+        let catalog = registry
+            .catalog_state()?
+            .context("Restart catalog missing before startup")?;
+        ensure!(
+            catalog.activated && catalog.namespace == expected.catalog,
+            "Restart catalog identity changed before supervisor startup"
+        );
+        let store =
+            ConfigurationStore::open(ownership.clone(), expected.installation, expected.catalog)?;
+        ensure!(
+            store.load()? == *expected,
+            "Restart configuration changed before supervisor startup"
+        );
+        Ok(EvaluationRestartSettlement {
+            ownership: ownership.clone(),
+            configuration: expected.clone(),
+        })
     }
     #[cfg(test)]
     pub(in crate::service_runtime) fn verify_restart_settled(

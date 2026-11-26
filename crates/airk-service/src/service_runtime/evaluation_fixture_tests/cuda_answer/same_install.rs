@@ -632,36 +632,18 @@ async fn run(
     let restart_guard: Option<EvaluationStartupGuard> = restart.as_ref().map(|saved| {
         let expected = saved.configuration.clone();
         Box::new(move |lease: &Arc<airk_store::service::ServiceLease>| {
-            EvaluationOwner::verify_restart_settled(lease)?;
+            let settlement = EvaluationOwner::stationary_restart(lease, &expected)?;
             if cuda_restart {
                 restart::verify_cuda_enrollments(lease, &expected)?;
             }
-            let registry =
-                airk_store::service::registry::ServiceRegistry::open_saved(lease.root())?;
-            let catalog = registry
-                .catalog_state()?
-                .context("Restart catalog missing before startup")?;
-            ensure!(
-                catalog.activated && catalog.namespace == expected.catalog,
-                "Restart catalog identity changed before supervisor startup"
-            );
-            let store = airk_store::service::arbiter::ConfigurationStore::open(
-                lease.clone(),
-                expected.installation,
-                expected.catalog,
-            )?;
-            ensure!(
-                store.load()? == expected,
-                "Restart configuration changed before supervisor startup"
-            );
-            Ok(())
+            Ok(settlement)
         }) as EvaluationStartupGuard
     });
     let source = prepared.clone();
     let (seeded, seed_ready) = tokio::sync::oneshot::channel();
     let lease_witness = Arc::new(std::sync::OnceLock::new());
     let capture_lease = lease_witness.clone();
-    let factory: EvaluationFactory = Box::new(move |lease, gate| {
+    let factory: EvaluationFactory = Box::new(move |lease, gate, settlement| {
         capture_lease
             .set(Arc::downgrade(&lease))
             .map_err(|_| anyhow::anyhow!("private original lease observed twice"))?;
@@ -675,7 +657,12 @@ async fn run(
                 namespace == saved.configuration.catalog,
                 "Restart catalog namespace changed"
             );
-            EvaluationOwner::reopen_same_configuration(lease, gate, profiles, &saved.configuration)?
+            EvaluationOwner::reopen_same_configuration(
+                lease,
+                gate,
+                profiles,
+                settlement.context("actual stationary restart proof missing")?,
+            )?
         } else {
             EvaluationOwner::new(lease, gate, profiles)?
         };

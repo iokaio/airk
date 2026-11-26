@@ -21149,3 +21149,86 @@ run_pass.py --stage all on the pinned Sol/Astra roles. Apply the
 12-of-20 and five-per-repository review trigger before opening the
 judged Windows baseline. The three cumulative Windows change sets
 and the manual Windows results review remain ahead.
+
+### 26 November 2026 — Due Verify during Windows evaluation restart
+
+The dedicated Codex evaluation home passed the pinned stock
+executable's ChatGPT login-status check. The CUDA lifetime
+win-completion-ceiling-live-r1 attempted to reopen the same settled
+control. It failed before Ready with Restart has native
+pending/running work. Its owned process group ended empty. The
+last successful predecessor had closed at 10:33 p.m. Denver time
+with no unfinished work. Registry events 716 through 718 record
+the Munarium automatic Verify entering pending, running, and
+pending again at approximately 4:38 a.m. on the new startup.
+The fixture had been offline across that interval.
+
+The retained-lease startup guard runs before the project
+supervisor. The restarted evaluation owner checked for idle
+queues again after the supervisor had started. Due maintenance
+entered between the checks, and the failed startup returned the
+claimed Verify to its durable pending state. The user directed
+us to fix this race before any scored sessions.
+
+An isolated normal Windows foreground service then processed the
+same pending Munarium Verify to success. A Bookbuilder cohort also
+became due. In the first bounded observation it made 72 cooperative
+turns and remained resumable. Graceful close returned exit 0 and
+preserved the Index/Vector job census. The exact recovery observation
+SHA-256 is 37c0a99d36a994dfd967c1fbebf7893100fa44cbb14ab4c04990bb34691978f5.
+The first command spelling used the retired public serve command
+and started no service. The corrected run used the existing
+service-foreground role from the authenticated current debug pair.
+The follow-up resumes the exact Bookbuilder job using the fixture's
+existing 1,800 s natural-settlement window. The prior complete
+Bookbuilder source audit took about 649 s. Neither audit has
+required a rebuild, and no hosted pass has started.
+
+A recovery observer then stopped on a shrinking event-derived
+Index/Vector census. The journal retained 1,024 rows and advanced
+its oldest sequence to 8. The durable registry still held the
+same four Index and 37 Vector jobs. Bookbuilder's resumable audit
+continued under the ordinary native owner with a read-only
+durable job census. Bookbuilder completed after 254 cooperative
+turns and Munarium after 32. Both native jobs ended succeeded,
+the source-job identities stayed fixed, and the service exited
+at 0. Both audit coverage heads match the earlier frozen
+publications. The settled recovery receipt under
+L5C/windows-ceiling-settle-automatic-verify-r4 has SHA-256
+01b6fddada9178d80520bd413a64234632c33c2c9403dadec87aa1ec30b6081.
+
+Settled-reuse startup and closure now compare the durable source
+job roster. Added and missing entries both fail the check. The
+model-free regression covers rollover, added Index or Vector
+work, and a missing durable entry. Four focused fixture tests
+and 13 GPU harness tests passed. A broader fixture command ran
+70 and had two failures outside this selection. Its source
+root test assumes temporary roots outside the checkout and the
+throwaway Git snapshot test failed during git init under the
+checked temporary root. The frozen 20-case Codex inputs reverified
+at the same SHA-256. The harness correction does not change the
+scenario or role inputs.
+
+The corrected private restart now carries a one-use proof from
+the stationary check under the retained service lease into the
+evaluation factory. The factory still checks the exact saved
+configuration and lease identity. Native pre-existing jobs,
+paused work and unfinished configuration still refuse before
+supervisor startup. A Verify admitted after that check no longer
+invalidates the accepted restart. The test-support paths for the
+CPU, CUDA, acquisition and change-set fixtures use the same proof.
+
+Windows airk-service Clippy passed with all features and targets
+in 5.85 s. The focused offline Nextest CI run selected 17 tests,
+with 17 passed and 459 skipped. The command took 109.74 s with
+compilation on the warm answer-loop/target-cuda, incremental 1.
+The new regression proved post-check Verify, foreign-lease
+refusal and exact configuration drift refusal. The earlier
+attempts identified two test fixture defects, an unwithdrawn
+setup intent and a descriptor with the wrong native ABI.
+The checked final execution under
+L5C/windows-ceiling-stationary-restart-check-r3 has SHA-256
+7c762d4ae5992d9c49241c2d6111af403e50cb288ffc33e1a06d9f5a51adfc09.
+Next stage the corrected image, reopen the settled native
+publications and reauthenticate the matched tool catalog before
+the hosted gate.

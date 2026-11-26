@@ -1399,8 +1399,22 @@ def reuse_predecessor(prior, repositories, fixtures):
 
 
 def source_io_jobs(control):
-    return {(project, job, kind) for project, job, kind, _, _ in registry_job_events(control, 0)
-            if kind in ("index", "vectors")}
+    """Read all retained source I/O receipts, independent of event history turnover."""
+    import sqlite3
+
+    database = (Path(control) / "service-1.4.sqlite3").resolve()
+    connection = sqlite3.connect(f"{database.as_uri()}?mode=ro", uri=True, timeout=5)
+    try:
+        return set(connection.execute(
+            "SELECT project, id, kind FROM service_jobs WHERE kind IN ('index', 'vectors')"))
+    finally:
+        connection.close()
+
+
+def require_same_source_io_jobs(control, before):
+    after = source_io_jobs(control)
+    require(not after - before, "settled reuse observed new indexing or vector jobs")
+    require(not before - after, "settled reuse lost indexing or vector job receipts")
 
 
 def observe_reused_indexes(commands, prior, repositories, jobs_before):
@@ -1425,8 +1439,7 @@ def observe_reused_indexes(commands, prior, repositories, jobs_before):
         require(not any(job["kind"] in ("index", "vectors") for job in unfinished_jobs(progress)),
                 f"{repo}: an indexing writer is pending or running")
         indexes[repo] = dict(record)
-    require(jobs_before == source_io_jobs(commands.control),
-            "settled reuse observed new indexing or vector jobs")
+    require_same_source_io_jobs(commands.control, jobs_before)
     return indexes
 
 
@@ -1696,7 +1709,7 @@ def worker(args):
     require(handle["service_exit_code"] == 0 and handle.get("final_stage_idle") is True,
             "fixture exit or stage settlement failed")
     if reuse_settled:
-        require(jobs_before == source_io_jobs(control), "settled reuse queued an indexing or vector job")
+        require_same_source_io_jobs(control, jobs_before)
         settlement["reused_indexes"] = handle["reused_indexes"]
     handle.update(state="closed", closed_utc=utc(), settlement=settlement)
     write_json(handle_path, handle, replace=True)

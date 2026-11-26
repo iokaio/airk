@@ -453,31 +453,12 @@ pub(in crate::service_runtime::evaluation_fixture_tests) async fn run_with(
     let restart_guard: Option<EvaluationStartupGuard> = restart.as_ref().map(|saved| {
         let expected = saved.configuration.clone();
         Box::new(move |lease: &Arc<airk_store::service::ServiceLease>| {
-            EvaluationOwner::verify_restart_settled(lease)?;
-            let registry =
-                airk_store::service::registry::ServiceRegistry::open_saved(lease.root())?;
-            let catalog = registry
-                .catalog_state()?
-                .context("Restart catalog missing before startup")?;
-            ensure!(
-                catalog.activated && catalog.namespace == expected.catalog,
-                "Restart catalog identity changed before supervisor startup"
-            );
-            let store = airk_store::service::arbiter::ConfigurationStore::open(
-                lease.clone(),
-                expected.installation,
-                expected.catalog,
-            )?;
-            ensure!(
-                store.load()? == expected,
-                "Restart configuration changed before supervisor startup"
-            );
-            Ok(())
+            EvaluationOwner::stationary_restart(lease, &expected)
         }) as EvaluationStartupGuard
     });
     let source = prepared.clone();
     let (seeded, seed_ready) = tokio::sync::oneshot::channel();
-    let factory: EvaluationFactory = Box::new(move |lease, gate| {
+    let factory: EvaluationFactory = Box::new(move |lease, gate, settlement| {
         let namespace = gate
             .catalog_clock()
             .context("actual fixture catalog clock missing")?
@@ -498,7 +479,12 @@ pub(in crate::service_runtime::evaluation_fixture_tests) async fn run_with(
                 namespace == saved.configuration.catalog,
                 "Restart catalog namespace changed"
             );
-            EvaluationOwner::reopen_same_configuration(lease, gate, profiles, &saved.configuration)?
+            EvaluationOwner::reopen_same_configuration(
+                lease,
+                gate,
+                profiles,
+                settlement.context("actual stationary restart proof missing")?,
+            )?
         } else {
             EvaluationOwner::new(lease, gate, profiles)?
         };

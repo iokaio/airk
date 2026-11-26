@@ -20,7 +20,7 @@ mod agents;
 mod answer_jobs;
 mod arbiter;
 #[cfg(all(feature = "local-inference", feature = "test-support"))]
-pub use arbiter::evaluation::{EvaluationOwner, EvaluationResult};
+pub use arbiter::evaluation::{EvaluationOwner, EvaluationRestartSettlement, EvaluationResult};
 pub(crate) mod checkpoint;
 mod configuration;
 mod explorer;
@@ -1367,12 +1367,15 @@ pub type EvaluationFactory = Box<
     dyn FnOnce(
             Arc<airk_store::service::ServiceLease>,
             airk_catalog_control::catalog_admission::NativeCatalogAdmission,
+            Option<EvaluationRestartSettlement>,
         ) -> Result<EvaluationOwner>
         + Send,
 >;
 #[cfg(all(feature = "local-inference", feature = "test-support"))]
-type EvaluationStartupGuard =
-    Box<dyn FnOnce(&Arc<airk_store::service::ServiceLease>) -> Result<()> + Send>;
+type EvaluationStartupGuard = Box<
+    dyn FnOnce(&Arc<airk_store::service::ServiceLease>) -> Result<EvaluationRestartSettlement>
+        + Send,
+>;
 enum OwnerFactory {
     Product,
     #[cfg(all(feature = "local-inference", feature = "test-support"))]
@@ -1451,11 +1454,11 @@ async fn serve_owned(
     #[cfg(all(feature = "local-inference", feature = "test-support"))]
     let mut owner_factory = owner_factory;
     #[cfg(all(feature = "local-inference", feature = "test-support"))]
-    if let OwnerFactory::Evaluation(_, guard) = &mut owner_factory
-        && let Some(guard) = guard.take()
-    {
-        guard(&_ownership)?;
-    }
+    let restart_settlement = if let OwnerFactory::Evaluation(_, guard) = &mut owner_factory {
+        guard.take().map(|guard| guard(&_ownership)).transpose()?
+    } else {
+        None
+    };
     _ownership.prepare_control_endpoint()?;
     local_ipc::prepare_control_endpoint(_ownership.root())?;
     let instance = new_instance_id()?;
@@ -1595,7 +1598,7 @@ async fn serve_owned(
             let gate = catalog_gate.clone().ok_or_else(|| {
                 anyhow::anyhow!("private evaluation requires the actual activated native catalog")
             })?;
-            let owner = factory(_ownership.clone(), gate.clone())?;
+            let owner = factory(_ownership.clone(), gate.clone(), restart_settlement)?;
             Some(owner.into_owner_for(&_ownership, &gate)?)
         }
     };
