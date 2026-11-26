@@ -79,6 +79,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 import common  # noqa: E402
+import complete_evidence_pass  # noqa: E402
 import coverage  # noqa: E402
 import evidence  # noqa: E402
 import grade  # noqa: E402
@@ -95,9 +96,14 @@ FIRST_GRADE_SECOND_JOBS = grade.FIRST_GRADE_SECOND_JOBS
 
 class Pass:
     def __init__(self, spec: dict, r_root: Path, *, session_runner=None, judge_runner=None, digest_fn=None,
-                 settle_fn=None, check_prompts: bool = True):
+                 settle_fn=None, check_prompts: bool = True, read_only: bool = False,
+                 spec_path: Path | None = None):
         self.spec = spec
         self.series = spec["series"]
+        self.spec_path = spec_path
+        self.ceiling = spec.get("purpose") == prompts_freeze.CEILING_PURPOSE
+        self.ceiling_inputs = {}
+        self.ceiling_publications = {}
         self.pilot = bool(spec.get("pilot"))
         common.require(self.pilot or not spec.get("accept_queryable"),
                        "accept_queryable is allowed in pilot specs only (decision 1)")
@@ -159,6 +165,15 @@ class Pass:
                            == common.sha256_file(Path(spec["freeze"])),
                            "Codex scenario freeze differs from the prompt freeze")
             prompts_freeze.verify_stage_a_spec(spec, manifest, self.codex_identity, self.codex_catalogs)
+            if self.ceiling:
+                self.ceiling_inputs = complete_evidence_pass.treatments(manifest)
+                self.ceiling_publications = {repo: self.ceiling_inputs[f"{repo}-{common.SLOTS[0]}"].publication_token
+                                             for repo in common.REPOS}
+            elif spec.get("stage") == "baseline":
+                self.ceiling_publications = complete_evidence_pass.require_passing_disposition(
+                    spec.get("ceiling_disposition"), manifest)
+        else:
+            common.require(not self.ceiling, "complete-evidence pass requires the Codex provider")
         self.settle_fn = settle_fn or self._settle
         self.r_root = Path(r_root)
         self.pass_dir = self.r_root / "passes" / self.series
@@ -166,7 +181,8 @@ class Pass:
         self.sessions_root = self.r_root / "sessions"
         common.require(self.codex is None or not (self.pass_dir / "reuse.json").exists(),
                        "Codex passes cannot reuse prior sessions or verdicts")
-        self.pass_dir.mkdir(parents=True, exist_ok=True)
+        if not read_only:
+            self.pass_dir.mkdir(parents=True, exist_ok=True)
         scenarios_dir = Path(spec.get("scenarios_dir") or self.r_root / "scenarios")
         files = common.scenario_files(scenarios_dir, spec.get("repos", common.REPOS), spec.get("slots", common.SLOTS))
         self.scenarios = [common.load_scenario(f) for f in files]
@@ -307,6 +323,8 @@ class Pass:
                 self.log(event="end-snapshot-not-settled", repo=repo, problems=snap.get("problems"))
             if not snap.get("publication_token"):
                 problems.append(f"{repo} has no publication token at {phase}")
+            if repo in self.ceiling_publications and snap.get("publication_token") != self.ceiling_publications[repo]:
+                problems.append(f"{repo} differs from its complete-evidence publication at {phase}")
             key = self.settle_key(handle_path, repo)
             first = starts.get(key)
             # Only a settled snapshot with a token can be the pass's reference start (a refused start is not).
@@ -459,6 +477,7 @@ class Pass:
         return {**entry, "path": resolved, "resolved_from": entry["path"], "_origin": entry}
 
     def run_one(self, scenario: dict, entry: dict, sample: int = 1) -> dict:
+        common.require(not self.ceiling or sample == 1, "ceiling pass permits exactly one sample")
         entry = self.concrete(entry, scenario)
         key = self.key(scenario, entry, sample)
         if sample == 1:
@@ -497,6 +516,8 @@ class Pass:
             common.require(common.sha256_file(Path(catalog)) == self.codex_catalogs[catalog],
                            f"{key}: Codex catalog changed after pass admission")
             kwargs["codex"] = self.codex
+        if self.ceiling:
+            kwargs["complete_evidence"] = self.ceiling_inputs[scenario["id"]]
         if entry.get("stage_guard"):
             # Before every session, not only every plan step: an agent can pause long between calls, and a
             # stage that unloaded meanwhile would serve the next session without it (s8 shakedown, 23 Nov 2026).
@@ -507,7 +528,7 @@ class Pass:
             common.require(done.returncode == 0, f"{key}: the arm's stages are not active: {done.stderr[-400:]}")
         record = self.session_runner(**kwargs)
         directory = self.session_dir(scenario, entry, sample)
-        if record.get("status") == "discarded" and not directory.with_name(directory.name + ".attempt-1").exists():
+        if not self.ceiling and record.get("status") == "discarded" and not directory.with_name(directory.name + ".attempt-1").exists():
             self.log(event="discarded", key=key, reasons=record.get("audit", {}).get("discard_reasons"))
             record = self.session_runner(**kwargs, rerun=True)  # plan 3.5: discarded and rerun, once
         self.log(event="session", key=key, status=record.get("status"), cost_usd=record.get("cost_usd"))
@@ -582,6 +603,7 @@ class Pass:
                            f"second sessions name an ineligible scenario {scenario!r} for {result!r}")
 
     def freeze_second_jobs(self) -> Path:
+        common.require(not self.ceiling, "ceiling pass permits exactly one sample")
         """Keep the first-grade close calls and their original Parse/Search comparisons."""
         path = self.pass_dir / FIRST_GRADE_SECOND_JOBS
         first = (self.require_judged_receipts(self.index(), self.adjudications())
@@ -621,6 +643,7 @@ class Pass:
         return path
 
     def second_sessions(self, only: set[str] | None = None, jobs_file: Path | None = None) -> list[str]:
+        common.require(not self.ceiling, "ceiling pass permits exactly one sample")
         """Run the selected first-grade close calls or the gate's explicit immutable jobs."""
         self.check_names(only)
         by_id = {s["id"]: s for s in self.scenarios}
@@ -665,7 +688,7 @@ class Pass:
         common.write_json(path, sorted(previous | set(scheduled)))
         return scheduled
 
-    def index(self) -> dict:
+    def index(self, *, write: bool = True) -> dict:
         reuse = self.reuse_map()
         extra = set(common.read_json(self.pass_dir / "second-sessions.json")) if (
             self.pass_dir / "second-sessions.json").is_file() else set()
@@ -712,7 +735,8 @@ class Pass:
         for row in results:
             if row.get("reused_from") and ":" in row["reused_from"]:
                 row["reused_from_external"] = True
-        common.write_json(self.pass_dir / "pass-index.json", index)
+        if write:
+            common.write_json(self.pass_dir / "pass-index.json", index)
         return index
 
     def _row_path(self, entry: dict, scenario: dict) -> str:
@@ -729,6 +753,19 @@ class Pass:
                 continue
             coverage.for_session(by_id[row["scenario_id"]], directory)
 
+    def require_ceiling_treatment(self, scenario: dict, directory: Path, session: dict) -> dict:
+        typed = self.ceiling_inputs[scenario["id"]].load(scenario)
+        observed = run_session.verify_complete_evidence(directory, session, typed)
+        common.require(observed == session.get("complete_evidence_receipt"),
+                       f"{scenario['id']}: complete-evidence launch receipt differs")
+        path = directory / "wrapper" / "results" / "turn-01.stdout.json"
+        raw = path.read_bytes()
+        common.require(common.sha256_bytes(raw) == observed["result_sha256"], "complete-evidence result changed")
+        body = common.raw_body(raw)
+        covered = coverage.first_reply(scenario, body["source_passages"], observed["text_bytes"])
+        common.require(not covered["essential_missing"], "complete-evidence source passages miss an essential")
+        return observed
+
     def judge(self) -> None:
         by_id = {s["id"]: s for s in self.scenarios}
         jobs = []
@@ -739,18 +776,32 @@ class Pass:
             if not record_path.is_file() or common.read_json(record_path).get("status") != "complete":
                 continue
             scenario = by_id[row["scenario_id"]]
-            if self.codex is not None:
+            if self.ceiling:
+                try:
+                    session, _ = self.require_terminal_session(row, scenario, None)
+                    self.require_ceiling_treatment(scenario, Path(row["session_dir"]), session)
+                    entry = self.spec["results"][0]
+                    common.require(type(session.get("elapsed_ms")) is int
+                                   and 0 <= session["elapsed_ms"] <= int(float(entry.get("session_timeout", 1800)) * 1000)
+                                   and session.get("wrapper_turns", 0) <= common.TURN_CAP,
+                                   "complete-evidence actor exceeds the frozen cap")
+                except (common.HarnessError, OSError, ValueError, KeyError, TypeError) as error:
+                    self.log(event="ceiling-judge-skipped", key=row["key"], reason=str(error))
+                    continue
+            elif self.codex is not None:
                 self.require_terminal_session(row, scenario, None)
             for name in self.judges():
-                jobs.append((scenario, row, name))
+                jobs.append((scenario, row, name, self.spec.get("judge_model") or common.JUDGE_MODEL))
+            if self.ceiling:
+                jobs.append((scenario, row, complete_evidence_pass.DIAGNOSTIC, "gpt-6.2-sol"))
         workers = int(self.spec.get("judge_concurrency", 4))
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
             futures = [pool.submit(self.judge_runner, scenario=s, session_dir=Path(row["session_dir"]), key=row["key"],
                                    out_dir=self.pass_dir / "judging" / row["key"], judge=name, claude=self.claude,
-                                   model=self.spec.get("judge_model") or common.JUDGE_MODEL,
+                                   model=model,
                                    effort=self.spec.get("judge_effort") or common.JUDGE_EFFORT,
                                    **({"codex": self.codex} if self.codex is not None else {}))
-                       for s, row, name in jobs]
+                       for s, row, name, model in jobs]
             for future in concurrent.futures.as_completed(futures):
                 record = future.result()
                 self.log(event="judge", key=record.get("key"), judge=record.get("judge"), status=record.get("status"),
@@ -889,6 +940,11 @@ class Pass:
         return graded
 
     def grade(self) -> dict:
+        if self.ceiling:
+            common.require(self.spec_path is not None, "ceiling disposition requires a pinned spec path")
+            result = complete_evidence_pass.disposition(self, self.spec_path)
+            common.write_json(self.pass_dir / "ceiling-disposition.json", result)
+            return result
         index = self.index()
         adjudications = self.adjudications()
         frozen_path = self.pass_dir / FIRST_GRADE_SECOND_JOBS
@@ -923,7 +979,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--only-second", help="comma-separated result names for the second stage")
     parser.add_argument("--second-jobs", type=Path, help="frozen first-grade or explicit gate close-call jobs")
     args = parser.parse_args(argv)
-    run = Pass(common.read_json(args.spec), args.r_root)
+    run = Pass(common.read_json(args.spec), args.r_root, spec_path=args.spec.resolve())
     only = set(args.only.split(",")) if args.only else None
     if args.stage in ("all", "sessions"):
         run.sessions(only)
@@ -942,6 +998,10 @@ def main(argv: list[str] | None = None) -> int:
         run.judge()
     if args.stage in ("all", "grade", "second"):
         summary = run.grade()
+        if run.ceiling:
+            print(json.dumps({"status": summary["status"], "correct_finishes": summary["correct_finishes"],
+                              "correct_finishes_by_repo": summary["correct_finishes_by_repo"]}))
+            return 0 if summary["status"] == "passed" else 2
         print(json.dumps({"results": summary["results"], "headroom": summary["headroom"]["count"],
                           "pending": len(summary["pending_adjudication"]), "cost_usd": summary["cost_usd"]}))
     return 0

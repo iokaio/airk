@@ -37,13 +37,16 @@ import common  # noqa: E402
 
 SCHEMA = "airk.private.answer-eval-prompts-freeze/1"
 CODEX_SCHEMA = "airk.private.answer-eval-codex-freeze/1"
-CODEX_PURPOSES = {"windows-stage-a": "gpt-6.2-sol", "windows-stage-a-capable-panel": "gpt-6.2-astra"}
+CEILING_PURPOSE = "windows-stage-a-complete-evidence"
+CODEX_PURPOSES = {"windows-stage-a": "gpt-6.2-sol", "windows-stage-a-capable-panel": "gpt-6.2-astra",
+                  CEILING_PURPOSE: "gpt-6.2-sol"}
 CODEX_PATHS = ("search", "parse", "answer")
 CODEX_STAGES = ("baseline", "change-set-1", "change-set-2", "change-set-3")
 CODEX_CONTROLS = (("search", "search", "none"), ("parse", "parse", "none"))
 CODEX_ANSWER_ARMS = {"F": ("focus", "focus", "gpu"), "C": ("compact", "compact", "gpu"),
                      "A": ("arbiter", "arbiter", "gpu")}
-CODEX_HARNESS_FILES = ("codex_isolation_probe.py", "make_cs_spec.py", "make_loop_spec.py")
+CODEX_HARNESS_FILES = ("codex_isolation_probe.py", "make_cs_spec.py", "make_loop_spec.py",
+                       "complete_evidence.py", "complete_evidence_pass.py")
 # The loop (plan section 12) adds loop_reply.py (Answer /3 replies, used by evidence, coverage, replay, depth,
 # run_pass and the wrapper) and gate.py (the LG tests, run by run_plan). The freeze written for the one-turn
 # evaluation no longer verifies: it must be re-frozen (--refreeze) before the first judged loop pass (LG).
@@ -82,12 +85,39 @@ def pinned_input(path: str, sha256: str | None = None) -> dict:
     return {"path": str(source), "sha256": actual}
 
 
+def scenario_roster() -> set[str]:
+    return {f"{repo}-{slot}" for repo in common.REPOS for slot in common.SLOTS}
+
+
+def ceiling_inputs(pins: dict) -> dict:
+    common.require(isinstance(pins, dict) and set(pins) == scenario_roster(),
+                   "complete-evidence freeze requires exactly 20 scenario inputs")
+    frozen = {}
+    for repo in common.REPOS:
+        identities = set()
+        for slot in common.SLOTS:
+            case = f"{repo}-{slot}"
+            pin = pins[case]
+            fields = {"manifest", "manifest_sha256", "source_root", "publication_token"}
+            common.require(isinstance(pin, dict) and set(pin) == fields
+                           and all(isinstance(pin[key], str) and pin[key] for key in fields),
+                           f"{case}: invalid complete-evidence input")
+            manifest = pinned_input(pin["manifest"], pin["manifest_sha256"])
+            source_root = Path(pin["source_root"]).resolve(strict=True)
+            common.require(source_root.is_dir(), f"{case}: complete-evidence source root is unavailable")
+            identities.add((str(source_root), pin["publication_token"]))
+            frozen[case] = {**pin, "manifest": manifest["path"], "source_root": str(source_root)}
+        common.require(len(identities) == 1, f"{repo}: complete-evidence cases use different source identities")
+    return frozen
+
+
 def codex_current(inputs: dict) -> dict:
     import judge
 
     fields = {"purpose", "scenario_freeze", "executable", "executable_sha256", "model_catalog",
               "model_catalog_sha256", "tool_catalogs"}
-    common.require(isinstance(inputs, dict) and set(inputs) == fields
+    ceiling = isinstance(inputs, dict) and inputs.get("purpose") == CEILING_PURPOSE
+    common.require(isinstance(inputs, dict) and set(inputs) == (fields | {"complete_evidence"} if ceiling else fields)
                    and all(isinstance(inputs[field], str) and inputs[field] for field in fields - {"tool_catalogs"})
                    and inputs["purpose"] in CODEX_PURPOSES, "invalid Codex freeze inputs")
     catalog_inputs = inputs["tool_catalogs"]
@@ -122,6 +152,9 @@ def codex_current(inputs: dict) -> dict:
         "scenario_freeze": pinned_input(inputs["scenario_freeze"]),
         "files": {**record["files"], **extra_files},
     })
+    if ceiling:
+        record["complete_evidence"] = ceiling_inputs(inputs["complete_evidence"])
+        record["diagnostic_judge"] = {"model": "gpt-6.2-sol", "effort": "medium"}
     return record
 
 
@@ -145,6 +178,8 @@ def verify_codex(frozen: dict) -> None:
         "model_catalog_sha256": model_catalog.get("sha256"),
         "tool_catalogs": frozen.get("tool_catalogs"),
     }
+    if inputs["purpose"] == CEILING_PURPOSE:
+        inputs["complete_evidence"] = frozen.get("complete_evidence")
     actual = codex_current(inputs)
     saved = {key: value for key, value in frozen.items() if key not in ("schema", "frozen_at")}
     changed = sorted(key for key in actual.keys() | saved.keys() if actual.get(key) != saved.get(key))
@@ -164,12 +199,15 @@ def verify_stage_a_spec(spec: dict, manifest: dict, provenance: dict, catalog_ha
                    and provenance["model_catalog_sha256"] == manifest["model_catalog"]["sha256"]
                    and spec["codex_config"]["model_catalog"] == manifest["model_catalog"]["path"],
                    "Windows Stage A runner differs from the Codex freeze")
-    expected_stages = (CODEX_STAGES if spec["purpose"] == "windows-stage-a"
+    ceiling = spec["purpose"] == CEILING_PURPOSE
+    expected_stages = (("complete-evidence",) if ceiling else CODEX_STAGES if spec["purpose"] == "windows-stage-a"
                        else (CODEX_STAGES[0], CODEX_STAGES[-1]))
     common.require(spec.get("stage") in expected_stages, "Codex phase differs from its Windows Stage A purpose")
     arms = ("F", "C", "A") if spec["purpose"] == "windows-stage-a" else ("C",)
-    expected_paths = {None: CODEX_CONTROLS, **{arm: (CODEX_ANSWER_ARMS[arm],) for arm in arms}}
-    scenario_ids = {f"{repo}-{slot}" for repo in common.REPOS for slot in common.SLOTS}
+    expected_paths = {} if ceiling else {None: CODEX_CONTROLS}
+    expected_paths.update({"C": (("compact", "answer", "gpu"),)} if ceiling else
+                          {arm: (CODEX_ANSWER_ARMS[arm],) for arm in arms})
+    scenario_ids = scenario_roster()
     common.require(set(spec.get("repos", [])) == set(common.REPOS)
                    and set(spec.get("scenario_ids", [])) == scenario_ids and not spec.get("slots"),
                    "Windows Stage A requires all 20 frozen development scenarios")

@@ -20851,3 +20851,38 @@ execution SHA-256 is a785505f73189bfe468376ec8ef1239b998da68765675ca646c2ec8f040
 This qualifies the first-call behavior for the exercised singleton
 Window and missing-row class. Ordinary-workload p95, broader fault
 coverage and external slow and cancellation scenarios remain open.
+
+### 25 November 2026 — Complete-evidence runner and source authentication
+
+The separate Windows ceiling pass now uses a new Sol/medium Answer
+thread for each of the 20 frozen development cases. The pinned
+launcher authenticates the first delivered source treatment against
+the actual wrapper dispatch digest, native reply and source spans.
+It rejects clipped judge packets or a mismatched retained session.
+Strict scoring requires two distinct Astra threads on the same
+blinded packet and retains a separate Sol diagnostic. The normal
+Windows baseline admits only a recomputed ceiling disposition with
+at least 12 correct finishes overall and five in each repository.
+
+The guarded read-only source preflight passed all 20 cases and
+113 essentials. Bookbuilder authenticated 61 exact spans and 79,324
+excerpt bytes. Munarium authenticated 52 spans and 67,782 bytes.
+There were no source preflight failures. The execution used the
+original scenario freeze, independently pinned export receipts and
+the two previously audited closed index databases. The builder
+verified the closed database hashes and source byte identities
+before producing aggregate output. It received no target
+publication tokens and wrote no benchmark manifests.
+
+Thirty-four focused Python tests passed, including the legacy
+archive path, strict actor and judge receipts, ceiling threshold,
+manifest and exact source treatment. The executed commands and
+source custody receipt are in
+L5C/windows-completion-ceiling-source-preflight-r1.
+Execution SHA-256 is
+0c92c2fe271ba7ae155b192d3cdf70826051f6af4bd01778a2eb7e4b0ef3e3d2.
+
+Next admit the exact Windows both-model runtime and freeze its
+target publication tokens, verify the prepared case manifests and
+establish hosted access for the pinned role IDs. No hosted or scored
+development session ran. The separate held-out probes stayed sealed.

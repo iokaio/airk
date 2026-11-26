@@ -36,6 +36,7 @@ if str(HERE) not in sys.path:
 import codex_isolation_probe as codex_driver  # noqa: E402
 import common  # noqa: E402
 import evidence  # noqa: E402
+from complete_evidence import CompleteEvidence  # noqa: E402
 import mcp_wrapper  # noqa: E402
 
 SYSTEM_PROMPT = """You are preparing to carry out a software development task in a code repository that you cannot see directly. You can reach the repository only through the tools you have been given; they only read it. There is no shell, file system or web access.
@@ -246,12 +247,108 @@ def audit_codex(stream_path, status, path, turns, brief):
     return result
 
 
+@dataclass(frozen=True)
+class CompleteEvidenceInput:
+    manifest: Path
+    manifest_sha256: str
+    source_root: Path
+    publication_token: str
+
+    def load(self, scenario: dict) -> CompleteEvidence:
+        return CompleteEvidence.from_manifest(
+            self.manifest.read_bytes(), expected_sha256=self.manifest_sha256, source_root=self.source_root,
+            repo=scenario["repository"], slot=scenario["slot"], scenario_sha256=scenario["_sha256"],
+            publication_token=self.publication_token,
+            essential_ids=[note["id"] for note in scenario["notes"] if note["mark"] == "essential"])
+
+
+def verify_complete_evidence(directory: Path, record: dict, treatment: CompleteEvidence) -> dict:
+    """Authenticate the first Answer against the successful actor's transcript, wrapper and source."""
+    from judge import FIRST_REPLY_CAP
+    from replay import canonical_first_call
+
+    observed = record["codex_observed"]
+    thread, turn = observed.get("thread_id"), observed.get("turn_id")
+    common.require(record["status"] == "complete" and record["exit_code"] == 0 and not record["is_error"]
+                   and thread and turn and record["session_id"] == thread and observed.get("final")
+                   and observed.get("auth_route") == "chatgpt" and observed.get("provider_observed") == "openai"
+                   and observed.get("model_observed") == record["model_requested"] == "gpt-6.2-sol"
+                   and observed.get("effort_observed") == record["effort_requested"] == "medium"
+                   and observed.get("turn_status") == "completed" and record["path"] == "answer"
+                   and record.get("complete_evidence_manifest_sha256") == treatment.manifest_sha256,
+                   "ineligible complete-evidence actor, terminal status or manifest")
+    stream = directory / "stream.jsonl"
+    brief = directory / "brief.md"
+    common.require(common.sha256_file(stream) == record["stream_sha256"]
+                   and common.sha256_file(brief) == record["brief_sha256"]
+                   and brief.read_text(encoding="utf-8") == observed["final"].replace("\r\n", "\n"),
+                   "retained actor stream or brief differs")
+    log = directory / "wrapper" / "turns.jsonl"
+    rows = common.read_jsonl(log)
+    audit = audit_codex(stream, observed, "answer", rows, observed["final"])
+    common.require(not audit["discard"], "complete-evidence actor and wrapper calls differ")
+    counted = [r["turn"] for r in rows if r.get("turn") is not None]
+    common.require(counted == list(range(1, len(counted) + 1)), "actor wrapper turn order differs")
+    treated = [r for r in rows if "complete_evidence_manifest_sha256" in r]
+    common.require(len(treated) == 1, "expected exactly one treated Answer")
+    first = treated[0]
+    common.require(first["turn"] == 1 and first["ok"] and not first["rejected"]
+                   and first["first_call"]["rule"] == "canonical" and first["tool"] == "airk_answer"
+                   and first["complete_evidence_manifest_sha256"] == treatment.manifest_sha256,
+                   "complete-evidence treatment was not the first canonical Answer")
+    instruction = (directory / "instruction.txt").read_text(encoding="utf-8")
+    question = first["sent_arguments"]["question"]
+    _, expected_args = canonical_first_call("answer", question, record["answer_defaults"])
+    common.require(question.replace("\r\n", "\n") == instruction
+                   and first["arguments"]["question"].strip() == question.strip()
+                   and first["sent_arguments"] == expected_args, "first Answer arguments differ")
+    attempt = observed["attempts"][first["call"] - 1]
+    events = common.read_jsonl(stream)
+    completed_messages = [event["params"]["item"].get("text") for event in events
+                          if event.get("method") == "item/completed" and event["params"].get("threadId") == thread
+                          and event["params"].get("turnId") == turn
+                          and event["params"]["item"].get("type") == "agentMessage"
+                          and event["params"]["item"].get("phase") != "commentary"]
+    common.require(completed_messages and completed_messages[-1] == observed["final"],
+                   "retained brief differs from the terminal actor message")
+    terminal = [event["params"] for event in events if event.get("method") == "turn/completed"]
+    common.require(len(terminal) == 1 and terminal[0]["threadId"] == thread
+                   and terminal[0]["turn"]["id"] == turn and terminal[0]["turn"]["status"] == "completed",
+                   "actor transcript lacks its completed turn")
+
+    def result_bytes(key: str, name: str) -> bytes:
+        path = directory / "wrapper" / "results" / name
+        common.require(Path(first[key + "_path"]).resolve() == path.resolve(), "crossed result path")
+        raw = path.read_bytes()
+        common.require(common.sha256_bytes(raw) == first[key + "_sha256"], "retained result digest differs")
+        return raw
+
+    native = json.loads(result_bytes("native_result", "turn-01.native.stdout.json"))
+    delivered = json.loads(result_bytes("result", "turn-01.stdout.json"))
+    expected = treatment.augment({"content": common.envelope_content(native)})
+    common.require(not native.get("isError") and delivered == expected,
+                   "delivered Answer differs from native Answer and frozen passages")
+    text = common.envelope_text(delivered)
+    common.require(len(text) <= FIRST_REPLY_CAP, "complete-evidence first reply would be clipped in judging")
+    receipt = treatment.verify_dispatch(delivered, attempt["output_sha256"])
+    common.require(receipt["text_bytes"] == first["bytes"], "delivered Answer byte count differs")
+    return {**receipt, "native_result_sha256": first["native_result_sha256"],
+            "result_sha256": first["result_sha256"], "turns_sha256": common.sha256_file(log),
+            "call_id": attempt["call_id"], "rpc_id": attempt["rpc_id"]}
+
+
 def run(*, scenario: dict, path: str, handle: Path, series: str, sessions_root: Path, configuration: str | None = None,
         device: str = "none", sample: int = 1, catalog: Path | None = None, answer_defaults: dict | None = None,
         model: str = common.AGENT_MODEL, effort: str | None = common.AGENT_EFFORT,
         timeout_s: float = 1800.0, call_timeout_s: float = 300.0,
         max_budget_usd: float | None = None, claude: str | None = None, rerun: bool = False,
-        accept_queryable: bool = False, codex: CodexRunConfig | None = None) -> dict:
+        accept_queryable: bool = False, codex: CodexRunConfig | None = None,
+        complete_evidence: CompleteEvidenceInput | None = None) -> dict:
+    treatment = None
+    if complete_evidence is not None:
+        common.require(codex is not None and path == "answer" and model == "gpt-6.2-sol" and sample == 1,
+                       "complete evidence requires the first Sol Codex Answer sample")
+        treatment = complete_evidence.load(scenario)
     if codex is None:
         common.require(model not in common.OPENAI_EVAL_AGENT_MODELS,
                        "OpenAI actor models require an explicit frozen Codex configuration")
@@ -267,6 +364,8 @@ def run(*, scenario: dict, path: str, handle: Path, series: str, sessions_root: 
     record_path = directory / "session.json"
     if record_path.is_file() and not rerun:
         record = common.read_json(record_path)
+        common.require(record.get("complete_evidence_manifest_sha256") ==
+                       (treatment.manifest_sha256 if treatment else None), "retained session treatment differs")
         if record.get("status") in ("complete", "discarded", "failed", "timeout"):
             if provenance is not None:
                 common.require(record.get("codex") == provenance and record.get("model_requested") == model
@@ -276,6 +375,15 @@ def run(*, scenario: dict, path: str, handle: Path, series: str, sessions_root: 
                                "retained session differs from the frozen Codex actor")
             else:
                 common.require("codex" not in record, "retained Codex session requires its provider configuration")
+            if treatment:
+                common.require(record["answer_defaults"] == answer_defaults and record["device"] == device
+                               and record["configuration"] == (configuration or path)
+                               and record["handle"]["sha256"] == common.sha256_file(handle)
+                               and record["repo"] == repo and record["slot"] == slot and record["series"] == series
+                               and record["sample"] == sample, "retained complete-evidence session inputs differ")
+                receipt = verify_complete_evidence(directory, record, treatment)
+                common.require(record.get("complete_evidence_receipt") == receipt,
+                               "retained complete-evidence receipt differs")
             return record
     if directory.exists():
         attempt = 1
@@ -293,7 +401,7 @@ def run(*, scenario: dict, path: str, handle: Path, series: str, sessions_root: 
     if codex is not None:
         return run_codex_agent(scenario, path, loaded, handle, series, directory, configuration, device,
                                sample, catalog, answer_defaults, model, effort, timeout_s, call_timeout_s,
-                               accept_queryable, codex, provenance)
+                               accept_queryable, codex, provenance, treatment)
     wrapper = wrapper_command(handle, repo, path, instruction_file, log_dir, catalog, answer_defaults, call_timeout_s,
                               accept_queryable)
     common.write_json(mcp_config, {"mcpServers": {common.SERVER_NAME: {"type": "stdio", "command": wrapper[0],
@@ -367,7 +475,7 @@ def run(*, scenario: dict, path: str, handle: Path, series: str, sessions_root: 
 
 def run_codex_agent(scenario, path, loaded, handle, series, directory, configuration, device, sample,
                     catalog, answer_defaults, model, effort, timeout_s, call_timeout_s, accept_queryable,
-                    codex, provenance):
+                    codex, provenance, treatment=None):
     work = directory / "work"
     log_dir = directory / "wrapper"
     for child in ("codex-logs", "codex-state", "codex-tmp"):
@@ -391,7 +499,7 @@ def run_codex_agent(scenario, path, loaded, handle, series, directory, configura
     wrapper = mcp_wrapper.Wrapper(handle=loaded, repo=repo, path=path, instruction=instruction,
                                   catalog=common.load_catalog(catalog), log_dir=log_dir,
                                   answer_defaults=answer_defaults, call_timeout_s=call_timeout_s,
-                                  backend=backend, deadline=deadline)
+                                  backend=backend, deadline=deadline, complete_evidence=treatment)
     tools = wrapper.list_tools()
     common.write_json(config_path, codex_driver.dynamic_specs(tools))
     record = {"schema": SESSION_SCHEMA, "series": series, "repo": repo, "slot": slot, "scenario_id": scenario.get("id"),
@@ -404,6 +512,8 @@ def run_codex_agent(scenario, path, loaded, handle, series, directory, configura
               "effort_requested": effort, "command": command, "stdin": "instruction.txt", "cwd": str(work),
               "codex": provenance, "tool_catalog_input_sha256": tool_input_sha256,
               "codex_tools_sha256": common.sha256_file(config_path), "status": "running", "started": common.now_iso()}
+    if treatment:
+        record["complete_evidence_manifest_sha256"] = treatment.manifest_sha256
     record_path = directory / "session.json"
     common.write_json(record_path, record)
     try:
@@ -437,6 +547,11 @@ def run_codex_agent(scenario, path, loaded, handle, series, directory, configura
         record["status"] = "discarded"
     else:
         record["status"] = "complete" if completed and not checks["discard"] else "failed"
+    if treatment and record["status"] == "complete":
+        try:
+            record["complete_evidence_receipt"] = verify_complete_evidence(directory, record, treatment)
+        except (common.HarnessError, OSError, KeyError, TypeError, ValueError) as error:
+            record.update(status="failed", is_error=True, complete_evidence_error=str(error))
     common.write_json(record_path, record)
     return record
 
@@ -445,6 +560,8 @@ def reaudit(directory: Path) -> dict:
     """Recompute a finished session's audit from its stored stream, wrapper log and brief."""
     directory = Path(directory)
     record = common.read_json(directory / "session.json")
+    common.require("complete_evidence_manifest_sha256" not in record,
+                   "use the frozen complete-evidence input to revalidate this session")
     stream_path = directory / "stream.jsonl"
     turns = common.read_jsonl(directory / "wrapper" / "turns.jsonl")
     brief = (directory / "brief.md").read_text(encoding="utf-8") if (directory / "brief.md").is_file() else ""

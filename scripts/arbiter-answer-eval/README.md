@@ -897,16 +897,32 @@ spec requires the complete 20-scenario roster, a CUDA Answer arm and
 fresh controls at the prescribed stages. Sol runs five arms and Astra
 three. Historical specs retain their original generation and verification.
 
-`complete_evidence.py` prepares the isolated first-reply treatment for a
-later complete-evidence pass. It authenticates the private case manifest,
-source bytes, exact line ranges and the actual dispatched tool content
-digest. The actor sees only cited source text. The wrapper preserves
-the ordinary native Answer in a separate artifact and sends the
-augmented reply through its normal text block. Follow-up calls use the
-ordinary wrapper. The helper exercises UTF-8 sources with independently
-authenticated byte ranges. The pass must bind each actual dev manifest,
-verify the first dispatch before scoring and keep Sol diagnostics
-separate from Astra adjudication.
+### Complete-evidence gate
+
+`prepare_complete_evidence.py --preflight` authenticates the exact
+development-case freeze, exported source custody, closed audit
+database and each accepted UTF-8 line span. Its output is aggregate
+coverage. Manifest generation needs explicit target publication tokens
+from the admitted Answer lifetime. The custody tokens never stand in
+for the target tokens.
+
+The ceiling prompt freeze uses purpose
+`windows-stage-a-complete-evidence` and pins all twenty private
+manifests. `complete_evidence_pass.py` produces the separate Sol
+Answer-only spec from that freeze, the matching runtime handle and
+the dedicated Codex home. The actor's first canonical Answer sends
+only verified cited text. Its dispatch receipt binds the actual
+delivered bytes and rejects clipping before judging. The ordinary
+native Answer remains available in the private run. Follow-ups use
+the standard wrapper and turn cap.
+
+Two distinct Astra sessions score the same blinded packet. The
+separate tool-free Sol receipt contributes agreement diagnostics.
+Normal Windows baseline admission uses
+`--ceiling-disposition <receipt>` and revalidates the matched retained
+actor, dispatch and scoring evidence. It requires at least 12
+correct finishes overall and five per repository. Preserve an
+incomplete or below-threshold disposition with its own receipts.
 
 ### Wider Search shortlist coverage
 

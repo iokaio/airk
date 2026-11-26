@@ -69,6 +69,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 import common  # noqa: E402
+import complete_evidence_pass  # noqa: E402
 import make_cs_spec  # noqa: E402
 import prompts_freeze  # noqa: E402
 import run_session  # noqa: E402
@@ -540,6 +541,8 @@ def main(argv: list[str] | None = None) -> int:
             sub.add_argument("--codex-home", type=Path, help="dedicated Codex home for the Windows Stage A pass")
             sub.add_argument("--codex-stage", choices=prompts_freeze.CODEX_STAGES,
                              help="phase of the Windows Stage A pass")
+            sub.add_argument("--ceiling-disposition", type=Path,
+                             help="authenticated complete-evidence result required for a Codex baseline")
     sub = commands.add_parser("template")
     sub.add_argument("--out", type=Path, required=True)
     sub = commands.add_parser("shakedown")
@@ -583,6 +586,8 @@ def main(argv: list[str] | None = None) -> int:
     else:
         common.require(bool(args.codex_freeze) == bool(args.codex_home) == bool(args.codex_stage),
                        "--codex-freeze, --codex-home and --codex-stage must be supplied together")
+        common.require(bool(args.ceiling_disposition) == (args.codex_stage == "baseline"),
+                       "only a Codex baseline requires --ceiling-disposition")
         if args.codex_freeze:
             common.require(args.handle is not None and args.claude is None,
                            "Windows Stage A requires --handle and the Codex provider")
@@ -590,6 +595,10 @@ def main(argv: list[str] | None = None) -> int:
             spec = stage_a_spec(args.series, args.r_root, profiles, repos, budget, args.note,
                                 freeze_path=args.codex_freeze, codex_home=args.codex_home,
                                 handle=args.handle, stage=args.codex_stage)
+            if args.ceiling_disposition:
+                pin = prompts_freeze.pinned_input(str(args.ceiling_disposition))
+                complete_evidence_pass.require_passing_disposition(pin, common.read_json(args.codex_freeze))
+                spec["ceiling_disposition"] = pin
         else:
             spec = l7_spec(args.series, args.r_root, profiles, repos, budget, args.note)
         for field, path in (("handle", args.handle), ("claude", args.claude)):

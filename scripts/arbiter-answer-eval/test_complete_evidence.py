@@ -12,6 +12,8 @@ import complete_evidence as ceiling
 import evidence
 import loop_reply
 import mcp_wrapper
+import replay
+import run_session
 import synthetic
 
 
@@ -105,6 +107,59 @@ class CompleteEvidenceTests(unittest.TestCase):
             with self.subTest(field=field), patch.dict(self.manifest["spans"][0], {field: bad}):
                 with self.assertRaises(common.HarnessError):
                     self.load()
+
+    def test_actor_delivery_receipt_and_refusals(self):
+        treatment = self.load()
+        native = self.reply()
+        directory = Path("session").resolve()
+        results = directory / "wrapper" / "results"
+        native_path = results / "turn-01.native.stdout.json"
+        delivered_path = results / "turn-01.stdout.json"
+        delivered = treatment.augment(native)
+        output_sha = self.digest(delivered)
+        files = {native_path: common.canonical_json(native), delivered_path: common.canonical_json(delivered)}
+        interface = {"question": "task"}
+        _, sent = replay.canonical_first_call("answer", "task")
+        first = {"turn": 1, "call": 1, "arguments": interface, "sent_arguments": sent, "ok": True,
+                 "tool": "airk_answer", "rejected": False, "first_call": {"rule": "canonical"},
+                 "native_result_path": str(native_path), "result_path": str(delivered_path),
+                 "native_result_sha256": common.sha256_bytes(files[native_path]),
+                 "result_sha256": common.sha256_bytes(files[delivered_path]),
+                 "complete_evidence_manifest_sha256": treatment.manifest_sha256,
+                 "bytes": len(common.envelope_text(delivered).encode())}
+        rows = [first]
+        meta = {"threadId": "thread", "turnId": "turn"}
+        call = {**meta, "callId": "call", "tool": "airk_answer", "arguments": interface,
+                "namespace": driver.DYNAMIC_NAMESPACE}
+        transcript = [{"method": "item/tool/call", "id": 9, "params": call},
+                      {"method": "item/completed", "params": {**meta, "item": {"type": "agentMessage",
+                                                                            "text": "brief"}}},
+                      {"method": "turn/completed", "params": {"threadId": "thread", "turn": {
+                          "id": "turn", "status": "completed"}}}]
+        attempt = {"tool": "airk_answer", "call_id": "call", "rpc_id": 9, "arguments": interface,
+                   "success": True, "output_sha256": output_sha}
+        observed = {"thread_id": "thread", "turn_id": "turn", "turn_status": "completed", "final": "brief",
+                    "attempts": [attempt], "model_observed": "gpt-6.2-sol", "effort_observed": "medium",
+                    "auth_route": "chatgpt", "provider_observed": "openai"}
+        record = {"status": "complete", "is_error": False, "exit_code": 0, "session_id": "thread",
+                  "model_requested": "gpt-6.2-sol", "effort_requested": "medium", "path": "answer",
+                  "stream_sha256": "stream.jsonl", "brief_sha256": "brief.md", "codex_observed": observed,
+                  "complete_evidence_manifest_sha256": treatment.manifest_sha256, "answer_defaults": None}
+        def verify():
+            return run_session.verify_complete_evidence(directory, record, treatment)
+
+        with (patch.object(common, "sha256_file", side_effect=lambda p: p.name),
+              patch.object(common, "read_jsonl", side_effect=lambda p: transcript if p.name == "stream.jsonl" else rows),
+              patch.object(Path, "read_bytes", autospec=True, side_effect=lambda p: files[p]),
+              patch.object(Path, "read_text", autospec=True, side_effect=lambda p, **_: "brief" if p.name == "brief.md" else "task")):
+            self.assertEqual(verify()["output_sha256"], output_sha)
+            for obj, delta in ((observed, {"auth_route": "other"}), (attempt, {"output_sha256": "other"}),
+                               (record, {"status": "timeout"}), (first, {"complete_evidence_manifest_sha256": "other"}),
+                               (call, {"threadId": "other"}), (first, {"bytes": first["bytes"] - 1})):
+                with self.subTest(delta=delta), patch.dict(obj, delta), self.assertRaises(common.HarnessError):
+                    verify()
+            with patch("judge.FIRST_REPLY_CAP", 1), self.assertRaisesRegex(common.HarnessError, "clipped"):
+                verify()
 
     def test_ticket_and_crossed_publication_are_ineligible(self):
         treatment = self.load()
