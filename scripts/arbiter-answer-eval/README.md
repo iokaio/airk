@@ -918,3 +918,21 @@ top-ten essential, and query p95 within 1.10x for each repository. The
 pilot reuses the same writer and publications, so it runs no builds of
 the corpus and produces no new index bytes. Do not open held-out probes
 without a qualifying development finalist.
+
+### Independent source anchors and closed matrix ranking
+
+Run docx_source_anchor_audit.py with the pinned native capture input,
+binding, Focus-off report, fidelity report and closed source handle.
+It checks source-file hashes and independent OOXML paragraph and table
+anchors for the captured DOCX text. Keep the output private.
+
+Run closed_matrix_cross_route.py prepare with the pinned development
+cohort and one frozen repository/slot. Give its exact UTF-8 query file
+and SHA-256 to the ignored native MiniLM smoke through
+AIRK_MINILM_FP16_PROBE_QUERY and AIRK_MINILM_FP16_PROBE_QUERY_SHA256.
+The optional receipt holds exact CPU and CUDA query coordinates under
+the strict original model, placement and runtime pins. Then run
+closed_matrix_cross_route.py compare with the same case, the native
+probe receipt hash, the closed writer handle and its matrix SHA-256.
+The comparator uses independent double-precision dots over live
+committed rows. Its rank agreement describes the selected closed matrix.

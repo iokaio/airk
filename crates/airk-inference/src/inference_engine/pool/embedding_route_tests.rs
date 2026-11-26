@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     env, fs,
-    io::Write,
+    io::{Read, Write},
     path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
@@ -31,6 +31,39 @@ fn absolute_env(key: &str) -> Result<PathBuf> {
     let path = PathBuf::from(env::var_os(key).with_context(|| format!("missing {key}"))?);
     ensure!(path.is_absolute(), "{key} must be absolute");
     Ok(path)
+}
+
+fn authenticated_query() -> Result<Option<(Sha256Digest, String)>> {
+    const PATH: &str = "AIRK_MINILM_FP16_PROBE_QUERY";
+    const HASH: &str = "AIRK_MINILM_FP16_PROBE_QUERY_SHA256";
+    const MAX_BYTES: usize = 16 * 1024;
+
+    let (path, expected) = match (env::var_os(PATH), env::var_os(HASH)) {
+        (None, None) => return Ok(None),
+        (Some(path), Some(expected)) => (PathBuf::from(path), expected),
+        _ => anyhow::bail!("{PATH} and {HASH} must be supplied together"),
+    };
+    ensure!(path.is_absolute(), "{PATH} must be absolute");
+    let expected = expected
+        .to_str()
+        .and_then(|value| value.parse::<Sha256Digest>().ok())
+        .context("invalid expected MiniLM probe query SHA-256")?;
+    let file = fs::File::open(&path).context("open authenticated MiniLM probe query")?;
+    ensure!(
+        file.metadata()?.is_file(),
+        "{PATH} must name a regular file"
+    );
+    let mut bytes = Vec::new();
+    file.take(u64::try_from(MAX_BYTES + 1)?)
+        .read_to_end(&mut bytes)
+        .context("read authenticated MiniLM probe query")?;
+    ensure!(bytes.len() <= MAX_BYTES, "{PATH} exceeds 16 KiB");
+    let actual = Sha256Digest::from_bytes(Sha256::digest(&bytes).into());
+    ensure!(actual == expected, "MiniLM probe query SHA-256 differs");
+    let query = String::from_utf8(bytes)
+        .map_err(|_| anyhow::anyhow!("MiniLM probe query must be valid UTF-8"))?;
+    ensure!(!query.trim().is_empty(), "MiniLM probe query is blank");
+    Ok(Some((actual, query)))
 }
 
 #[test]
@@ -74,6 +107,7 @@ fn minilm_cuda_native_placement_and_settled_batch() -> Result<()> {
         "settled_cuda_batches": [],
     });
     let result = (|| -> Result<()> {
+        let query = authenticated_query()?;
         let manifest = fs::read(model_path.join("model.json"))?;
         let digest = Sha256Digest::from_bytes(Sha256::digest(&manifest).into());
         let lease = Arc::new(airk_store::service::ServiceLease::acquire(&control)?);
@@ -117,8 +151,29 @@ fn minilm_cuda_native_placement_and_settled_batch() -> Result<()> {
                     .map(|i| if i % 2 == 0 { text2 } else { long.as_str() })
                     .collect(),
             ] {
-                execute_batch(&mut receipt, &cpu, &gpu, &mut session, &case, deadline)?;
+                let _ = execute_batch(
+                    &mut receipt,
+                    &cpu,
+                    &gpu,
+                    &mut session,
+                    &case,
+                    None,
+                    deadline,
+                )?;
             }
+            let query_embedding = if let Some((sha256, query)) = query {
+                execute_batch(
+                    &mut receipt,
+                    &cpu,
+                    &gpu,
+                    &mut session,
+                    &[query.as_str()],
+                    Some(sha256),
+                    deadline,
+                )?
+            } else {
+                None
+            };
             receipt["adapter_after_batch"] = serde_json::to_value(device.observation(deadline)?)?;
             session.close()?;
             receipt["adapter_after_session_close"] =
@@ -126,6 +181,9 @@ fn minilm_cuda_native_placement_and_settled_batch() -> Result<()> {
             drop(device);
             drop(runtime);
             ensure!(!process_poisoned(), "MiniLM CUDA runtime did not settle");
+            if let Some(query_embedding) = query_embedding {
+                receipt["query_embedding"] = query_embedding;
+            }
             Ok(())
         })?
     })();
@@ -146,8 +204,9 @@ fn execute_batch(
     gpu: &MiniLmCudaModel,
     session: &mut airk_retrieval::minilm_fp16::MiniLmCudaSession,
     texts: &[&str],
+    query_sha256: Option<Sha256Digest>,
     deadline: Instant,
-) -> Result<()> {
+) -> Result<Option<Value>> {
     let mut cpu_stats = EmbeddingCacheStats::default();
     let expected = cpu.embed_batch(
         texts,
@@ -158,9 +217,24 @@ fn execute_batch(
             max_workers: 1,
             working_memory_bytes: HOST_BUDGET,
         },
-    )?;
+    );
+    let expected = expected.map_err(|error| {
+        if query_sha256.is_some() {
+            anyhow::anyhow!("canonical CPU MiniLM failed to embed the authenticated query")
+        } else {
+            error
+        }
+    })?;
     let start = Instant::now();
-    let (actual, cuda_stats) = gpu.embed_cuda(session, texts, HOST_BUDGET, deadline)?;
+    let (actual, cuda_stats) = gpu
+        .embed_cuda(session, texts, HOST_BUDGET, deadline)
+        .map_err(|error| {
+            if query_sha256.is_some() {
+                anyhow::anyhow!("native CUDA MiniLM failed to embed the authenticated query")
+            } else {
+                error.into()
+            }
+        })?;
     let elapsed_us = u64::try_from(start.elapsed().as_micros())?;
     ensure!(
         expected.len() == actual.len()
@@ -170,12 +244,24 @@ fn execute_batch(
     );
     let mut max_abs = 0.0_f32;
     let mut min_dot = 1.0_f64;
+    let mut query_embedding = None;
     for (expected, actual) in expected.into_iter().zip(actual) {
         let expected = expected.context("reference embedding missing")?;
         ensure!(
             expected.len() == 384 && actual.len() == 384,
             "MiniLM vector dimension differs"
         );
+        if let Some(sha256) = &query_sha256 {
+            ensure!(
+                expected
+                    .iter()
+                    .chain(&actual)
+                    .all(|value| value.is_finite()),
+                "MiniLM query vector contains a non-finite coordinate"
+            );
+            query_embedding =
+                Some(json!({"input_sha256": sha256, "cpu": &expected, "cuda": &actual}));
+        }
         let mut dot = 0.0;
         for (expected, actual) in expected.into_iter().zip(actual) {
             max_abs = max_abs.max((expected - actual).abs());
@@ -197,5 +283,5 @@ fn execute_batch(
         max_abs <= 0.005 && min_dot >= 0.9995,
         "MiniLM CUDA smoke numeric tolerance exceeded"
     );
-    Ok(())
+    Ok(query_embedding)
 }

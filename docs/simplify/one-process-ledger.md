@@ -20406,3 +20406,28 @@ Verified duplicate runtime and CLI files were reclaimed after both
 Jobs settled. The 1,912,298,288 reclaimed bytes left
 1,088,706,826,240 bytes free on D:. Cleanup receipt SHA-256
 93943a3a68a79c1f1ecc6b7f3e90bc98e688505fb165e9be1c7f6b581bfb840a.
+
+### 25 November 2026 — Extracted source anchors and closed-matrix route probe
+
+Independent OOXML verification authenticated 30 captured native DOCX
+hits across 12 Bookbuilder source documents, with exact exported file
+hashes. All 28 paragraph blocks matched their original ordinals,
+including blank paragraphs in the enumeration. Both table rows matched
+the original row in order after whitespace normalization, with inserted
+labels supported by earlier rows of the same table. No captured anchor
+remained unverified. The capture had a distinct publication token with
+the same source commit and semantic pipeline. All 800 native capture
+windows previously matched their full-hit hashes. The DOCX anchor
+receipt SHA-256 is
+d5c634411783c24fb45e2596275f06f6c7b934431d23424ea4616cbee5373d40.
+The pinned Munarium export has no DOCX, PDF, XLSX or PPTX paths.
+
+The old writer restart and current CUDA-route preflight could not admit
+the live matched read. The next diagnostic obtains exact CPU and CUDA
+query embeddings through the retained strict native MiniLM smoke and
+scores the old closed matrix independently without reopening its
+service. The one frozen C1 task input SHA-256 is
+fbbc76cd5cd426629e062a71b13a90b76db57052c30911d4a9f13ec384ef8b26.
+Scoped Inference test Clippy passed on the warm Windows target.
+Execution receipt SHA-256 is d7978d3fef5e2f62c4b8e17d7b364f71e64d3e4eca436c49be37d6a0627cbe03. The native query run and
+closed-matrix measurement remain to run.

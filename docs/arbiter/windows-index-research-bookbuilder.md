@@ -61,6 +61,8 @@ the net top-40 gain requirement. The original development control was
 retained and its held-out cases remain unqueried.
 [Path-prior decision](../simplify/one-process-ledger.md#25-november-2026--path-prior-pilot-rejected-on-windows)
 
-Extraction anchors on the selected export and the independent CPU-query
-versus CUDA-vector check remain open. The Windows OpenAI baseline and
+The independent OOXML check anchored all 30 full retained DOCX hits
+across 12 source documents, including 28 original paragraph blocks
+and two table rows. The CPU-query versus CUDA-vector and separate
+writer-route checks remain open. The Windows OpenAI baseline and
 improvement rounds are pending.
