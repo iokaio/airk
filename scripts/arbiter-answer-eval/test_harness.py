@@ -528,6 +528,36 @@ def row(turns=None, grade_=None, repo="airk", kind="coding", **extra):
 
 
 class CodexOfferCapture(unittest.TestCase):
+    def test_clean_home_requires_no_authorization(self):
+        no_key = {"authorization_present": False, "synthetic_authorization": False}
+        dummy_key = {"authorization_present": True, "synthetic_authorization": True}
+        other_key = {"authorization_present": True, "synthetic_authorization": False}
+        self.assertTrue(codex_probe.authorization_isolated(no_key, False))
+        self.assertTrue(codex_probe.authorization_isolated(dummy_key, True))
+        self.assertFalse(codex_probe.authorization_isolated(no_key, True))
+        self.assertFalse(codex_probe.authorization_isolated(dummy_key, False))
+        self.assertFalse(codex_probe.authorization_isolated(other_key, False))
+        self.assertFalse(codex_probe.authorization_isolated(other_key, True))
+
+    def test_dispatches_once_and_refuses_duplicate_or_crossed_dynamic_calls(self):
+        dispatch = Mock(return_value={"content": [{"type": "text", "text": "refused input"}], "isError": True})
+        message = {"id": 4, "params": {"callId": "call-1", "threadId": "thread", "turnId": "turn",
+                                      "namespace": "airk_eval", "tool": "airk_search", "arguments": ["invalid"]}}
+        attempts = []
+        self.assertEqual(codex_probe.dispatch_tool(message, "thread", "turn", dispatch, {"airk_search"}, attempts),
+                         {"id": 4, "result": {"success": False, "contentItems": [
+                             {"type": "inputText", "text": "refused input"}]}})
+        dispatch.assert_called_once_with("airk_search", ["invalid"])
+        self.assertEqual((attempts[0]["call_id"], attempts[0]["rpc_id"], attempts[0]["success"]),
+                         ("call-1", 4, False))
+        with self.assertRaisesRegex(common.HarnessError, "duplicate"):
+            codex_probe.dispatch_tool(message, "thread", "turn", dispatch, {"airk_search"}, attempts)
+        with self.assertRaisesRegex(common.HarnessError, "crossed"):
+            codex_probe.dispatch_tool(message, "other-thread", "turn", dispatch, {"airk_search"}, attempts)
+        with self.assertRaisesRegex(common.HarnessError, "unexpected"):
+            codex_probe.dispatch_tool(message, "thread", "turn", dispatch, set(), attempts)
+        dispatch.assert_called_once()
+
     def test_reads_namespaced_and_unexpected_responses_lite_tools(self):
         tool = {"type": "function", "name": "airk_search"}
         request = {

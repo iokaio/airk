@@ -838,9 +838,23 @@ The probe reads both top-level tool definitions and Responses Lite
 including duplicates and rejects built-ins outside the expected catalog.
 A pinned `--model-catalog` and its SHA-256 can test a local metadata override.
 The loopback-only `--app-server` variant reads the effective MCP configuration
-before opening any model thread. Use `--disable-mcp-server` for each inherited
-server that must be disabled in that subprocess. This variant submits
-the wrapper schemas as explicit declarations and measures offers only.
+before opening a model thread. It submits the wrapper schemas as explicit
+dynamic tools. Use `--disable-mcp-server` to account for inherited servers
+when diagnosing the original configuration path.
+
+For a clean profile, use `--built-in-provider --app-server
+--clean-app-server-home --codex-sha256 <digest>` with the pinned
+model catalog and an empty `scratch/codex-home`. The process checks that the
+MCP configuration is empty and the loopback request carries no authorization.
+This uses a child-only home and a synthetic endpoint on 127.0.0.1.
+
+Add `--round-trip` to exercise the stock Codex dynamic call bridge or a
+tool-free judge's strict schema. The synthetic agent round trip verifies the
+exact tool offer on every request and reconciles all attempts and returned
+outputs with the wrapper log, including a wrong first call and an over-cap
+refusal. The judge fixture returns a synthetic verdict under a small
+schema. These checks qualify the loopback transport. Hosted model access,
+production verdict generation and measured sessions remain separate.
 
 ### Wider Search shortlist coverage
 

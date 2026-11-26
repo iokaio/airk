@@ -20582,3 +20582,40 @@ verification to the existing maintenance owner on a disposable collection
 under the real project, scope and source-policy guards. A foreground
 attempt still needs a measured bound and timely fallback, and the existing
 scheduler needs explicit coverage for publication and idle discovery.
+
+### 25 November 2026 — Stock Codex clean-home and round-trip preflight
+
+The exact Windows stock Codex 0.171.0 binary was pinned at SHA-256
+cefea4ffee1fff04983a99c0dda99944d8b380e891e740a28b32f4b815a6e0b7.
+Its pinned local catalog d9ad2457adc81a5fa9e2b8fba12da59622fe504c6be516285322e23265a3b4fa
+retains the earlier direct-mode controls and disables the Sol search
+discovery tool. Astra's setting remained enabled. An empty child-only home
+with no configured MCP servers admitted explicit airk_eval dynamic tools.
+On loopback both Sol and Astra offered exactly six Search tools, one Parse
+tool and six Answer tools. Tool-free Astra and Sol judge fixtures each
+offered zero. All exercised offers used medium effort and no authorization
+header or inherited instruction source. The four clean offer receipts are
+under L5C/codex-offer-preflight-clean-r2-<profile>. The additional Astra
+and Sol profile receipts are under L5C/codex-tool-catalog-coverage-r1-search
+and L5C/codex-tool-catalog-coverage-r2-<profile>.
+
+Sol's synthetic Search turn made 14 attempted calls across 15 exact tool
+offers. The wrapper admitted 12 and refused a wrong first call and one
+over-cap call. The tool call IDs, arguments and returned text all
+reconciled with the wrapper log and the terminal brief. The 8.435 s
+execution audited 122 outputs. Its receipt is
+bb868b43c358951318bed6282da2f7b1220a771e6bf2d60d2ee2fd5376a696dc.
+Astra's synthetic verdict exercised the strict wire schema on a tool-free
+turn. Its 8.265 s execution audited 109 outputs and its receipt is
+1ac0bafb5d5a585614535bf251c6a375fd1a911f6861ed3965c71a8f6bffb80e.
+Both are in L5C/codex-tool-roundtrip-r1-<profile>. Three focused harness
+tests passed, including duplicate, crossed-session and outside-tool
+refusal. The probe source identity for the round trips is
+184c07a49f5e9cd9ae87d3c8a9d3fe0953a21d0c13b614b93b31db6a0dac7d59.
+
+The offer-only synthetic profiles terminate after capture. The round trips
+run a stock Codex turn against a synthetic local server and fixture data.
+Hosted entitlement, a production verdict schema and provider-aware
+launcher, reuse and grading still need integration. No scored or paid
+session was started. This entry supersedes the earlier tool-catalog
+admission blocker for the exercised stock loopback configuration.
