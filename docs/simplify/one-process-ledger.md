@@ -20905,3 +20905,45 @@ The exact execution receipt under L5C/windows-l6-held-inference-final-r1
 has SHA-256 9af43c5ead789be02db2ac40226d146d6625edff5347e3ee3010afdd1622a607.
 This resolves the focused r5 assertion. The remaining L6 accounting and
 live candidate shakedown are separate checks.
+
+### 25 November 2026 — Paused and concurrent native lexical repair
+
+The checked Windows CLI fixture issued real standalone Window calls
+against the in-process service. Paused Verify returned the original
+publication with no hit and no Verify event. The exact acknowledged
+Resume then produced one Verify job, one successor and the exact
+UTF-8 citation. Two overlapping external calls on the same paused
+omission both observed the original publication and shared one
+subsequent Verify job. Both cases held the original reader pin and
+checked the healthy and legitimate empty controls. The first-request
+repair regression also passed on the same fixture source.
+
+Scoped all-feature CLI tools Clippy passed in 2.51 s. Nextest CI ran
+three selected tests serially in 52.188 s, with three passes and 31
+skipped. The command including compilation took 98.13 s. The first
+attempt stopped in Clippy on two needless closure borrows. The
+corrected warm answer-loop/target-cuda used incremental 1. Execution
+receipt L5C/windows-completion-paused-concurrent-r2/execution.json
+has SHA-256 5e921b354e3a560eb729220707303539877cc1a9b1e8d1fd76113f30b157a4d7.
+
+The separately selected synthetic stress probe used 40 matched healthy
+requests and 40 mixed requests, with four fixed injected omissions.
+Two were recovered in the triggering call and the other two recovered
+in background. All four confirmed defects recovered, and no wrong
+citation, publication drift or scope violation was observed. Healthy
+p95 was 107.161 ms, non-triggering p95 105.664 ms, triggering p95
+370.366 ms and mixed p95 360.872 ms (3.368 times healthy). The
+synthetic mixed case exceeded 1.10 times the healthy p95 and returned
+a failed result after fixture shutdown. Nextest ran one, skipped
+33 and retained exact nanosecond samples in
+L5C/windows-completion-synthetic-repair-timing-r1/selector.log.
+Execution SHA-256 is
+7e4377df3bc20ff767f65c4ec407c1d0b1df3059ffed25043ade42a41eace0a2.
+
+The synthetic mix deliberately injects four defects and is separate
+from the required matched Bookbuilder and Munarium ordinary workload.
+The older idle-sweep proof used injected scheduler and Verify
+observations in the actual native in-process worker. Shorter
+deadline and cancellation decisions passed at component scope.
+External peer-close propagation during an in-flight repair and the
+matched ordinary workload latency measurement remain open.

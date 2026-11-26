@@ -866,8 +866,40 @@ fn current_assert_tool(
 }
 
 #[cfg(windows)]
+enum WindowRepairCase {
+    FirstRequest,
+    Paused,
+    Concurrent,
+    Timing,
+}
+
+#[cfg(windows)]
 #[test]
 fn first_window_search_returns_verified_fts_repair() -> anyhow::Result<()> {
+    window_repair_case(WindowRepairCase::FirstRequest)
+}
+
+#[cfg(windows)]
+#[test]
+fn window_search_defers_paused_verify_and_recovers_after_resume() -> anyhow::Result<()> {
+    window_repair_case(WindowRepairCase::Paused)
+}
+
+#[cfg(windows)]
+#[test]
+fn concurrent_window_searches_coalesce_one_fts_repair() -> anyhow::Result<()> {
+    window_repair_case(WindowRepairCase::Concurrent)
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "fixed synthetic 4/40 repair-triggering stress workload; run in an owned Windows fixture"]
+fn window_search_synthetic_repair_latency_stress() -> anyhow::Result<()> {
+    window_repair_case(WindowRepairCase::Timing)
+}
+
+#[cfg(windows)]
+fn window_repair_case(case: WindowRepairCase) -> anyhow::Result<()> {
     use airk_core::{
         DocumentLocation, SearchResponse,
         scoped_reads::ScopeObservation,
@@ -1122,20 +1154,207 @@ fn first_window_search_returns_verified_fts_repair() -> anyhow::Result<()> {
 
     quiesce()?;
     assert_eq!(worker()?, owner);
-    let final_cursor = cursor_before()?;
-    inject()?;
-    let pinned = store.plain_read()?;
-    assert_eq!(pinned.token(), warm);
-    // This is the only request between fault injection and the verified reply.
-    let (first_reply, actual_scope) = search("repairneedle", TARGET)?;
-    assert_eq!(actual_scope, scope);
-    let physical = store.plain_read()?.token();
-    assert_eq!(physical.sequence, warm.sequence + 1);
-    assert_revision(&first_reply, physical);
-    assert_hit(&first_reply, TARGET, TARGET_TEXT);
-    assert_eq!(pinned.token(), warm);
-    drop(pinned);
-    assert_eq!(wait_for_verify(final_cursor, warm)?, physical);
+    let mut latency_gate = None;
+    let physical = match case {
+        WindowRepairCase::FirstRequest => {
+            let final_cursor = cursor_before()?;
+            inject()?;
+            let pinned = store.plain_read()?;
+            assert_eq!(pinned.token(), warm);
+            // This is the only request between fault injection and the verified reply.
+            let (first_reply, actual_scope) = search("repairneedle", TARGET)?;
+            assert_eq!(actual_scope, scope);
+            let physical = store.plain_read()?.token();
+            assert_eq!(physical.sequence, warm.sequence + 1);
+            assert_revision(&first_reply, physical);
+            assert_hit(&first_reply, TARGET, TARGET_TEXT);
+            assert_eq!(pinned.token(), warm);
+            drop(pinned);
+            assert_eq!(wait_for_verify(final_cursor, warm)?, physical);
+            physical
+        }
+        WindowRepairCase::Paused | WindowRepairCase::Concurrent => {
+            let pause = |paused: bool| -> anyhow::Result<()> {
+                let response =
+                    current_native(&service.control, ControlMethod::Pause { project, paused })?;
+                ensure!(
+                    matches!(response, ControlResponse::Registered { project: saved }
+                        if saved.registration == service.project && saved.paused == paused),
+                    "native pause acknowledgement did not match the requested project state"
+                );
+                Ok(())
+            };
+            let verify_jobs_since = |mut cursor: EventCursor| -> anyhow::Result<_> {
+                let until = Instant::now() + Duration::from_secs(90);
+                let registry = ServiceRegistry::open_saved_before(&service.control, Some(until))?;
+                let mut jobs = std::collections::BTreeSet::new();
+                loop {
+                    ensure!(Instant::now() < until, "Verify job census deadline");
+                    let page = registry.events(Some(project), Some(&cursor), 32)?;
+                    for event in page.events {
+                        if event.job_kind == Some(JobKind::Verify) {
+                            jobs.insert(event.job.context("Verify event job ID missing")?);
+                        }
+                    }
+                    match page.next {
+                        Some(next) => cursor = next,
+                        None => return Ok(jobs),
+                    }
+                }
+            };
+            let final_cursor = cursor_before()?;
+            pause(true)?;
+            inject()?;
+            let pinned = store.plain_read()?;
+            assert_eq!(pinned.token(), warm);
+            let requests = if matches!(case, WindowRepairCase::Concurrent) {
+                let barrier = std::sync::Barrier::new(3);
+                let run = || {
+                    barrier.wait();
+                    let started = Instant::now();
+                    let result = search("repairneedle", TARGET);
+                    (started, Instant::now(), result)
+                };
+                std::thread::scope(|threads| -> anyhow::Result<_> {
+                    let left = threads.spawn(run);
+                    let right = threads.spawn(run);
+                    barrier.wait();
+                    let left = left
+                        .join()
+                        .map_err(|_| anyhow::anyhow!("first Window call panicked"))?;
+                    let right = right
+                        .join()
+                        .map_err(|_| anyhow::anyhow!("second Window call panicked"))?;
+                    assert!(
+                        left.0 < right.1 && right.0 < left.1,
+                        "Window call intervals did not overlap"
+                    );
+                    Ok(vec![left.2?, right.2?])
+                })?
+            } else {
+                vec![search("repairneedle", TARGET)?]
+            };
+            for (fallback, actual_scope) in requests {
+                assert_eq!(actual_scope, scope);
+                assert_revision(&fallback, warm);
+                assert!(fallback.hits.is_empty());
+            }
+            assert_eq!(store.plain_read()?.token(), warm);
+            assert!(verify_jobs_since(final_cursor.clone())?.is_empty());
+            let damaged = Connection::open_with_flags(&database, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+            assert_eq!(fts_count(&damaged, TARGET)?, 0);
+            assert_eq!(fts_count(&damaged, CONTROL)?, 1);
+            drop(damaged);
+            pause(false)?;
+            let repaired = wait_for_verify(final_cursor.clone(), warm)?;
+            assert_eq!(pinned.token(), warm);
+            drop(pinned);
+            quiesce()?;
+            assert_eq!(verify_jobs_since(final_cursor)?.len(), 1);
+            let (recovered, actual_scope) = search("repairneedle", TARGET)?;
+            assert_eq!(actual_scope, scope);
+            assert_revision(&recovered, repaired);
+            assert_hit(&recovered, TARGET, TARGET_TEXT);
+            repaired
+        }
+        WindowRepairCase::Timing => {
+            const COUNT: usize = 40;
+            const FAULT_SLOTS: [usize; 4] = [5, 16, 25, 36];
+            let mut publication = warm;
+            let mut matched_healthy = Vec::with_capacity(COUNT);
+            let mut ordinary = Vec::with_capacity(COUNT - FAULT_SLOTS.len());
+            let mut repair_triggering = Vec::with_capacity(FAULT_SLOTS.len());
+            let mut mixed = Vec::with_capacity(COUNT);
+            let mut triggering_fixed = 0;
+            let mut deferred = 0;
+            let measured = || {
+                let now = Instant::now();
+                let result = search("repairneedle", TARGET);
+                (now.elapsed().as_nanos(), result)
+            };
+            let baseline = || -> anyhow::Result<_> {
+                let token = store.plain_read()?.token();
+                Ok((token, measured()))
+            };
+            let mut stress = |fault: bool| -> anyhow::Result<(u128, bool)> {
+                if !fault {
+                    let (elapsed, result) = measured();
+                    let (reply, actual_scope) = result?;
+                    assert_eq!(actual_scope, scope);
+                    assert_revision(&reply, publication);
+                    assert_hit(&reply, TARGET, TARGET_TEXT);
+                    return Ok((elapsed, false));
+                }
+                let cursor = cursor_before()?;
+                inject()?;
+                let (elapsed, result) = measured();
+                let (reply, actual_scope) = result?;
+                assert_eq!(actual_scope, scope);
+                let old = publication;
+                publication = wait_for_verify(cursor, old)?;
+                let repaired_on_call = !reply.hits.is_empty();
+                if repaired_on_call {
+                    assert_revision(&reply, publication);
+                    assert_hit(&reply, TARGET, TARGET_TEXT);
+                } else {
+                    assert_revision(&reply, old);
+                }
+                Ok((elapsed, repaired_on_call))
+            };
+            // Alternate request order. Finish each automatic repair outside the timed call.
+            for slot in 0..COUNT {
+                let fault = FAULT_SLOTS.contains(&slot);
+                let (baseline, observed) = if slot % 2 == 0 {
+                    (baseline()?, stress(fault)?)
+                } else {
+                    let observed = stress(fault)?;
+                    (baseline()?, observed)
+                };
+                let (baseline_token, (baseline_time, baseline_reply)) = baseline;
+                let (reply, actual_scope) = baseline_reply?;
+                assert_eq!(actual_scope, scope);
+                assert_revision(&reply, baseline_token);
+                assert_hit(&reply, TARGET, TARGET_TEXT);
+                matched_healthy.push(baseline_time);
+                mixed.push(observed.0);
+                if fault {
+                    repair_triggering.push(observed.0);
+                    triggering_fixed += usize::from(observed.1);
+                    deferred += usize::from(!observed.1);
+                } else {
+                    ordinary.push(observed.0);
+                }
+            }
+            assert_eq!(matched_healthy.len(), COUNT);
+            assert_eq!(mixed.len(), COUNT);
+            assert_eq!(ordinary.len(), COUNT - FAULT_SLOTS.len());
+            assert_eq!(repair_triggering.len(), FAULT_SLOTS.len());
+            let p95 = |samples: &[u128]| {
+                let mut sorted = samples.to_vec();
+                sorted.sort_unstable();
+                sorted[(95 * sorted.len()).div_ceil(100) - 1]
+            };
+            let healthy_p95 = p95(&matched_healthy);
+            let mixed_p95 = p95(&mixed);
+            let passed = mixed_p95 * 10 <= healthy_p95 * 11;
+            println!(
+                "{}",
+                json!({
+                    "scope": "synthetic two-file Windows Window Search stress; no repository qualification",
+                    "pair_count": COUNT, "fault_slots_zero_based": FAULT_SLOTS,
+                    "healthy_count": matched_healthy.len(), "ordinary_count": ordinary.len(),
+                    "repair_trigger_count": repair_triggering.len(), "on_call_repaired": triggering_fixed,
+                    "deferred_recovered": deferred, "healthy_p95_ns": healthy_p95,
+                    "ordinary_p95_ns": p95(&ordinary), "repair_trigger_p95_ns": p95(&repair_triggering),
+                    "mixed_p95_ns": mixed_p95, "p95_threshold_numerator": 11,
+                    "p95_threshold_denominator": 10, "passed": passed,
+                    "matched_healthy_ns": matched_healthy, "mixed_ns": mixed,
+                })
+            );
+            latency_gate = Some(passed);
+            publication
+        }
+    };
 
     let (positive, _) = search("controlneedle", CONTROL)?;
     assert_revision(&positive, physical);
@@ -1150,6 +1369,10 @@ fn first_window_search_returns_verified_fts_repair() -> anyhow::Result<()> {
     );
     assert_eq!(worker()?, owner);
     service.shutdown_reviewed()?;
+    ensure!(
+        latency_gate != Some(false),
+        "synthetic mixed p95 exceeded 1.10× matched healthy p95"
+    );
     Ok(())
 }
 
