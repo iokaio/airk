@@ -19920,3 +19920,30 @@ boundaries. The 69 fixture tests passed using a process-local environment
 without the injected Git config used by the outer shell. The single
 trace-binding regression passed. The full workspace formatting issue
 outside the touched code remains recorded separately.
+
+### 25 November 2026 — Ranked lexical and fusion trace preflight
+
+The Store observer projects target positions from the canonical
+ranked-keyword list before the public cut and reports dropped term
+groups. The Kernel records native focused task ranges and post-fusion
+candidate positions before packing, with the same vector-occurrence
+deduplication as ordinary Search. Branch-only replay skips the complete
+vector scan already measured. It requires the settled pair and exact
+profile, and retains one-case selection for diagnosis.
+
+The first scoped Clippy passed. Nextest refused because the new test
+compared Citation values directly. The revised test compares their
+serialized values, checks the target at rank 13 beyond the one-hit cut
+and checks its rank 1 under an authorized prefix. Scoped Store and Kernel
+Clippy passed in 9.19 seconds. Three selected Kernel tests passed with
+478 filtered out after 62 seconds of compilation. The offline
+incremental Windows run used the warm target and timed commands in
+`answer-loop/L5C/windows-completion-branch-census-r2/execution.json`,
+SHA-256 `bcc5885b16561dd629137926abf5de77afffa3f64928395d9ec47e0f2b9e1fee`.
+The run audited 551 changed outputs. Thirteen CUDA launcher tests,
+the vector binding control and the focused UTF-8 branch control passed.
+Scoped rustfmt, whitespace and repository validation passed.
+
+The next action is a matched image and an A3 probe with the branch-only
+trace before measuring the full cohort. These validation results do not
+establish the live lexical or fusion rankings.

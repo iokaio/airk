@@ -95,6 +95,40 @@ impl CurrentRead {
         paths: Option<&BTreeSet<String>>,
         limit: usize,
     ) -> Result<RankedLexicalCandidates> {
+        self.lexical_search_ranked_any_inner(groups, path_prefix, paths, limit, |_| {})
+    }
+
+    #[cfg(feature = "test-support")]
+    pub fn audit_lexical_search_ranked_any(
+        &self,
+        groups: &[TermGroup],
+        path_prefix: Option<&str>,
+        paths: Option<&BTreeSet<String>>,
+        limit: usize,
+        targets: &BTreeSet<String>,
+    ) -> Result<(RankedLexicalCandidates, Vec<(usize, airk_core::Citation)>)> {
+        let mut projection = Vec::new();
+        let selection =
+            self.lexical_search_ranked_any_inner(groups, path_prefix, paths, limit, |ranked| {
+                projection.extend(
+                    ranked
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, (_, candidate))| targets.contains(&candidate.citation.path))
+                        .map(|(index, (_, candidate))| (index + 1, candidate.citation.clone())),
+                );
+            })?;
+        Ok((selection, projection))
+    }
+
+    fn lexical_search_ranked_any_inner(
+        &self,
+        groups: &[TermGroup],
+        path_prefix: Option<&str>,
+        paths: Option<&BTreeSet<String>>,
+        limit: usize,
+        observe: impl FnOnce(&[(f64, CurrentLexicalCandidate)]),
+    ) -> Result<RankedLexicalCandidates> {
         ensure!(
             !groups.is_empty()
                 && groups.len() <= MAX_RANKED_GROUPS
@@ -161,6 +195,7 @@ impl CurrentRead {
         // in-scope row in favour of an out-of-scope one.
         let mut found: Vec<(f64, CurrentLexicalCandidate)> = scores.into_values().collect();
         found.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.stable_id.cmp(&b.1.stable_id)));
+        observe(&found);
         let prefilter = (limit * 4).min(4000);
         let incomplete =
             !dropped_groups.is_empty() || found.len() > prefilter || found.len() > limit;

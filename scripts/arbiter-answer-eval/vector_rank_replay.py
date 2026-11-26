@@ -47,7 +47,7 @@ def rank_note(ranked, note, citations, union_only):
     )
 
 
-def request(args, handle, row, query, identity, service_log):
+def native_request(args, handle, row, query, identity, service_log):
     wire = {**row["arguments"], "query": query}
     with service_log.open("rb") as log:
         log.seek(0, 2)
@@ -62,8 +62,12 @@ def request(args, handle, row, query, identity, service_log):
     common.require((body.get("publication") or {}).get("token") == publication
                    and body["execution"]["served_mode"] == "hybrid" and body.get("focus") is None,
                    "vector census requires the pinned hybrid execution with optional stages off")
-    ranked = read_event(trace, query, publication, identity["pipeline_digest"])
-    return ranked, [evidence.extract(hit) for hit in body["hits"]]
+    return trace, [evidence.extract(hit) for hit in body["hits"]]
+
+
+def request(args, handle, row, query, identity, service_log):
+    trace, delivered = native_request(args, handle, row, query, identity, service_log)
+    return read_event(trace, query, identity["publication_token"], identity["pipeline_digest"]), delivered
 
 
 def load_cohort(args):
@@ -83,15 +87,15 @@ def note_inventory(note, repository, paths):
     return citations, status == "union_only"
 
 
-def collect(args):
+def open_fixture(args, snapshots, *, branch_only):
     common.require(math.isfinite(args.timeout) and args.timeout > 0, "invalid Search timeout")
-    cohort, snapshots, paths = load_cohort(args)
     raw = json.loads(search.pinned(args.handle, args.handle_sha256))
     handle = common.load_handle(args.handle)
     common.require(handle.sha256 == args.handle_sha256 and handle.state == "ready", "census lifetime is not pinned Ready")
     gpu = json.loads((handle.path.parent / "gpu.json").read_bytes())
     common.require(gpu.get("vector_census_sha256") == args.audit_input_sha256
-                   and gpu.get("search") == "semantic_subqueries" and gpu.get("reuse_settled") is True,
+                   and gpu.get("search") == "semantic_subqueries" and gpu.get("reuse_settled") is True
+                   and bool(gpu.get("branch_census_only")) is branch_only,
                    "census requires the pinned roster and the reviewed focused-query profile")
     identity = search.live_identity(handle, raw, sorted(audit.REPOSITORIES))
     indexes = identity["indexes"]
@@ -105,6 +109,22 @@ def collect(args):
                        and observed["publication_token"] == before[repo]["publication_token"] == expected["publication_token"]
                        and before[repo]["settled"], "census differs from the authenticated control publication")
 
+    return handle, identity, before, stage
+
+
+def check_settled(args, handle, before, stage):
+    after = {repo: settled.snapshot(handle, repo, args.timeout) for repo in before}
+    common.require(common.sha256_file(handle.path) == args.handle_sha256
+                   and search.stage(handle, None, args.timeout)["revision"] == stage["revision"]
+                   and all(after[repo]["settled"] and settled.compare(before[repo], after[repo])["unchanged"]
+                           for repo in before),
+                   "census publication, stage configuration or handle changed")
+
+
+def collect(args):
+    cohort, snapshots, paths = load_cohort(args)
+    handle, identity, before, stage = open_fixture(args, snapshots, branch_only=False)
+    indexes = identity["indexes"]
     service_log = handle.path.parent / "service.log"
     results = []
     rows = [row for row in cohort["rows"] if args.case is None or f"{row['repo']}/{row['slot']}" == args.case]
@@ -132,12 +152,7 @@ def collect(args):
                 "fact_rank": None if facts[fact] is None else rank_note(facts[fact][0], note, citations, union_only),
                 "semantic_subquery_arm_delivered_rank": search.depth.ranks(delivered, note)["rule2"],
             })
-    after = {repo: settled.snapshot(handle, repo, args.timeout) for repo in indexes}
-    common.require(common.sha256_file(handle.path) == args.handle_sha256
-                   and search.stage(handle, None, args.timeout)["revision"] == stage["revision"]
-                   and all(after[repo]["settled"] and settled.compare(before[repo], after[repo])["unchanged"]
-                           for repo in indexes),
-                   "census publication, stage configuration or handle changed")
+    check_settled(args, handle, before, stage)
     return {"schema": "airk.private.vector-rank-census/1", "identity": identity, "notes": results,
             "case": args.case, "facts_only": args.facts_only, "instruction_only": args.instruction_only,
             "input_sha256": {name: getattr(args, f"{name}_sha256") for name in
@@ -207,13 +222,17 @@ def recover(args):
             "scope": "Native vector stages only. A retained trace can precede a failed Search delivery."}
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+def add_fixture_inputs(parser):
     for name in ("cohort", "snapshots", "audit-input", "audit-native", "handle"):
         parser.add_argument(f"--{name}", type=Path, required=True)
         parser.add_argument(f"--{name}-sha256", required=True)
     parser.add_argument("--timeout", type=float, default=90)
     parser.add_argument("--output", type=Path, required=True)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    add_fixture_inputs(parser)
     parser.add_argument("--closed-trace", type=Path)
     parser.add_argument("--closed-trace-sha256")
     parser.add_argument("--skip-initial-events", type=int, default=0)

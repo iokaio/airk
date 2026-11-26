@@ -360,6 +360,27 @@ fn ranked_lexical_filters_scope_before_taking_its_limit() -> Result<()> {
     assert!(all.candidates.values[0].citation.path.starts_with("out/"));
     assert!(all.candidates.incomplete);
     assert!(all.dropped_groups.is_empty());
+    #[cfg(feature = "test-support")]
+    {
+        let (observed, projected) =
+            read.audit_lexical_search_ranked_any(&wanted, None, None, 1, &selector)?;
+        assert_eq!(
+            serde_json::to_value(&observed.candidates.values[0].citation)?,
+            serde_json::to_value(&all.candidates.values[0].citation)?
+        );
+        assert_eq!(observed.candidates.values.len(), 1);
+        assert_eq!(projected.len(), 1);
+        assert_eq!(projected[0].0, 13);
+        assert_eq!(projected[0].1.path, "in/target.txt");
+        let (observed, projected) =
+            read.audit_lexical_search_ranked_any(&wanted, Some("in/"), None, 1, &selector)?;
+        assert_eq!(projected.len(), 1);
+        assert_eq!(projected[0].0, 1);
+        assert_eq!(
+            serde_json::to_value(&projected[0].1)?,
+            serde_json::to_value(&observed.candidates.values[0].citation)?
+        );
+    }
     Ok(())
 }
 

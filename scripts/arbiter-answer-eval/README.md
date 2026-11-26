@@ -772,7 +772,21 @@ focused vector ranks, fact-derived vector ranks, and delivered ranks for the sem
 arm. Empty focused lists mean no auxiliary embedding was available for
 the native request. Treat the labeled fact queries only as
 diagnostics. The report covers the vector component of the rank census.
-Run the lexical, fusion, label and source-fidelity checks separately.
+Recover exact ranks from a stopped partial replay with
+`--closed-trace`, `--closed-trace-sha256` and a verified startup event
+count. The report records the skipped query digests and requires an
+ordered match for every other event. Run missing queries with `--case`
+and `--facts-only` or `--instruction-only` on the same pinned inputs.
+
+For the ranked lexical and fusion measurement, start a matched image
+with the same roster and profile plus `--branch-census-only`. Run
+`branch_rank_replay.py` with the same pin arguments and a fresh result
+path. The collector sends the exact native-focused UTF-8 task fragments
+as standalone queries. It records the ranked keyword/identifier stages
+before their native branch limits, the deduplicated fusion order before
+packing, and coverage in the delivered hits. Missing ranked branches and
+dropped term groups are explicit. The branch-only mode leaves the already
+measured complete vector scan out of this pass.
 
 ### Wider Search shortlist coverage
 

@@ -337,6 +337,15 @@ fn search_with_switch(
         None
     };
     let legacy = profile == v2::SearchProfile::LegacyV2 && plan.is_some();
+    #[cfg(feature = "test-support")]
+    let census_targets = census_targets()?;
+    #[cfg(feature = "test-support")]
+    if census_targets.is_some() {
+        ensure!(
+            !scoped_paths.as_ref().is_some_and(|scope| scope.incomplete),
+            "rank census requires a complete authorized path roster"
+        );
+    }
     let branch_limit = if legacy {
         v2::BRANCH_CANDIDATES
     } else {
@@ -423,10 +432,42 @@ fn search_with_switch(
             if !enabled || groups.is_empty() {
                 continue;
             }
+            let scope = scoped_paths.as_ref().map(|scope| &scope.paths);
+            #[cfg(feature = "test-support")]
+            let ranked = match &census_targets {
+                Some(targets) => {
+                    let (ranked, projection) = read.audit_lexical_search_ranked_any(
+                        groups,
+                        query.path_prefix.as_deref(),
+                        scope,
+                        branch_limit,
+                        targets,
+                    )?;
+                    emit_census(
+                        "AIRK_SEARCH_LEXICAL_CENSUS",
+                        query,
+                        &read,
+                        serde_json::json!({
+                            "branch": if matches!(kind, v2::BranchKind::Key) { "keyword" } else { "identifier" },
+                            "admitted": ranked.candidates.values.len(),
+                            "dropped_groups": ranked.dropped_groups,
+                            "ranks": projection,
+                        }),
+                    )?;
+                    ranked
+                }
+                None => read.lexical_search_ranked_any(
+                    groups,
+                    query.path_prefix.as_deref(),
+                    scope,
+                    branch_limit,
+                )?,
+            };
+            #[cfg(not(feature = "test-support"))]
             let ranked = read.lexical_search_ranked_any(
                 groups,
                 query.path_prefix.as_deref(),
-                scoped_paths.as_ref().map(|scope| &scope.paths),
+                scope,
                 branch_limit,
             )?;
             ensure!(
@@ -522,6 +563,37 @@ fn search_with_switch(
     } else {
         ranked
     };
+    #[cfg(feature = "test-support")]
+    if let Some(targets) = &census_targets {
+        let mut seen = BTreeSet::new();
+        let projection: Vec<_> = ranked
+            .iter()
+            .map(|(_, (_, candidate))| candidate)
+            .filter(|candidate| match candidate {
+                Candidate::Vector(pointer) => seen.insert(pointer.occurrence_id),
+                _ => true,
+            })
+            .enumerate()
+            .filter(|(_, candidate)| targets.contains(candidate.path()))
+            .map(|(index, candidate)| match candidate {
+                Candidate::Vector(pointer) => serde_json::json!({
+                    "rank": index + 1, "path": pointer.path, "ordinal": pointer.path_ordinal,
+                }),
+                Candidate::Lexical(candidate) | Candidate::LexicalAny(candidate, _) => {
+                    serde_json::json!({"rank": index + 1, "citation": candidate.citation})
+                }
+                Candidate::Structure(hit) => {
+                    serde_json::json!({"rank": index + 1, "citation": hit.citation})
+                }
+            })
+            .collect();
+        emit_census(
+            "AIRK_SEARCH_FUSION_CENSUS",
+            query,
+            &read,
+            serde_json::json!(projection),
+        )?;
+    }
     let contextual_passages = profile.keyword_passages()
         && snippet_bytes.is_some()
         && plan.is_some()
@@ -931,21 +1003,24 @@ fn vector_candidates(
         .embed_text(&query.text)?
         .context("semantic retrieval not ready: no recognized model tokens")?;
     let mut embeddings = vec![vector];
-    if decompose {
-        for part in crate::arbiter::independent_parts(&query.text) {
-            read.token()?;
-            match model.embed_text(part) {
-                Ok(Some(embedding)) => embeddings.push(embedding),
-                Ok(None) => {
-                    embeddings.truncate(1);
-                    break;
-                }
-                Err(error) if error.is::<airk_retrieval::embedding_worker::HelperUnavailable>() => {
-                    embeddings.truncate(1);
-                    break;
-                }
-                Err(error) => return Err(error),
+    let parts = if decompose {
+        crate::arbiter::independent_parts(&query.text)
+    } else {
+        Vec::new()
+    };
+    for part in &parts {
+        read.token()?;
+        match model.embed_text(part) {
+            Ok(Some(embedding)) => embeddings.push(embedding),
+            Ok(None) => {
+                embeddings.truncate(1);
+                break;
             }
+            Err(error) if error.is::<airk_retrieval::embedding_worker::HelperUnavailable>() => {
+                embeddings.truncate(1);
+                break;
+            }
+            Err(error) => return Err(error),
         }
     }
 
@@ -960,6 +1035,7 @@ fn vector_candidates(
     trace_vector_census(
         query,
         read,
+        &parts,
         &embeddings,
         objects.pipeline_digest,
         paths.as_deref(),
@@ -1031,18 +1107,73 @@ fn vector_candidates(
 }
 
 #[cfg(feature = "test-support")]
+fn census_targets() -> Result<Option<BTreeSet<String>>> {
+    std::env::var_os("AIRK_PRIVATE_VECTOR_CENSUS_PATHS")
+        .map(|raw| {
+            let targets: BTreeSet<String> =
+                serde_json::from_str(raw.to_str().context("invalid census paths")?)?;
+            ensure!(
+                !targets.is_empty() && targets.len() <= 512,
+                "invalid target path count"
+            );
+            Ok(targets)
+        })
+        .transpose()
+}
+
+#[cfg(feature = "test-support")]
+fn emit_census(
+    marker: &str,
+    query: &SearchQuery,
+    read: &CurrentRead,
+    observations: serde_json::Value,
+) -> Result<()> {
+    use sha2::{Digest, Sha256};
+    eprintln!(
+        "{marker} {}",
+        serde_json::json!({
+            "query_sha256": format!("{:x}", Sha256::digest(query.text.as_bytes())),
+            "publication": read.token()?,
+            "observations": observations,
+        })
+    );
+    Ok(())
+}
+
+#[cfg(feature = "test-support")]
 fn trace_vector_census(
     query: &SearchQuery,
     read: &CurrentRead,
+    parts: &[&str],
     embeddings: &[Vec<f32>],
     pipeline: Sha256Digest,
     paths: Option<&[String]>,
 ) -> Result<()> {
     use sha2::{Digest, Sha256};
-    let Some(raw) = std::env::var_os("AIRK_PRIVATE_VECTOR_CENSUS_PATHS") else {
+    let Some(targets) = census_targets()? else {
         return Ok(());
     };
-    let targets = serde_json::from_str(raw.to_str().context("invalid census paths")?)?;
+    let focused = parts
+        .iter()
+        .map(|part| {
+            let start = query
+                .text
+                .find(*part)
+                .context("focused query is not a task substring")?;
+            Ok((start, start + part.len()))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    if std::env::var_os("AIRK_PRIVATE_BRANCH_CENSUS_ONLY").is_some() {
+        return emit_census(
+            "AIRK_SEARCH_FOCUSED_CENSUS",
+            query,
+            read,
+            serde_json::json!({
+                "byte_ranges": focused,
+                "embedded": embeddings.len() - 1,
+            }),
+        );
+    }
     let ranks = embeddings
         .iter()
         .map(|embedding| {
@@ -1061,6 +1192,7 @@ fn trace_vector_census(
             "query_sha256": format!("{:x}", Sha256::digest(query.text.as_bytes())),
             "publication": read.token()?,
             "pipeline": pipeline,
+            "focused_byte_ranges": focused,
             "ranks": ranks,
         })
     );

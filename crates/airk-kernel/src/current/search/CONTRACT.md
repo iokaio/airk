@@ -19,7 +19,14 @@ paths. For each embedding, the trace records one-based occurrence ranks
 among all authorized live rows and occurrences in the pinned publication.
 It includes the query digest, publication and pipeline and emits only
 target path and ordinal positions. It does not widen the ordinary
-Search response. Use it only in isolated evaluation services.
+Search response. Use it only in isolated evaluation services. The trace
+distinguishes planned focused task ranges from admitted auxiliary
+embeddings and refuses incomplete authorized path rosters. The same
+fixture records ranked-lexical target citation positions before its branch
+cut, including dropped-group indices. It also records target positions
+after fusion and file diversification, deduplicating vector occurrences
+as the ordinary response loop does. Fusion ranks describe candidates
+before evidence materialization and byte packing.
 
 ## Permanent denies and the scoped path roster (22 November 2026)
 
