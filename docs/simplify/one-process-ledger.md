@@ -21286,3 +21286,24 @@ failures. The native close SHA-256 is
 ed5bfe5804bc7f2cb1b20ac7d7478c5e0bff5395cc792ff9ded2474ffb4cb337.
 The normal Windows baseline and the three judged change sets
 remain gated on the user's review of this result.
+
+### 26 November 2026 — Retrieval strategy for the Windows review
+
+The user paused the completion plan and requested a separate retrieval strategy.
+[Gather Context strategy](../arbiter/retrieval-strategy.md) records all 20 frozen
+development instructions, 100 read-only source-inspection steps across the
+pinned Bookbuilder and Munarium exports, and one public vendor-documentation
+lookup. Each walkthrough records the expected observation, what the tool found
+and the engineering handoff. The capability crosswalk covers all 101 steps.
+The proposed changes distinguish discovery, source authority, evidence use
+and what requires an observed test. The Windows gate remains at 2/20.
+
+Shell reads and document writes verified the interactive Windows user and
+default owner as TYAI\tdotn, SID S-1-5-21-3678370870-3858642417-826968105-1002.
+Replayed the documented ordinary source commands, matched the 20 quoted
+instructions to their individually hashed development inputs, checked the
+case-to-step mapping, source links and section anchors, and ran the prose
+repository and whitespace checks. The separate vendor check read Mistral's
+public API documentation. No evaluation, product build or implementation
+change formed part of this review. The next decision is the user's review
+of the proposed diagnostics and gathering design.
