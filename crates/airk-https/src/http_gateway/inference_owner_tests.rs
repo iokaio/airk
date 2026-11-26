@@ -230,12 +230,17 @@ fn held_inference_keeps_native_status_responsive_and_checkpoint_charged() -> Res
     assert!(owner.completion().is_none());
     assert!(airk_store::service::ServiceLease::acquire(&root).is_err());
 
+    // Stop closes the owner immediately, even while native exit is pending.
+    // The released request hits the liveness fence before it can embed.
     release.send(())?;
-    let Response::Embedded { vectors, .. } = result.blocking_recv()?.response else {
-        anyhow::bail!("held accepted inference did not complete")
-    };
-    assert_eq!(vectors, vec![Some(vec![1.0, 0.0])]);
-    // Even completed compute cannot certify drain until delivery is released.
+    let response = result.blocking_recv()?.response;
+    assert!(
+        matches!(&response, Response::Failed { reason }
+            if reason == "pool request rejected or verified model unavailable"),
+        "held request did not return the pool failure after stop: {}",
+        serde_json::to_string(&response)?
+    );
+    // The refused reply still owns its delivery charge until release.
     assert!(owner.checkpoint_drain(operation, vec![worker])?.is_none());
     assert_eq!(owner.checkpoint_context()?.unwrap().delivery_outstanding, 1);
     drop(delivery);

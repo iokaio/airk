@@ -20886,3 +20886,22 @@ Next admit the exact Windows both-model runtime and freeze its
 target publication tokens, verify the prepared case manifests and
 establish hosted access for the pinned role IDs. No hosted or scored
 development session ran. The separate held-out probes stayed sealed.
+
+### 25 November 2026 — Held inference during irreversible shutdown
+
+The Windows HTTPS fixture now expects the typed route refusal after the
+checkpoint has charged an in-flight inference and Stop has accepted
+irreversible shutdown. The test still checks responsive native status,
+retained charge while the hook is held, owner settlement, and stale grant
+refusal. Successful embedding is covered by separate route tests. This
+change affects test expectations only.
+
+Pinned offline CUDA Clippy for airk-https with all targets and features
+passed in 57.760 s. Nextest CI selected one test, with one pass and 120
+skipped. The test took 0.352 s, and the command including compilation
+took 276.335 s. The warm answer-loop/target-cuda used incremental 1
+and audited 7,091 generated outputs under the interactive human owner.
+The exact execution receipt under L5C/windows-l6-held-inference-final-r1
+has SHA-256 9af43c5ead789be02db2ac40226d146d6625edff5347e3ee3010afdd1622a607.
+This resolves the focused r5 assertion. The remaining L6 accounting and
+live candidate shakedown are separate checks.
