@@ -1,5 +1,7 @@
 # Answer loop and FP16 completion plan
 
+The [combined Gather Context strategy and implementation runbook](retrieval-strategy-combined.md#implementation) is ready for Windows review. It preserves both agents’ investigations for all 20 development tasks and specifies how GPT‑6.2 Sol should implement and test the resulting retrieval decisions.
+
 **Paused at the Windows results review, 26 November 2026.** Sol finished 2 of 20 tasks correctly after receiving all 113 required source spans. The next decision is how Gather Context should help an agent use the evidence it retrieves. The [retrieval strategy](retrieval-strategy.md) traces all 20 tasks with ordinary source tools, maps the steps to AIRK and lays out the design for review. The baseline and change sets await that review.
 
 **Windows and CUDA execution approved on 25 November 2026.** This plan

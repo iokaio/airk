@@ -21307,3 +21307,7 @@ repository and whitespace checks. The separate vendor check read Mistral's
 public API documentation. No evaluation, product build or implementation
 change formed part of this review. The next decision is the user's review
 of the proposed diagnostics and gathering design.
+
+### 26 November 2026 · Gather Context strategy for Windows review
+
+The [combined strategy](../arbiter/retrieval-strategy-combined.md) pairs the two supplied ordinary-tool investigations for each development task. A read-only document check verified all 20 prompts against the frozen scenario hashes and text, matched all 40 source walkthroughs, and checked 101 OpenAI step mappings, 109 Claude turn mappings and 20 task-specific acceptance rows. The implementation and testing runbook is proposed work. Windows execution remains paused at the 2/20 complete-evidence disposition. Documentation was edited under `TYAI\tdotn`, SID `S-1-5-21-3678370870-3858642417-826968105-1002`, with human owner checks. The next action upon resumption is to freeze the development reference and test its comparator.
