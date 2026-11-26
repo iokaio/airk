@@ -18,6 +18,7 @@ manifest. The line also names every changed harness file.
 ``python -I -B prompts_freeze.py --write <R>/design/prompts-freeze.json``
 ``python -I -B prompts_freeze.py --verify <R>/design/prompts-freeze.json``
 ``python -I -B prompts_freeze.py --refreeze <R>/design/prompts-freeze.json --reason "..."``
+``python -I -B prompts_freeze.py --write-codex <fresh-manifest> --codex-inputs <pinned-inputs.json>``
 """
 
 from __future__ import annotations
@@ -35,6 +36,14 @@ if str(HERE) not in sys.path:
 import common  # noqa: E402
 
 SCHEMA = "airk.private.answer-eval-prompts-freeze/1"
+CODEX_SCHEMA = "airk.private.answer-eval-codex-freeze/1"
+CODEX_PURPOSES = {"windows-stage-a": "gpt-6.2-sol", "windows-stage-a-capable-panel": "gpt-6.2-astra"}
+CODEX_PATHS = ("search", "parse", "answer")
+CODEX_STAGES = ("baseline", "change-set-1", "change-set-2", "change-set-3")
+CODEX_CONTROLS = (("search", "search", "none"), ("parse", "parse", "none"))
+CODEX_ANSWER_ARMS = {"F": ("focus", "focus", "gpu"), "C": ("compact", "compact", "gpu"),
+                     "A": ("arbiter", "arbiter", "gpu")}
+CODEX_HARNESS_FILES = ("codex_isolation_probe.py", "make_cs_spec.py", "make_loop_spec.py")
 # The loop (plan section 12) adds loop_reply.py (Answer /3 replies, used by evidence, coverage, replay, depth,
 # run_pass and the wrapper) and gate.py (the LG tests, run by run_plan). The freeze written for the one-turn
 # evaluation no longer verifies: it must be re-frozen (--refreeze) before the first judged loop pass (LG).
@@ -63,6 +72,127 @@ def current() -> dict:
             # harness file: the freeze pins its bytes and the budget read from them.
             "answer_budget": common.answer_budget_source(),
             "files": {name: common.sha256_file(HERE / name) for name in HARNESS_FILES}}
+
+
+def pinned_input(path: str, sha256: str | None = None) -> dict:
+    source = Path(path).resolve(strict=True)
+    common.require(source.is_file(), f"freeze input is not a file: {source}")
+    actual = common.sha256_file(source)
+    common.require(sha256 is None or actual == sha256, f"freeze input pin differs: {source.name}")
+    return {"path": str(source), "sha256": actual}
+
+
+def codex_current(inputs: dict) -> dict:
+    import judge
+
+    fields = {"purpose", "scenario_freeze", "executable", "executable_sha256", "model_catalog",
+              "model_catalog_sha256", "tool_catalogs"}
+    common.require(isinstance(inputs, dict) and set(inputs) == fields
+                   and all(isinstance(inputs[field], str) and inputs[field] for field in fields - {"tool_catalogs"})
+                   and inputs["purpose"] in CODEX_PURPOSES, "invalid Codex freeze inputs")
+    catalog_inputs = inputs["tool_catalogs"]
+    common.require(isinstance(catalog_inputs, dict) and set(catalog_inputs) == set(CODEX_PATHS),
+                   "Codex freeze requires exactly Search, Parse and Answer catalogs")
+    catalogs = {}
+    for name in CODEX_PATHS:
+        pin = catalog_inputs[name]
+        common.require(isinstance(pin, dict) and set(pin) == {"path", "sha256"}
+                       and all(isinstance(pin[field], str) and pin[field] for field in pin),
+                       f"invalid Codex tool catalog pin for {name}")
+        catalog = pinned_input(pin["path"], pin["sha256"])
+        tools = common.load_catalog(Path(catalog["path"]))
+        common.require(set(common.PATH_TOOLS[name]) <= tools.keys(), f"Codex catalog is missing {name} tools")
+        catalogs[name] = catalog
+    record = current()
+    schema_text = json.dumps(judge.codex_verdict_schema(), separators=(",", ":"), sort_keys=True)
+    extra_files = {name: common.sha256_file(HERE / name) for name in CODEX_HARNESS_FILES}
+    record.update({
+        "provider": "codex",
+        "purpose": inputs["purpose"],
+        "runner": "codex-app-server-0.171.0-contract",
+        "executable": pinned_input(inputs["executable"], inputs["executable_sha256"]),
+        "model_catalog": pinned_input(inputs["model_catalog"], inputs["model_catalog_sha256"]),
+        "tool_catalogs": catalogs,
+        "agent_model": CODEX_PURPOSES[inputs["purpose"]],
+        "agent_effort": "medium",
+        "judge_model": "gpt-6.2-astra",
+        "judge_effort": "medium",
+        "scoring_judges": ["j1", "j2"],
+        "judge_schema": {"sha256": common.sha256_bytes(schema_text.encode("utf-8")), "text": schema_text},
+        "scenario_freeze": pinned_input(inputs["scenario_freeze"]),
+        "files": {**record["files"], **extra_files},
+    })
+    return record
+
+
+def write_codex(path: Path, inputs: dict) -> dict:
+    common.require(not path.exists(), "Codex freeze requires a new manifest path")
+    record = {"schema": CODEX_SCHEMA, "frozen_at": common.now_iso(), **codex_current(inputs)}
+    with path.open("x", encoding="utf-8") as output:
+        json.dump(record, output, indent=2, ensure_ascii=False)
+        output.write("\n")
+    return record
+
+
+def verify_codex(frozen: dict) -> None:
+    executable, model_catalog = frozen.get("executable") or {}, frozen.get("model_catalog") or {}
+    inputs = {
+        "purpose": frozen.get("purpose"),
+        "scenario_freeze": (frozen.get("scenario_freeze") or {}).get("path"),
+        "executable": executable.get("path"),
+        "executable_sha256": executable.get("sha256"),
+        "model_catalog": model_catalog.get("path"),
+        "model_catalog_sha256": model_catalog.get("sha256"),
+        "tool_catalogs": frozen.get("tool_catalogs"),
+    }
+    actual = codex_current(inputs)
+    saved = {key: value for key, value in frozen.items() if key not in ("schema", "frozen_at")}
+    changed = sorted(key for key in actual.keys() | saved.keys() if actual.get(key) != saved.get(key))
+    common.require(not changed, f"Codex evaluation differs from its freeze: {changed}")
+
+
+def verify_stage_a_spec(spec: dict, manifest: dict, provenance: dict, catalog_hashes: dict) -> None:
+    common.require(manifest.get("schema") == CODEX_SCHEMA and manifest.get("provider") == "codex",
+                   "Windows Stage A requires a Codex freeze")
+    common.require(all(spec.get(key) == manifest[key] for key in
+                       ("purpose", "agent_model", "agent_effort", "judge_model", "judge_effort"))
+                   and spec.get("judges") == manifest["scoring_judges"],
+                   "Windows Stage A roles differ from the Codex freeze")
+    common.require(provenance["driver"] == manifest["runner"]
+                   and provenance["executable"] == manifest["executable"]["path"]
+                   and provenance["executable_sha256"] == manifest["executable"]["sha256"]
+                   and provenance["model_catalog_sha256"] == manifest["model_catalog"]["sha256"]
+                   and spec["codex_config"]["model_catalog"] == manifest["model_catalog"]["path"],
+                   "Windows Stage A runner differs from the Codex freeze")
+    expected_stages = (CODEX_STAGES if spec["purpose"] == "windows-stage-a"
+                       else (CODEX_STAGES[0], CODEX_STAGES[-1]))
+    common.require(spec.get("stage") in expected_stages, "Codex phase differs from its Windows Stage A purpose")
+    arms = ("F", "C", "A") if spec["purpose"] == "windows-stage-a" else ("C",)
+    expected_paths = {None: CODEX_CONTROLS, **{arm: (CODEX_ANSWER_ARMS[arm],) for arm in arms}}
+    scenario_ids = {f"{repo}-{slot}" for repo in common.REPOS for slot in common.SLOTS}
+    common.require(set(spec.get("repos", [])) == set(common.REPOS)
+                   and set(spec.get("scenario_ids", [])) == scenario_ids and not spec.get("slots"),
+                   "Windows Stage A requires all 20 frozen development scenarios")
+    remaining = {path for paths in expected_paths.values() for path in paths}
+    for result in spec["results"]:
+        path = (result.get("configuration"), result.get("path"), result.get("device"))
+        arm = result.get("arm")
+        common.require(path in remaining and path in expected_paths.get(arm, ()) and result.get("reuse") is False,
+                       "Windows Stage A result arms differ from the frozen role")
+        remaining.remove(path)
+        stages = result.get("stages")
+        common.require(result.get("require_live_stages") is True and not result.get("repos")
+                       and not result.get("slots")
+                       and (stages == {"focus": None, "context": None} if arm is None
+                            else stages == result.get("arm_stages") and isinstance(stages, dict)
+                            and bool(stages.get("focus")) == (arm in ("F", "C"))
+                            and bool(stages.get("context")) == (arm in ("A", "C"))),
+                       "Windows Stage A stage settings or scenario scope differs")
+        pin = manifest["tool_catalogs"]["answer" if arm else result["path"]]
+        common.require(str(Path(result["catalog"]).resolve()) == pin["path"]
+                       and catalog_hashes[result["catalog"]] == pin["sha256"],
+                       f"Windows Stage A {path[0]} catalog differs from the Codex freeze")
+    common.require(not remaining, "Windows Stage A is missing frozen result arms")
 
 
 def prompt_changes(previous: dict, now: dict) -> list[str]:
@@ -103,6 +233,7 @@ def refreeze(path: Path, reason: str) -> dict:
     previous, old = ({}, None)
     if path.is_file():
         previous = common.read_json(path)
+        common.require(previous.get("schema") == SCHEMA, "legacy refreeze requires a legacy manifest")
         old = keep_manifest(path, manifests)
     record = write(path)
     new = keep_manifest(path, manifests)
@@ -142,6 +273,8 @@ def differences(frozen: dict, now: dict) -> list[str]:
 
 
 def write(path: Path) -> dict:
+    if path.is_file():
+        common.require(common.read_json(path).get("schema") != CODEX_SCHEMA, "Codex freeze cannot be overwritten")
     record = {"schema": SCHEMA, "frozen_at": common.now_iso(), **current()}
     common.write_json(path, record)
     return record
@@ -149,9 +282,12 @@ def write(path: Path) -> dict:
 
 def verify(path: Path) -> dict:
     frozen = common.read_json(path)
-    common.require(frozen.get("schema") == SCHEMA, f"{path} is not a prompts freeze")
-    diff = differences(frozen, current())
-    common.require(not diff, f"harness differs from the prompts freeze {path}: {diff}")
+    if frozen.get("schema") == CODEX_SCHEMA:
+        verify_codex(frozen)
+    else:
+        common.require(frozen.get("schema") == SCHEMA, f"{path} is not a prompts freeze")
+        diff = differences(frozen, current())
+        common.require(not diff, f"harness differs from the prompts freeze {path}: {diff}")
     return {"path": str(path), "sha256": common.sha256_file(path), "frozen_at": frozen.get("frozen_at")}
 
 
@@ -160,10 +296,17 @@ def main(argv: list[str] | None = None) -> int:
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--write", type=Path)
     group.add_argument("--verify", type=Path)
+    group.add_argument("--write-codex", type=Path, help="write a new Windows Stage A freeze")
+    parser.add_argument("--codex-inputs", type=Path, help="Stage A purpose and preapproved input pins")
     group.add_argument("--refreeze", type=Path)
     parser.add_argument("--reason", default="")
     args = parser.parse_args(argv)
-    if args.refreeze:
+    common.require(bool(args.write_codex) == bool(args.codex_inputs),
+                   "--write-codex and --codex-inputs must be supplied together")
+    if args.write_codex:
+        write_codex(args.write_codex, common.read_json(args.codex_inputs))
+        print(json.dumps(verify(args.write_codex)))
+    elif args.refreeze:
         print(json.dumps(refreeze(args.refreeze, args.reason), indent=1))
     elif args.write:
         record = write(args.write)

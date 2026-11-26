@@ -38,7 +38,7 @@ class Wrapper:
     def __init__(self, *, handle: common.Handle | None, repo: str, path: str, instruction: str,
                  catalog: dict[str, dict], log_dir: Path, answer_defaults: dict | None = None,
                  parse_defaults: dict | None = None, call_timeout_s: float = 300.0,
-                 backend=None, deadline: float | None = None) -> None:
+                 backend=None, deadline: float | None = None, complete_evidence=None) -> None:
         common.require(path in common.PATH_TOOLS, f"unknown path {path!r}")
         self.handle, self.repo, self.path = handle, repo, path
         self.instruction = instruction
@@ -62,6 +62,9 @@ class Wrapper:
         self.deadline = deadline
         self.backend = backend or self._cli_backend
         self.counted = 0
+        common.require(complete_evidence is None or (path == "answer" and repo == complete_evidence.repo),
+                       "first Answer treatment used on the wrong path or repository")
+        self.complete_evidence = complete_evidence
         self.calls = 0
         self.lock = threading.Lock()
 
@@ -142,12 +145,22 @@ class Wrapper:
             stem = f"turn-{turn:02d}"
             outcome, retries = self._with_typed_retries(tool, sent, stem)
             result_path = self.results_dir / f"{stem}.stdout.json"
-            common.write_bytes(result_path, outcome.stdout)
+            reply = self._reply(outcome)
+            result_bytes = outcome.stdout
+            treatment = {}
+            if self.complete_evidence is not None and turn == 1 and outcome.ok:
+                native_path = self.results_dir / f"{stem}.native.stdout.json"
+                common.write_bytes(native_path, outcome.stdout)
+                reply = self.complete_evidence.augment(reply)
+                result_bytes = common.canonical_json(reply)
+                treatment = {"native_result_path": str(native_path),
+                             "native_result_sha256": common.sha256_bytes(outcome.stdout),
+                             "complete_evidence_manifest_sha256": self.complete_evidence.manifest_sha256}
+            common.write_bytes(result_path, result_bytes)
             stderr_path = None
             if outcome.stderr:
                 stderr_path = self.results_dir / f"{stem}.stderr.txt"
                 common.write_bytes(stderr_path, outcome.stderr)
-            reply = self._reply(outcome)
             text_bytes = sum(len(b.get("text", "").encode("utf-8")) for b in reply["content"])
             elapsed = outcome.elapsed_ms + sum(r["elapsed_ms"] + r["waited_ms"] for r in retries)
             common.append_jsonl(self.turn_log, {
@@ -155,7 +168,7 @@ class Wrapper:
                 "first_call": first_call,
                 "started": started, "elapsed_ms": elapsed, "bytes": text_bytes, "ok": outcome.ok,
                 "typed_retries": retries, "final_attempt_ms": outcome.elapsed_ms,
-                "result_path": str(result_path), "result_sha256": common.sha256_bytes(outcome.stdout),
+                "result_path": str(result_path), "result_sha256": common.sha256_bytes(result_bytes), **treatment,
                 "stderr_path": None if stderr_path is None else str(stderr_path),
                 "exit_code": outcome.exit_code, "error": outcome.error, "rejected": False,
                 "response_mode": common.effective_response_mode(self.handle, sent, common.AGENT_STRIPPED_ENV),

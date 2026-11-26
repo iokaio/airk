@@ -20761,3 +20761,26 @@ establish the original ordinary allowance. The next implementation
 target is a private, same-process M3 admission and a bounded wait on the
 existing maintenance owner, followed by one canonical replay. A carried
 or otherwise unknown allowance stays on deferred repair.
+
+### 25 November 2026 — Stage A freeze and first-reply treatment preparation
+
+Fresh Codex prompt manifests now pin actual scenario and model inputs,
+runner and catalog identities, tools, prompts and the production strict
+judge schema. Normal Windows Stage A specs enforce the existing model
+roles, 20-scenario roster, fresh controls and CUDA Answer arms. The
+Astra panel is admitted at the baseline and final change set only.
+
+A controller-only helper can authenticate the complete-evidence input
+manifest and exact retained UTF-8 excerpts. It binds the first canonical
+Answer dispatch content digest to the actual delivered text and preserves
+the native ordinary reply separately. Tests cover unchanged follow-up
+calls, redaction of controller labels, CRLF and final-byte preservation,
+and rejected truncation and reordering. The helper does not authorize a
+case or stand in for the production pass. A verified mapping for all
+actual dev essentials, launcher integration, three-role scoring and
+hosted entitlement remain open.
+
+Twenty-eight focused Python checks passed with no installed service,
+credentials or hosted sessions. The exact commands and result log
+are in L5C/codex-stage-a-freeze-treatment-pure-r1. Execution SHA-256
+is 066f88c1274ebf66fe73830ce0604b58b8fcd5ce1eb4bb9aa2496af6b619a9a7.

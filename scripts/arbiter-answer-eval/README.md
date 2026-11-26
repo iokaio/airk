@@ -881,6 +881,33 @@ built-in OpenAI provider. Synthetic loopback qualifies the exact tool
 offers and transport only. Hosted model admission, the fresh pass
 manifests and complete-evidence qualification are separate gates.
 
+### Windows Stage A freezes
+
+`prompts_freeze.py --write-codex <new-manifest> --codex-inputs <json>`
+pins the actual scenario freeze, stock runner and model catalog, exact
+Search, Parse and Answer catalogs, maintained harness sources and strict
+judge schema. Use purpose `windows-stage-a` for Sol or
+`windows-stage-a-capable-panel` for Astra. The latter runs only at baseline
+and change set 3. The runtime auth home remains a separately supplied
+private directory.
+
+`make_loop_spec.py l7` accepts `--codex-freeze`, `--codex-home`,
+`--codex-stage` and an explicit Windows fixture `--handle`. Its Codex
+spec requires the complete 20-scenario roster, a CUDA Answer arm and
+fresh controls at the prescribed stages. Sol runs five arms and Astra
+three. Historical specs retain their original generation and verification.
+
+`complete_evidence.py` prepares the isolated first-reply treatment for a
+later complete-evidence pass. It authenticates the private case manifest,
+source bytes, exact line ranges and the actual dispatched tool content
+digest. The actor sees only cited source text. The wrapper preserves
+the ordinary native Answer in a separate artifact and sends the
+augmented reply through its normal text block. Follow-up calls use the
+ordinary wrapper. The helper exercises UTF-8 sources with independently
+authenticated byte ranges. The pass must bind each actual dev manifest,
+verify the first dispatch before scoring and keep Sol diagnostics
+separate from Astra adjudication.
+
 ### Wider Search shortlist coverage
 
 Run the paired Search collector with a fixture launched under the private

@@ -158,6 +158,7 @@ class Pass:
             common.require((manifest.get("scenario_freeze") or {}).get("sha256")
                            == common.sha256_file(Path(spec["freeze"])),
                            "Codex scenario freeze differs from the prompt freeze")
+            prompts_freeze.verify_stage_a_spec(spec, manifest, self.codex_identity, self.codex_catalogs)
         self.settle_fn = settle_fn or self._settle
         self.r_root = Path(r_root)
         self.pass_dir = self.r_root / "passes" / self.series
@@ -172,6 +173,11 @@ class Pass:
         if spec.get("scenario_ids"):
             self.scenarios = [s for s in self.scenarios if s["id"] in set(spec["scenario_ids"])]
         common.require(self.scenarios, f"no scenarios under {scenarios_dir}")
+        if self.codex is not None:
+            required = set(spec["scenario_ids"])
+            common.require(len(self.scenarios) == len(required)
+                           and {scenario["id"] for scenario in self.scenarios} == required,
+                           "Windows Stage A loaded an incomplete scenario roster")
         if spec.get("freeze"):
             # Frozen inputs (plan 4.5): every scenario must match the freeze file byte for byte.
             freeze_path = Path(spec["freeze"])

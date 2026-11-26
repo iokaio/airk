@@ -70,6 +70,7 @@ if str(HERE) not in sys.path:
 
 import common  # noqa: E402
 import make_cs_spec  # noqa: E402
+import prompts_freeze  # noqa: E402
 import run_session  # noqa: E402
 
 # Profile names to recheck against fixture.py / gpu_fixture.py once L5 adds the FP16 CUDA rows.
@@ -417,6 +418,39 @@ def l7_spec(series: str, r_root: Path, profiles: dict, repos: list[str], budget:
     return spec
 
 
+def stage_a_spec(series: str, r_root: Path, profiles: dict, repos: list[str], budget: dict, note: str,
+                 *, freeze_path: Path, codex_home: Path, handle: Path, stage: str) -> dict:
+    common.require(len(repos) == len(common.REPOS) and set(repos) == set(common.REPOS),
+                   "Windows Stage A requires all 20 frozen development scenarios")
+    checked = prompts_freeze.verify(freeze_path)
+    manifest = common.read_json(freeze_path)
+    common.require(manifest.get("schema") == prompts_freeze.CODEX_SCHEMA,
+                   "Windows Stage A requires the Codex prompt freeze")
+    scenario_path = Path(manifest["scenario_freeze"]["path"])
+    common.require(scenario_path == (r_root / "scenario-freeze.json").resolve(),
+                   "Windows Stage A scenario freeze differs from the pass root")
+    common.require(handle.is_file(), "Windows Stage A requires an explicit fixture handle")
+    spec = l7_spec(series, r_root, profiles, repos, budget, note)
+    spec.pop("claude")
+    spec.update({key: manifest[key] for key in ("purpose", "agent_model", "agent_effort", "judge_model", "judge_effort")})
+    executable, model_catalog = manifest["executable"], manifest["model_catalog"]
+    spec.update(provider="codex", prompts_freeze=str(freeze_path.resolve()), freeze=str(scenario_path),
+                handle=str(handle.resolve()), codex_config={
+                    "executable": executable["path"], "executable_sha256": executable["sha256"],
+                    "model_catalog": model_catalog["path"], "model_catalog_sha256": model_catalog["sha256"],
+                    "isolated_home": str(codex_home.resolve()), "freeze_sha256": checked["sha256"],
+                })
+    if spec["purpose"] == "windows-stage-a-capable-panel":
+        common.require(stage in ("baseline", "change-set-3"), "Astra panel runs only at baseline and change set 3")
+        spec["results"] = [entry for entry in spec["results"] if entry.get("arm") in (None, "C")]
+    common.require(stage in prompts_freeze.CODEX_STAGES, "unknown Windows Stage A phase")
+    spec["stage"] = stage
+    for entry in spec["results"]:
+        catalog_key = "answer" if entry.get("arm") else entry["path"]
+        entry.update(reuse=False, catalog=manifest["tool_catalogs"][catalog_key]["path"])
+    return spec
+
+
 def l7_plan(spec_path: Path, spec: dict, r_root: Path) -> list[dict]:
     loops = [e for e in spec["results"] if e.get("arm")]
     # An enabled Focus stage also reranks ordinary Search. Both switches must
@@ -501,7 +535,11 @@ def main(argv: list[str] | None = None) -> int:
                              help="JSON {arm: {fixtures, lifetime, launcher, start_args, device_gib, host_gib}} overrides")
         else:
             sub.add_argument("--handle", type=Path, help="bind the baseline to this fixture lifetime's handle.json")
-            sub.add_argument("--claude", type=Path, help="bind the baseline to this installed Claude Code executable")
+            sub.add_argument("--claude", type=Path, help="bind a historical pass to this Claude Code executable")
+            sub.add_argument("--codex-freeze", type=Path, help="Windows Stage A model and input freeze")
+            sub.add_argument("--codex-home", type=Path, help="dedicated Codex home for the Windows Stage A pass")
+            sub.add_argument("--codex-stage", choices=prompts_freeze.CODEX_STAGES,
+                             help="phase of the Windows Stage A pass")
     sub = commands.add_parser("template")
     sub.add_argument("--out", type=Path, required=True)
     sub = commands.add_parser("shakedown")
@@ -543,7 +581,17 @@ def main(argv: list[str] | None = None) -> int:
         directory = _write(args.r_root, args.series, spec, gate_plan(spec_path, spec, args.r_root),
                            gate_report_inputs(spec, args.r_root))
     else:
-        spec = l7_spec(args.series, args.r_root, profiles, repos, budget, args.note)
+        common.require(bool(args.codex_freeze) == bool(args.codex_home) == bool(args.codex_stage),
+                       "--codex-freeze, --codex-home and --codex-stage must be supplied together")
+        if args.codex_freeze:
+            common.require(args.handle is not None and args.claude is None,
+                           "Windows Stage A requires --handle and the Codex provider")
+            common.require(not spec_path.parent.exists(), "Windows Stage A requires a fresh pass identity")
+            spec = stage_a_spec(args.series, args.r_root, profiles, repos, budget, args.note,
+                                freeze_path=args.codex_freeze, codex_home=args.codex_home,
+                                handle=args.handle, stage=args.codex_stage)
+        else:
+            spec = l7_spec(args.series, args.r_root, profiles, repos, budget, args.note)
         for field, path in (("handle", args.handle), ("claude", args.claude)):
             if path is not None:
                 common.require(path.is_file(), f"{field} does not name an existing file: {path}")
