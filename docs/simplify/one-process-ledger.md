@@ -19947,3 +19947,79 @@ Scoped rustfmt, whitespace and repository validation passed.
 The next action is a matched image and an A3 probe with the branch-only
 trace before measuring the full cohort. These validation results do not
 establish the live lexical or fusion rankings.
+
+### 25 November 2026 — Windows CUDA rank census and source reconciliation
+
+The branch image was built from `6d68492e` on the warm offline
+incremental target, then staged with the same authenticated CUDA
+provider files. Its execution receipt
+`windows-completion-branch-image-r1/execution.json` has SHA-256
+`98c3deb6fc474aa10a58b6e41df03f2b49b4494c676bd1cdb0145f45a9f09fb4`.
+Service SHA-256
+`80124584121bc9f0697b2eebc8344f78a7d92f5c70fcbb07582dcfe67c1165a6`.
+The build audited 1,028 outputs. The original control refused startup
+with 17 successor receipts against the retained native limit of 16.
+It exited with an empty Job. The original control and rejection
+receipt were retained. We did not change the native limit.
+
+The separately retained Windows pair from `win-l7-cs1-bundle-cuda-r2`
+had clean closing and readiness receipts. Its source commits, semantic
+pipeline, deny policy, file counts, vector bytes and canonical FTS5
+term/column/offset postings per stable chunk matched the original pair.
+The two pairs retain distinct publication tokens. The exact FTS
+comparison covered 5,792,280 Bookbuilder postings and 1,038,124
+Munarium postings. The report
+`windows-completion-branch-image-r1/control-postings.json` has SHA-256
+`f3f61af9b990d6525722754ffa07d9f62f1d40980958fd654debb762f9ba9e04`.
+The alternate detached native citation audit passed in 1.70 seconds
+with 919 tests filtered, under the receipt
+`38e383e85330a76699575906a086a4f3e25580cca9627295f071548bf934946c`.
+
+The branch-only CUDA probe measured A3 in 29.87 seconds, then the
+remaining 19 cases in 232.63 seconds on the same Ready service. Both
+optional models stayed off. The collector issued each standalone
+focused query as the exact native-derived task fragment. The Fact form
+used the frozen note sentence only as a diagnostic. Lexical ranks
+refer to ranked keyword candidates. Fusion ranks precede evidence
+packing and use distinct vector occurrences. Results:
+
+| Repository | Notes | Instruction keyword top 40 | Instruction fused top 40 | Instruction delivered | Added by focused fused top 40 | Fact keyword top 40 | Fact fused top 40 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Bookbuilder | 61 | 13 | 8 | 3 | 0 | 53 | 45 |
+| Munarium | 52 | 28 | 26 | 12 | 2 | 49 | 43 |
+| Combined | 113 | 41 | 34 | 15 | 2 | 102 | 88 |
+
+Bookbuilder T1/N1 and W1/N3 ranked 654 and 121 in the keyword branch,
+whose admission cut was 100. They appeared in the fused list at 34 and
+30 and did not reach the reply. Each fact-derived query moved its note
+to keyword, fused and delivered rank 1. These misses have measured
+query and candidate-selection causes on this profile. The measurements
+leave broader representation and reader questions open.
+
+Private branch result SHA-256s are
+`f0850c70df33c5fc8461f262732e2a548eb344d05897c22b6d185ef13331186b`
+for A3 and
+`8b0ed0f9a0ad6a20ad5d11ee77594ba42c22867c8f7a9207c6f5220c08d4db07`
+for the remaining cases. Both bind the same alternate publications,
+image and Ready handle. The alternate fixture closed with zero owned
+members and zero new Index or Vectors jobs, retaining 41 existing jobs.
+Only the two authenticated detached database copies were removed after
+the original hashes matched. That reclaimed 665,788,416 bytes, with
+1,090,702,446,592 bytes free afterward. Cleanup receipt SHA-256
+`6b6112eadfe2e14158c8a0670b2856e6e3032f411ca6bfc21693d75e3b29112e`.
+
+Independently regenerated Git archive streams matched both original
+archive SHA-256s and every exported path. All 8,116 Bookbuilder and
+1,023 Munarium indexed source hashes matched the exact pinned exported
+bytes. No indexed path fell outside either export or inside a known deny.
+Bookbuilder had 134 absent paths, including two explicit denials.
+Munarium had 15 absent paths and no reported explicit denies. The other
+147 per-path reasons are unclassified. The source audit
+`windows-completion-branch-image-r1/source-fidelity.json` has SHA-256
+`a4eb62163298e50b876c22b5d61f3ccd21c5a0444f421d2fbbcf25fc240030f4`.
+
+This closes the deterministic rank capture, with distinct publication
+provenance, and the indexed-source hash portion of fidelity. Next are
+label and corpus review, the remaining fidelity checks and matched
+follow-up and wider-Focus probes. The selected controls, autonomous
+repair, Windows L6 and judged Windows series are still pending.

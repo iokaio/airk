@@ -102,6 +102,10 @@ def collect(args):
     rows = [row for row in cohort["rows"]
             if (args.repo is None or row["repo"] == args.repo)
             and (args.case is None or f"{row['repo']}/{row['slot']}" == args.case)]
+    if args.omit_case:
+        common.require(any(f"{row['repo']}/{row['slot']}" == args.omit_case for row in rows),
+                       "omitted branch case is outside the selected cohort")
+        rows = [row for row in rows if f"{row['repo']}/{row['slot']}" != args.omit_case]
     common.require(bool(rows), "branch replay selector matched no frozen development scenarios")
     for row in rows:
         repo = row["repo"]
@@ -128,7 +132,7 @@ def collect(args):
             })
     vector.check_settled(args, handle, before, stage)
     return {"schema": "airk.private.branch-rank-census/1", "identity": identity, "notes": results,
-            "repo": args.repo, "case": args.case,
+            "repo": args.repo, "case": args.case, "omitted_case": args.omit_case,
             "collector_sha256": common.sha256_file(Path(__file__)),
             "shared_replay_sha256": common.sha256_file(Path(vector.__file__)),
             "input_sha256": {name: getattr(args, f"{name}_sha256") for name in
@@ -144,6 +148,7 @@ def main():
     selector = parser.add_mutually_exclusive_group()
     selector.add_argument("--repo", choices=sorted(audit.REPOSITORIES))
     selector.add_argument("--case", help="replay one frozen repository/scenario pair")
+    parser.add_argument("--omit-case", help="omit one already measured repository/scenario pair")
     args = parser.parse_args()
     search.write_new(args.output, collect(args))
 

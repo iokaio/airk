@@ -786,7 +786,19 @@ as standalone queries. It records the ranked keyword/identifier stages
 before their native branch limits, the deduplicated fusion order before
 packing, and coverage in the delivered hits. Missing ranked branches and
 dropped term groups are explicit. The branch-only mode leaves the already
-measured complete vector scan out of this pass.
+measured complete vector scan out of this pass. Use `--case` for a targeted
+probe and `--omit-case` to preserve that independently pinned result when
+collecting the rest of its cohort.
+
+For source custody, `source_fidelity_audit.py` reads the frozen exported
+paths and closed databases named in a SHA-256-pinned fixture handle. Its
+private report lists path counts, explicit denies, unclassified omissions
+and stored source-hash comparisons. `compare_census_postings.py` compares
+canonical FTS term, stable chunk, column and offset identities and vector
+matrix hashes from two pinned closed handles. It keeps their publication
+tokens separate. Run both from the checked Windows shell with fresh
+`--output` paths under the private campaign root. Neither changes a
+database or Git export.
 
 ### Wider Search shortlist coverage
 
