@@ -17,7 +17,58 @@ still does not know. A **turn** is one tool call. A call the wrapper refuses
 call after turn 12) is logged and is not a turn.
 
 Two rubrics apply, in this order. Rubric A decides the outcome. Rubric B is
-reported beside it and only breaks ties.
+reported beside it and only breaks ties. From 26 November 2026 the
+sufficiency standard below decides the outcome of Gather Context results,
+and Rubric A is reported beside it as a diagnostic.
+
+## Sufficiency standard from 26 November 2026
+
+The user replaced the all-or-nothing rule for Gather Context results on
+26 November 2026. A result does not have to be perfect or match the
+reference notes item by item. Earlier results keep the rule they were
+judged under.
+
+A Gather Context result is **sufficient** when both of these hold:
+
+1. **The agent has most or all of what it needs.** The reply, with any
+   follow-up, gives an AI agent enough to do the task correctly. The
+   reference notes show what matters. They are not a checklist. A different
+   passage that establishes the same fact counts. A detail the agent would
+   meet while doing the work does not have to be delivered.
+2. **Preparation ends within two follow-up calls.** After the first Gather
+   Context reply, at most two more tool calls complete the agent's
+   preparation.
+
+A result is **not sufficient** when more than two follow-up calls are
+needed, when the preparation still lacks or contradicts something the work
+depends on, or when the reply would lead the agent to act on misleading
+evidence. A failure, a timeout and an unfinished reply are not sufficient.
+
+**Who judges.** The agent carrying out the evaluation judges each result
+directly. No separate headless judge session is launched. The judgment
+follows these steps:
+
+1. Read the task and the reply as delivered to an agent.
+2. List what the task still needs.
+3. Make at most two follow-up calls through the same tool surface and
+   record what they returned.
+4. Check the outcome against the reference notes. Mark each essential note
+   as established by the first reply, established by a follow-up call, not
+   needed to start the work, or missing.
+5. Record the verdict, its reasons and the passages relied on. Label it as
+   the working agent's own judgment.
+
+| Outcome | Meaning |
+| --- | --- |
+| Ready | Sufficient with no follow-up call |
+| Ready after follow-up | Sufficient after one or two follow-up calls |
+| Not ready | Not sufficient |
+
+Reports show the outcome, the follow-up calls made, the essential notes
+established, the bytes delivered and the time. Whether this standard also
+replaces a correct finish in the completion plan's substantial-win rule is
+the user's decision at the Windows review.
+[Gather Context plan](../retrieval-strategy-combined.md#windows-cuda-model-comparison-and-iteration)
 
 ## Rubric A: fewer turns for an agent
 

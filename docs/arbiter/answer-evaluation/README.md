@@ -75,7 +75,9 @@ Beside the reports:
   counts and timings, not evidence text.
 - `rubrics.md` holds the two rubrics, the definition of a correct finish,
   the table of cases that are not clear-cut and the rule for "substantially
-  improves", as frozen before the first judged run.
+  improves", as frozen before the first judged run. It also holds the
+  sufficiency standard that decides Gather Context results from
+  26 November 2026.
 
 ## What every report contains
 
