@@ -14,6 +14,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 import common
+import followup_search_replay as followup
 import search_focus_ab as search
 
 
@@ -77,20 +78,91 @@ def audit_repository(repo, record):
             "source_hash_mismatches": mismatches}
 
 
+def audit_read_replies(records, indexes, cohort, pass_index):
+    rows = []
+    for scenario, calls in followup.recorded_rows(cohort, pass_index):
+        repo = scenario["repo"]
+        physical = "bookbuilder-v2" if repo == "bookbuilder" else repo
+        record = indexes[physical]
+        verified = records[physical]
+        source = Path(record["root"]).resolve(strict=True)
+        omitted = set(verified["intentionally_denied"]) | set(verified["other_absent"])
+        for call in calls:
+            if call["tool"] != "airk_read_file":
+                continue
+            report = {"repo": repo, "slot": scenario["slot"], "ordinal": call["ordinal"],
+                      "result_sha256": call["recorded_result_sha256"], "ranges": []}
+            rows.append(report)
+            if not call["recorded_ok"]:
+                report["status"] = "recorded_error"
+                continue
+            raw = search.pinned(Path(call["recorded_result_path"]), call["recorded_result_sha256"])
+            body = common.envelope_body(json.loads(raw))
+            for hit in body.get("hits", []):
+                citation = hit["citation"]
+                relative = citation["path"]
+                first, last = citation["start_line"], citation["end_line"]
+                span = {"path": relative, "first": first, "last": last}
+                report["ranges"].append(span)
+                path = (source / relative).resolve(strict=True)
+                requested = call["arguments"]
+                common.require(path.is_relative_to(source) and relative not in omitted,
+                               "archived native read refers outside the verified indexed export")
+                common.require(requested["path"] == relative
+                               and requested["start_line"] <= first <= last <= requested["end_line"],
+                               "archived native read returned a range outside the request")
+                try:
+                    data = path.read_bytes()
+                    text = data.decode("utf-8")
+                except UnicodeError:
+                    span["status"] = "extracted_or_non_utf8"
+                    continue
+                if b"\0" in data:
+                    span["status"] = "extracted_or_non_utf8"
+                    continue
+                lines = text.split("\n")
+                fragments = [line + "\n" for line in lines[:-1]]
+                if lines[-1]:
+                    fragments.append(lines[-1])
+                expected = "".join(fragments[first - 1:last])
+                actual = hit["text"]
+                truncated = bool(hit.get("truncated") or body.get("truncated"))
+                matched = last <= len(fragments) and (expected.startswith(actual) if truncated else expected == actual)
+                span.update(status=("prefix" if truncated else "exact") if matched else "mismatch",
+                            expected_sha256=common.sha256_bytes(expected.encode("utf-8")),
+                            actual_sha256=common.sha256_bytes(actual.encode("utf-8")))
+            report["status"] = "read" if report["ranges"] else "no_text_hit"
+    return rows
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--handle", type=Path, required=True)
     parser.add_argument("--handle-sha256", required=True)
     parser.add_argument("--output", type=Path, required=True)
+    for name in ("cohort", "pass-index"):
+        parser.add_argument(f"--{name}", type=Path)
+        parser.add_argument(f"--{name}-sha256")
     args = parser.parse_args()
+    archive = (args.cohort, args.cohort_sha256, args.pass_index, args.pass_index_sha256)
+    common.require(not any(archive) or all(archive), "archived reads require a cohort and pass index with both pins")
     handle = json.loads(search.pinned(args.handle, args.handle_sha256))
     common.require(handle["state"] == "closed" and handle["final_stage_idle"] is True
                    and handle["service_exit_code"] == 0, "source audit requires a clean closed fixture")
     indexes = handle["indexes"]
     common.require(set(indexes) == {"bookbuilder-v2", "munarium"}, "wrong development repository roster")
     records = [audit_repository(repo, record) for repo, record in sorted(indexes.items())]
-    search.write_new(args.output, {"schema": "airk.private.census-source-fidelity/1",
-                                  "handle_sha256": args.handle_sha256, "repositories": records})
+    report = {"schema": "airk.private.census-source-fidelity/1",
+              "handle_sha256": args.handle_sha256, "repositories": records}
+    if args.cohort:
+        common.require(all(not record["source_hash_mismatches"] for record in records),
+                       "archived read audit requires matching pinned source bytes")
+        cohort = json.loads(search.pinned(args.cohort, args.cohort_sha256))
+        pass_index = json.loads(search.pinned(args.pass_index, args.pass_index_sha256))
+        report["cohort_sha256"] = args.cohort_sha256
+        report["pass_index_sha256"] = args.pass_index_sha256
+        report["archived_reads"] = audit_read_replies({r["repository"]: r for r in records}, indexes, cohort, pass_index)
+    search.write_new(args.output, report)
 
 
 if __name__ == "__main__":

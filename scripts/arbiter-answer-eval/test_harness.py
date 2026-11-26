@@ -21,6 +21,7 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
+import codex_isolation_probe as codex_probe  # noqa: E402
 import common  # noqa: E402
 import coverage  # noqa: E402
 import evidence  # noqa: E402
@@ -524,6 +525,26 @@ def row(turns=None, grade_=None, repo="airk", kind="coding", **extra):
             "adjudicated_grade": grade_ if grade_ is not None else (
                 (4 if turns == 1 else 3 if turns == 2 else 2 if turns in (3, 4) else 1) if finished else 0),
             "repo": repo, "kind": kind, **extra}
+
+
+class CodexOfferCapture(unittest.TestCase):
+    def test_reads_namespaced_and_unexpected_responses_lite_tools(self):
+        tool = {"type": "function", "name": "airk_search"}
+        request = {
+            "tools": [{"type": "function", "name": "flat"}],
+            "input": [{"type": "message", "tools": [{"type": "function", "name": "ignored"}]},
+                      {"type": "additional_tools", "role": "developer",
+                       "tools": [{"type": "namespace", "name": "mcp__airk", "tools": [tool, tool]},
+                                 {"type": "tool_search"}]}],
+        }
+        observed = codex_probe.offered_tools(request)
+        self.assertEqual([(item["carrier"], item["type"], item["name"]) for item in observed],
+                         [("tools", "function", "flat"),
+                          ("additional_tools", "function", "mcp__airk__airk_search"),
+                          ("additional_tools", "function", "mcp__airk__airk_search"),
+                          ("additional_tools", "tool_search", None)])
+        self.assertEqual(observed[1]["schema_sha256"], observed[2]["schema_sha256"])
+        self.assertEqual(codex_probe.offered_tools({"input": [{"type": "message"}]}), [])
 
 
 class CaseTable(unittest.TestCase):

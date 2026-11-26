@@ -20042,9 +20042,11 @@ The checked Windows Codex 0.171.0 binary hash was
 `cefea4ffee1fff04983a99c0dda99944d8b380e891e740a28b32f4b815a6e0b7`.
 The first synthetic loopback attempt timed out during startup. The
 diagnostic rerun preserved request arrivals and response event markers.
-Astra at medium effort offered zero tools. The captured request contained
-neither the synthetic workspace instruction canary nor the AIRK
-repository instructions. No Authorization header reached the endpoint.
+The captured Astra request contained neither the synthetic workspace
+instruction canary nor the AIRK repository instructions. No Authorization
+header reached the endpoint. This first probe inspected only top-level
+tool declarations. The complete wire audit below supersedes its tool
+surface result.
 The synthetic server deliberately returned HTTP 400 after the capture.
 The project, log, state and temporary scratch paths were checked under
 the interactive Windows SID. Probe report SHA-256
@@ -20053,11 +20055,11 @@ The hosted model request, schema-valid verdict, per-arm tool offers and
 call-cap reconciliation remain to be verified before grading.
 
 The synthetic Sol Search wrapper started with the six expected tools in
-its wrapper receipt. Requests captured with both a custom provider and
-the built-in OpenAI provider set to loopback omitted all six. For the
-built-in provider, the endpoint confirmed the dummy credential and
-received no live credential. Requiring catalog rather than connection
-readiness gave the same result. The distinct synthetic reports have
+its wrapper receipt. The early custom-provider and built-in-provider
+captures found no top-level tool definitions. The complete wire audit
+below establishes where Codex serialized those definitions. The built-in
+provider sent the dummy credential to loopback. Requiring catalog
+readiness left the top-level projection unchanged. The distinct synthetic reports have
 SHA-256s `42f555c1d97dc103a8b41280d0adbb445885362491c7a427c756070dec25914b`,
 `e656405c4296e38c397ce9bc0ea4cdf1ee4a21e71bc449980d9b262f654e7fbf`
 and `b99fec0388b37562b844bdca4a0b7c6be5303db1cafeb12277cd57e298a524e0`.
@@ -20103,3 +20105,84 @@ The isolated diversity call took 6.310 s, SHA-256
 `0b042194cefaded9ceac6854d7323b006b0513b45ef6a7d848b40fa3be8dfd7a`.
 The wider Focus check, remaining source fidelity and configuration
 selection are separate pending checks.
+
+### 25 November 2026 — Archived read fidelity and complete Codex tool capture
+
+An independent Astra reviewer selected the first note with no accepted
+path in the first frozen scenario of each Bookbuilder task family. The
+review inspected ten authenticated first-reply Search hits per note.
+None of C1/N1, W1/N1, T1/N5 or A1/N1 had an unlisted hit that established
+its complete fact. Three had partial support. T1/N5 had the fallback
+chapter heading in the formatter and lacked evidence that the two
+shipped profiles use it. The four reviewed misses leave 44 Bookbuilder
+misses unreviewed. The frozen notes are unchanged.
+
+| Repository | Archived native Read File calls | Exact UTF-8 ranges | Recorded errors |
+| --- | ---: | ---: | ---: |
+| Bookbuilder | 35 | 33 | 2 |
+| Munarium | 33 | 33 | 0 |
+
+The archive audit authenticated the development cohort, original pass
+index, session and turns, and raw replies. All 66 successful replies
+matched the requested path and cited range in the verified Git export.
+The audited excerpts are text-file reads. The source audit report
+SHA-256 is
+`febde91316dd1d36fe0cd06a667542cc01be544a0f4b833d8061a9a9c84f1d61`.
+
+The existing current plain-store fixture passed all three selected tests
+with three skipped. It checked independently known chunks and lexical
+selectors, DOCX extraction, and unchanged, edited, moved and deleted
+artifacts including deletion from lexical lookup. An earlier kernel
+selection ran zero tests. The next public runtime fixture stopped on
+its assertion for the predecessor `current.sqlite3` layout. Two Store
+tests then failed with the old-format refusal before reaching their
+retained-location and posting assertions. Those failures do not supply
+current reader evidence. Retain their receipts and count only the
+applicable plain-store tests as passing. Nextest receipt SHA-256s in
+run order are
+`f62311c686732537f8d8620beae918e70f4c8b25a66818e6cdc13bf89e286ce5`,
+`de3360a4e588d3bc5f990158b9fe17d9c05011dc76409922c9fa6a79df72b2c1`
+and `1c28fc517d072838eb8aa6a2f8da07e223459192032de856be226aa2dfea5027`.
+All ran on the warm Windows CUDA campaign target with incremental on.
+
+Codex 0.171.0 also serializes a model-visible tool catalog in the
+Responses Lite developer `additional_tools` item. The original probe
+missed that carrier. The corrected probe found all six expected Search
+tools and 12 additional built-ins for Sol, and the same 12 built-ins
+for Astra. The respective receipts have SHA-256s
+`ea3893a8111e14091dbee7405fb3a660e746a8b106f3338caa19141384ebc48f`
+and `7559536b79b628664bddd0ab71add42b298e83be69390f4e5260420ed8e1c3d8`.
+[Codex 0.171.0 request serializer](https://github.com/openai/codex/blob/rust-v0.171.0/codex-rs/core/src/client.rs#L1169-L1184)
+
+The local startup catalog was derived from the same executable's
+`debug models --bundled` output. Only Sol and Astra tool metadata was
+changed: direct mode, empty experimental tools and no apply-patch type.
+The model IDs, medium effort and Responses Lite encoding were preserved.
+The derived catalog SHA-256 is
+`aa8b635a363c48335545fbd1726725ea4d45b7ae55b064e0b5ab6b0e16b50113`.
+After disabling goals, isolated Codex exec offered zero tools to Astra
+in the loopback request, retained SHA-256
+`4a21cc1159ad9b89ce04de25e4aa2371fd8039902d4bb9c5bbe0732fcc580b91`.
+The installed binary used no hosted inference and received no judged
+packet. A schema-valid hosted verdict remains pending.
+
+Sol's stdio MCP path with the derived catalog still declared three MCP
+resource operations in addition to the wrapper tools. An app-server
+trial first stopped before sampling because it inherited two enabled MCP
+servers. Both were disabled for the process. App-server rejected the
+reserved MCP namespace for dynamic tools. An allowed namespace offered
+all six wrapper schemas plus the same three resource tools and a
+`tool_search` declaration. The final app-server receipt SHA-256 is
+`da9c74d57b5b3170102b8a30ad6b7bb648d12c358471e1d2497606a8efe4cc46`.
+The trial did not broker a model-generated call. Twenty-two selected
+harness checks passed, including wrapped call accounting and the
+Responses Lite capture regression.
+
+The exact Sol tool surface remains the headless admission blocker.
+A candidate must offer only the path catalog in every request and
+reconcile 12 attempted calls and refusals with the wrapper. Keep
+scored sessions closed. Continue to use the original Search policy as
+the follow-up reference. The wider Focus check, extraction anchors
+beyond the disposable DOCX fixture, independent embedding-route
+comparison and held-out selection remain pending. Autonomous repair
+follows index research. All Windows fixture Jobs used here settled.

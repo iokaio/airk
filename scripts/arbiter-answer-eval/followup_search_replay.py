@@ -53,7 +53,8 @@ def recorded_rows(cohort, index):
             notes = evidence.covered_notes(spans, row["essential"], rule=2)
             calls.append({"ordinal": turn["turn"], "tool": tool, "arguments": arguments,
                           "response_mode": turn["response_mode"], "recorded_ok": bool(turn["ok"]),
-                          "recorded_covered": notes, "recorded_result_sha256": turn["result_sha256"]})
+                          "recorded_covered": notes, "recorded_result_sha256": turn["result_sha256"],
+                          "recorded_result_path": turn["result_path"]})
             roster[tool] += 1
         common.require(calls and [call["ordinal"] for call in calls] ==
                        sorted({call["ordinal"] for call in calls}), "follow-up ordinal order differs")

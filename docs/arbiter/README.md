@@ -8,6 +8,13 @@ and proposed research datasets have separate identities. Attribution is not a
 claim of training admission, model quality, independent held-out evidence or
 release qualification.
 
+## Windows CUDA completion research
+
+The development index census, source checks and follow-up Search replay
+are available separately for [Bookbuilder](windows-index-research-bookbuilder.md)
+and [Munarium](windows-index-research-munarium.md). The
+[completion plan](completion-plan.md) records qualification and review gates.
+
 ## Device and precision controls
 
 The Service page separates Focus/Context model choice from execution variants.

@@ -813,6 +813,15 @@ scratch directory containing `workspace`, `logs`, `state` and `tmp`.
 The workspace can contain an instruction canary. This probe does not
 qualify hosted admission, verdict generation or the wrapper's call cap.
 
+The probe reads both top-level tool definitions and Responses Lite
+`additional_tools` input items. It compares namespace-qualified tool names
+including duplicates and rejects built-ins outside the expected catalog.
+A pinned `--model-catalog` and its SHA-256 can test a local metadata override.
+The loopback-only `--app-server` variant reads the effective MCP configuration
+before opening any model thread. Use `--disable-mcp-server` for each inherited
+server that must be disabled in that subprocess. This variant submits
+the wrapper schemas as explicit declarations and measures offers only.
+
 ### Wider Search shortlist coverage
 
 Run the paired Search collector with a fixture launched under the private
