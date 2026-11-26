@@ -21232,3 +21232,57 @@ L5C/windows-ceiling-stationary-restart-check-r3 has SHA-256
 Next stage the corrected image, reopen the settled native
 publications and reauthenticate the matched tool catalog before
 the hosted gate.
+
+### 26 November 2026 — Windows CUDA complete-evidence review trigger
+
+The corrected 0b8b9d4b CUDA image staged from the matched warm
+target in 114.11 s for the service and 0.39 s for the CLI.
+The build execution SHA-256 is
+719a640574a9b98c0dfa0e097a5c39d861bc6773d27aef19523bab23240c74ad.
+Its image manifest SHA-256 is
+ea9d34ee6f0fdf57df5d73825ec60532a99d55285c0e880e7d4dad655fa8740c.
+Lifetime win-completion-ceiling-live-r2 reopened both frozen
+Ready Hybrid publications without a source I/O job change.
+The fresh 60-tool catalog reproduced the frozen native bytes.
+The 20-case Codex freeze retained SHA-256
+77afe3c5581533534e1a16d24cd0d3df75b64a91f0a3df5e9ffb2aeb6e09b878.
+
+All 20 hosted GPT-6.2 Sol medium sessions completed on the
+both-model Windows CUDA arm. The gate authenticated the first
+dispatch and all 113 required source spans supplied in those
+first deliveries. Both Astra medium scoring verdicts and the
+separate Sol medium diagnostic verdict were valid for every
+case. The adjudication yielded two correct finishes, both on
+turn one.
+
+| Repository | All essentials in first delivery | Authenticated essentials | Correct finishes |
+| --- | ---: | ---: | ---: |
+| Bookbuilder | 10/10 | 61/61 | 0/10 |
+| Munarium | 10/10 | 52/52 | 2/10 |
+| Total | 20/20 | 113/113 | 2/20 |
+
+The adjudication recorded 12 briefs more than one essential
+fact short, three one essential fact short and three that
+followed misleading evidence. The two Astra judges agreed
+on all 20 final grades and differed on one essential-note
+label. The Sol diagnostic grade agreed with each Astra judge
+on 18 of 20 cases. This result fell short of 12 correct
+finishes overall and at least five in each repository.
+
+The private retained development run is
+passes/07-windows-complete-evidence-r1. Its disposition SHA-256
+is 4e0e6eedd013e5db5972804e37a20195ba141f9a46d6fbd6f184a77cc23fd0ec.
+The private reports/windows-complete-evidence-review-r1.md
+links every brief, exact delivered first reply and all three
+verdicts. Its verified SHA-256 is
+80aa50ff121916abf676689b72f3d838481426cb4c797131519fc880d22ec72d.
+The runner's bounded disposition output has SHA-256
+4c405abed6e65387ef70c7212a506f50812dfad65e83e75b4440dd3f46188712.
+
+Both model stages disabled and the native lifetime closed
+with zero owned processes. The complete native dispatch
+recorder closed with 1,420 records, zero dropped and zero writer
+failures. The native close SHA-256 is
+ed5bfe5804bc7f2cb1b20ac7d7478c5e0bff5395cc792ff9ded2474ffb4cb337.
+The normal Windows baseline and the three judged change sets
+remain gated on the user's review of this result.
