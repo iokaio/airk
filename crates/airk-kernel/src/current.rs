@@ -19,6 +19,7 @@ mod changes;
 mod conditional;
 pub(crate) mod enrichment;
 mod indexing;
+pub(crate) mod literal;
 mod metadata;
 #[cfg(test)]
 mod plain_read_tests;

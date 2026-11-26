@@ -254,6 +254,8 @@ pub(crate) struct Gathering {
     pub(crate) candidates: usize,
     pub(crate) omitted: usize,
     pub(crate) bytes: usize,
+    nomination_bytes: usize,
+    nomination_candidates: usize,
     pub(crate) failed: usize,
     next_seq: u32,
     pub(crate) stop: Option<GlobalStop>,
@@ -274,6 +276,8 @@ impl Gathering {
             candidates: 0,
             omitted: 0,
             bytes: 0,
+            nomination_bytes: 0,
+            nomination_candidates: 0,
             failed: 0,
             next_seq: 0,
             stop: None,
@@ -414,7 +418,7 @@ impl Gathering {
                 break;
             };
             if self.calls >= self.budget.calls
-                || self.candidates + self.pending.len() >= self.budget.candidates
+                || self.admitted_candidates() >= self.budget.candidates
             {
                 self.stop = Some(GlobalStop::Budget);
                 break;
@@ -509,13 +513,40 @@ impl Gathering {
         }
     }
 
+    fn admitted_candidates(&self) -> usize {
+        // The wire candidate count describes retained and omitted evidence.
+        // Private probes spend the same admissions without becoming evidence.
+        self.candidates + self.nomination_candidates + self.pending.len()
+    }
+    pub(crate) fn reserve_nomination(&mut self) -> bool {
+        if self.stop.is_some()
+            || self.budget.calls.saturating_sub(self.calls) < 2
+            || self
+                .budget
+                .candidates
+                .saturating_sub(self.admitted_candidates())
+                < 2
+        {
+            return false;
+        }
+        self.calls += 1;
+        self.nomination_candidates += 1;
+        true
+    }
+
+    pub(crate) fn remaining_bytes(&self) -> usize {
+        self.budget
+            .max_bytes
+            .saturating_sub(self.bytes.saturating_add(self.nomination_bytes))
+    }
+
+    pub(crate) fn charge_nomination_bytes(&mut self, bytes: usize) {
+        self.nomination_bytes += bytes;
+    }
+
     fn fits(&self, body: &Value) -> Result<bool> {
         let bytes = serde_json::to_vec(&super::volatile::stable(body))?.len();
-        Ok(self
-            .bytes
-            .checked_add(bytes)
-            .is_some_and(|total| total <= self.budget.max_bytes)
-            && self.records.len() < self.budget.candidates)
+        Ok(bytes <= self.remaining_bytes() && self.records.len() < self.budget.candidates)
     }
 
     fn retain(
@@ -531,12 +562,7 @@ impl Gathering {
         let body = super::volatile::stable(&received);
         let bytes = serde_json::to_vec(&body)?;
         self.candidates += 1;
-        if self
-            .bytes
-            .checked_add(bytes.len())
-            .is_none_or(|total| total > self.budget.max_bytes)
-            || self.records.len() >= self.budget.candidates
-        {
+        if bytes.len() > self.remaining_bytes() || self.records.len() >= self.budget.candidates {
             ensure!(
                 dispatch.cause != Cause::PartSearch || !self.records.is_empty(),
                 "Answer mandatory part search exceeds the original retention budget"

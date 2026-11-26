@@ -403,13 +403,22 @@ impl CurrentRead {
 
     /// The original bytes of a `utf8` file. Other files have no stored source.
     pub fn read_retained_source(&self, compact: &Artifact) -> Result<Vec<u8>> {
+        self.read_retained_source_bounded(compact, MAX_RETAINED_BYTES)
+    }
+
+    /// Authenticate the same source while admitting at most `maximum` payload bytes.
+    pub fn read_retained_source_bounded(
+        &self,
+        compact: &Artifact,
+        maximum: u64,
+    ) -> Result<Vec<u8>> {
         ensure!(
             self.retained_source_available(compact),
             "the index does not keep the source of {:?} (extraction {:?}); read the file itself",
             compact.path,
             compact.extraction_method
         );
-        let payload = self.load_extraction_payload(compact)?;
+        let (_, payload) = self.decode_retained(compact, maximum)?;
         let bytes = payload.text.into_bytes();
         ensure!(
             bytes.len() == compact.bytes

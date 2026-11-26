@@ -60,3 +60,12 @@ typed `SourcePolicyReadUnavailable` (`source_policy_unavailable`), as
 reserved primary or alias root is still `ScopeReadRefused`
 (`scoped_read_unavailable`). Before, both were the refusal. Test:
 `read::scope_tests::unfrozen_sources_are_policy_unavailable_and_reserved_roots_refuse`.
+
+### Caller-bounded retained original bytes
+
+An admitted current reader can cap the original UTF-8 source load before
+opening its retained object. The bounded path uses the same authenticated
+object decoder, source hash, length checks, and scope admission as the
+existing original-source read. The default exposes the same maximum as
+before. The bound does not grant live source access or change on-disk
+representations.

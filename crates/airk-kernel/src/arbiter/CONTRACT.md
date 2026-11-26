@@ -801,3 +801,15 @@ The broad initial Search for that part still runs. Plain paths and other
 unaddressed needs retain their existing first-read behavior. The retained
 read is scoped and fenced through the same gather dispatch as any other
 read, including canonical refusal for unavailable or expired evidence.
+
+
+In the development reader comparison, one internal literal or structural
+probe can nominate a scope-bound range. The scan reads current retained
+original UTF-8 bytes from the same index member. Irrelevant content,
+incomplete scans, and fact or relationship candidates carry no proof of
+absence. A nominated range is read via canonical Read File with the content
+hash and publication. The proof competes for the existing round-one
+sub-need, part, and total call bounds. The probe and its loaded and retained
+bytes are charged to the same total budgets. The private kernel outcome
+tracks the source record that prompted it. Excerpt evidence alone joins the
+public records. The published request and reply schemas are unchanged.

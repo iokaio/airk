@@ -16,7 +16,7 @@ use airk_core::native_loop::LoopCard;
 use gather::{Cause, Gathering, GlobalStop, Observed, Offer, ReadKey, Step};
 use retrieve::Probe;
 use state::{NeedState, PartState, RoundState};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
 mod admission;
 pub use admission::AdmissionPlan;
@@ -26,6 +26,7 @@ mod decide;
 mod follow;
 mod gather;
 mod model;
+mod nominate;
 mod plan;
 mod repeats;
 mod retrieve;
@@ -82,12 +83,35 @@ pub struct CustodyRecord {
 pub struct AnswerCustody {
     pub log: v3::DecisionLog,
     pub records: Vec<CustodyRecord>,
+    pub nominations: Vec<Value>,
 }
 
 #[derive(Clone, Debug)]
 pub struct AnswerOutcome {
     pub response: v3::ContextResponseV3,
     pub custody: AnswerCustody,
+}
+
+#[derive(Clone, Debug)]
+struct NominationObservation {
+    ordinal: usize,
+    tool: &'static str,
+    arguments: Map<String, Value>,
+    basis: Vec<Sha256Digest>,
+    outcome: Value,
+}
+
+fn nomination_arguments(read: &nominate::Read) -> Result<(&'static str, Map<String, Value>)> {
+    Ok(match read {
+        nominate::Read::Literal { literal, prefix } => (
+            "literal_scan",
+            json!({"literal": literal, "prefix": prefix})
+                .as_object()
+                .context("literal scan arguments")?
+                .clone(),
+        ),
+        nominate::Read::Canonical { tool, arguments } => (*tool, arguments.clone()),
+    })
 }
 
 const SYMBOLS: [&str; 8] = ["A", "B", "C", "D", "E", "F", "G", "H"];
@@ -232,6 +256,8 @@ impl crate::Kernel {
             configuration_changed: false,
             probes: vec![],
             probes_run: 0,
+            nomination_queue: VecDeque::new(),
+            nominations: BTreeMap::new(),
             governing: BTreeMap::new(),
             searched: BTreeSet::new(),
             waiting: BTreeMap::new(),
@@ -280,6 +306,8 @@ struct Loop<'a> {
     configuration_changed: bool,
     probes: Vec<Probe>,
     probes_run: usize,
+    nomination_queue: VecDeque<nominate::Probe>,
+    nominations: BTreeMap<ReadKey, NominationObservation>,
     governing: BTreeMap<(u8, u8), usize>,
     /// Search queries already dispatched, lower case.
     searched: BTreeSet<String>,
@@ -553,6 +581,14 @@ impl Loop<'_> {
         };
         let target = state.need.clone();
         let record = self.gather.records[record].clone();
+        for read in nominate::from_record(&target, step, &record) {
+            self.nomination_queue.push_back(nominate::Probe {
+                part: self.parts[part].id,
+                need,
+                basis: record.id,
+                read,
+            });
+        }
         let reaction = retrieve::react(
             &mut self.gather,
             self.parts[part].id,
@@ -613,6 +649,181 @@ impl Loop<'_> {
             self.offer(part, read)?;
         }
         Ok(())
+    }
+
+    /// Resolve private nominations. Their locations become evidence only
+    /// through an ordinary hash-bound read on the same publication.
+    fn resolve_nominations(&mut self) -> Result<()> {
+        while let Some(probe) = self.nomination_queue.pop_front() {
+            if self.gather.stop.is_some() || self.stop_due() {
+                break;
+            }
+            let Some(part) = self
+                .parts
+                .iter()
+                .position(|part| part.id == probe.part && part.active())
+            else {
+                continue;
+            };
+            let Some(state) = self.parts[part].need(probe.need) else {
+                continue;
+            };
+            let need = state.need.clone();
+            let room = FIRST_ROUND_READS.saturating_sub(state.reads);
+            let part_calls = self.shares.parts[part]
+                .calls
+                .saturating_sub(self.used_calls[part]);
+            if room == 0 || part_calls == 0 {
+                continue;
+            }
+            let (tool, mut arguments) = nomination_arguments(&probe.read)?;
+            let key = gather::read_key(tool, &arguments, &self.gather.revision)?;
+            let observed = match self.nominations.get_mut(&key) {
+                Some(observed) => {
+                    if !observed.basis.contains(&probe.basis) {
+                        observed.basis.push(probe.basis);
+                    }
+                    observed.clone()
+                }
+                None => {
+                    if self.nominations.len() >= PROBES_PER_ANSWER || room < 2 || part_calls < 2 {
+                        continue;
+                    }
+                    let byte_allowance = (self.gather.remaining_bytes() / 4).min(24_576);
+                    if byte_allowance < 512 || !self.gather.reserve_nomination() {
+                        continue;
+                    }
+                    self.parts[part].need(probe.need).expect("known need").reads += 1;
+                    self.used_calls[part] += 1;
+                    let round = self.parts[part].current();
+                    round.fanout = round.fanout.max(1);
+                    round.calls += 1;
+                    match probe.read {
+                        nominate::Read::Literal { .. } => {
+                            arguments.insert("max_files".into(), json!(16));
+                            arguments.insert("max_bytes".into(), json!(byte_allowance));
+                            arguments.insert("max_hits".into(), json!(8));
+                        }
+                        nominate::Read::Canonical { .. } => {
+                            arguments.insert("max_bytes".into(), json!(byte_allowance.min(4_096)));
+                        }
+                    }
+                    let outcome =
+                        self.run_nomination(&probe.read, tool, &arguments, byte_allowance)?;
+                    let observed = NominationObservation {
+                        ordinal: self.nominations.len() + 1,
+                        tool,
+                        arguments,
+                        basis: vec![probe.basis],
+                        outcome,
+                    };
+                    self.nominations.insert(key, observed.clone());
+                    observed
+                }
+            };
+            let Some(body) = observed.outcome.get("body") else {
+                continue;
+            };
+            if tool == "code_facts" {
+                for read in nominate::from_facts(&need, body) {
+                    self.nomination_queue.push_back(nominate::Probe {
+                        part: probe.part,
+                        need: probe.need,
+                        basis: key,
+                        read,
+                    });
+                }
+            }
+            for location in nominate::locations(tool, body).into_iter().take(1) {
+                let hash = location.known_hash.to_string();
+                let read = retrieve::excerpt(
+                    &mut self.gather,
+                    (probe.part, Some(probe.need), 1),
+                    (&location.path, location.start, location.end, Some(&hash)),
+                    150,
+                    (software::FollowUp::Excerpt, Step::Leaf, Cause::Structural),
+                    &location.path,
+                )?;
+                self.offer(part, read)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn run_nomination(
+        &mut self,
+        read: &nominate::Read,
+        tool: &str,
+        arguments: &Map<String, Value>,
+        byte_allowance: usize,
+    ) -> Result<Value> {
+        use crate::current::literal::{LiteralLimits, LiteralStop};
+
+        (self.env.require_live)()?;
+        let revision = self.gather.revision.as_str();
+        let observed = match read {
+            nominate::Read::Literal { literal, prefix } => self
+                .kernel
+                .scan_retained_literal(
+                    literal,
+                    prefix,
+                    revision,
+                    LiteralLimits {
+                        max_files: 16,
+                        max_bytes: byte_allowance,
+                        max_hits: 8,
+                    },
+                    || {
+                        (self.env.require_live)()?;
+                        Ok(!self.stop_due())
+                    },
+                )
+                .map(|scan| {
+                    let matches: Vec<_> = scan
+                        .hits
+                        .iter()
+                        .map(|hit| {
+                            json!({"citation":{"path":hit.path,"start_line":hit.start_line,
+                                "end_line":hit.end_line,"content_hash":hit.content_hash},
+                                "start_byte":hit.start_byte,"end_byte":hit.end_byte})
+                        })
+                        .collect();
+                    (
+                        json!({"matches": matches, "files_examined": scan.files_examined,
+                            "bytes_examined": scan.bytes_examined, "files_excluded": scan.files_excluded,
+                            "retained_bytes_loaded": scan.retained_bytes_loaded,
+                            "stop": format!("{:?}", scan.stop)}),
+                        scan.retained_bytes_loaded,
+                        scan.stop == LiteralStop::Stale,
+                    )
+                }),
+            nominate::Read::Canonical { .. } => {
+                (self.env.reader)(tool, arguments, Some(revision))
+                    .map(|body| {
+                        let stale = token(&body) != Some(revision);
+                        (body, 0, stale)
+                    })
+            }
+        };
+        let (body, scanned, stale) = match observed {
+            Ok(result) => result,
+            Err(error) if error.is::<airk_core::scoped_reads::ScopeReadRefused>() => {
+                return Err(error);
+            }
+            Err(_) => return Ok(json!({"disposition": "unavailable"})),
+        };
+        if stale {
+            self.gather.stop = Some(GlobalStop::Stale);
+            return Ok(json!({"disposition": "stale"}));
+        }
+        let retained = serde_json::to_vec(&body)?.len();
+        let allowance = self.gather.remaining_bytes();
+        let cost = scanned.saturating_add(retained);
+        self.gather.charge_nomination_bytes(cost.min(allowance));
+        if cost > allowance {
+            return Ok(json!({"disposition": "retention_limit", "scanned_bytes": scanned}));
+        }
+        Ok(json!({"disposition": "observed", "body": body, "charged_bytes": cost}))
     }
 
     fn rounds(&mut self) -> Result<()> {
@@ -765,6 +976,7 @@ impl Loop<'_> {
                     Observed::Stale => {}
                 }
             }
+            self.resolve_nominations()?;
             self.resolve_probes()?;
         }
     }
@@ -1321,7 +1533,20 @@ impl Loop<'_> {
                 canonical_result: record.received.clone(),
             })
             .collect();
-        AnswerCustody { log, records }
+        let mut nominations: Vec<_> = self
+            .nominations
+            .iter()
+            .map(|(id, item)| {
+                json!({"id": id, "ordinal": item.ordinal, "tool": item.tool, "arguments": item.arguments,
+                    "revision": self.gather.revision, "basis": item.basis, "outcome": item.outcome})
+            })
+            .collect();
+        nominations.sort_by_key(|row| row["ordinal"].as_u64());
+        AnswerCustody {
+            log,
+            records,
+            nominations,
+        }
     }
 
     fn finish(mut self) -> Result<AnswerOutcome> {

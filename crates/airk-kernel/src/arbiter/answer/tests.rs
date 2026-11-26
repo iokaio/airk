@@ -1494,3 +1494,67 @@ fn runs_differing_only_in_read_status_give_byte_equal_replies() -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn private_fact_nomination_reopens_a_hash_bound_excerpt() -> Result<()> {
+    let fixture = fixture()?;
+    let publication = fixture.publication.clone();
+    let seen = Mutex::new(Vec::<(String, Map<String, Value>)>::new());
+    let hash = "7".repeat(64);
+    let clock = Clock::new();
+    let outcome = fixture.kernel.answer_with(
+        request("Where is `restart_guard` defined?"),
+        AnswerEnv {
+            deadline: clock.now() + Duration::from_secs(600),
+            require_live: &|| Ok(()),
+            reader: &|tool, arguments, revision| {
+                ensure!(revision == Some(publication.token.to_string().as_str()));
+                seen.lock().unwrap().push((tool.into(), arguments.clone()));
+                match tool {
+                    "search" => {
+                        let mut body = canned(&publication, tool, arguments)?;
+                        body["hits"][0]["citation"]["content_hash"] = json!(hash);
+                        Ok(body)
+                    }
+                    "code_facts" => Ok(json!({"publication": publication, "items": [{
+                        "citation":{"path":"crates/k/src/alternate.rs","start_line":11,
+                            "end_line":18,"content_hash":hash}
+                    }]})),
+                    _ => canned(&publication, tool, arguments),
+                }
+            },
+            clock: &|| clock.now(),
+            progress: &|_| {},
+        },
+    )?;
+    let calls = seen.into_inner().unwrap();
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|(tool, _)| tool == "code_facts")
+            .count(),
+        1
+    );
+    assert!(calls.iter().any(|(tool, arguments)| {
+        tool == "read_file"
+            && arguments["path"] == "crates/k/src/alternate.rs"
+            && arguments["known_hash"] == hash
+    }));
+    assert_eq!(outcome.custody.nominations.len(), 1);
+    assert_eq!(outcome.custody.nominations[0]["tool"], "code_facts");
+    assert_eq!(
+        outcome.custody.nominations[0]["arguments"]["max_bytes"],
+        4096
+    );
+    assert!(
+        !outcome
+            .custody
+            .records
+            .iter()
+            .any(|row| row.tool == "code_facts")
+    );
+    outcome
+        .response
+        .validate_with_log(&outcome.custody.log, &v3::BudgetV3::default())?;
+    Ok(())
+}

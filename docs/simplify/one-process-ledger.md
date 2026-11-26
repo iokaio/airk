@@ -21470,3 +21470,43 @@ and discarded evidence is retained under
 It maintains the 12-call cutoff and records actor failures in the denominator.
 The workspace's verified same-user PowerShell and child output checks still
 apply. The full diagnostic and the matched native candidate remain open.
+
+
+### 26 November 2026 — Gather Context scoped reader candidate source
+
+The candidate adds an internal exact literal scan over the selected
+publication's retained UTF-8 source and lets Code Facts, Document Facts and
+Relationships nominate ranges. Read File reopens a range under its source
+hash and the same publication. Round-one probes share call, candidate and
+retention budgets. The kernel outcome preserves the exact arguments and
+source lineage in private custody. The public reply retains canonical
+evidence and its existing operation types. The current literal census
+explicitly records mapped-text exclusions.
+
+An initial Clippy run identified a misplaced field and ambiguous test array
+types. After those corrections, the broader native selection exposed
+invalid omission accounting when private probes counted as public
+evidence candidates. Admission now debits both work types against the
+same budget and public evidence accounting retains its original meaning.
+
+On the checked warm Windows target with incremental 1, the final source
+selection passed Clippy for `airk-kernel` and `airk-store`. Both focused
+smoke cases passed, including the nomination-to-proof path and an existing
+no-model loop. The full selection ran 147 tests, passed 141 and skipped 351
+outside the selection. All five literal scan tests passed. Six model
+coverage assertions failed with their original expectations. Each failed
+identically on the unchanged pre-candidate kernel executable
+`061150f4120f791e21e012c3acf54a51b1b56216c72ede3ebaa7be69f1963ed7`
+from the frozen `0b8b9d4b` Windows build. The direct predecessor check
+selected each test separately and preserved the failure details in
+`passes/gather-context-m2-control-assertions-r1/control-assertions.log`,
+SHA-256 `2a151432fddd5ded91dec7407b16d5da9f7a60d381ad63f71b6aacd35745de9b`.
+The final candidate command and owned-output receipt is
+`passes/gather-context-m2-check-r3/execution.json`, SHA-256
+`afe41487df84536b1e5973ea5970baae1739fa7a18ef53e84651b8626e018685`.
+The six failures remain open for the broader product qualification. No
+passing full-workspace gate or native candidate replay is claimed here.
+
+Next stage the matched candidate service/client pair on Windows from the
+reviewed source, reopen the same two publications with both models off,
+and compare all 20 cases against the frozen native control.
