@@ -1153,3 +1153,55 @@ python -B scripts/arbiter-answer-eval/gather_context_judge.py --campaign-root $c
 The caller creates and audits fresh run directories before either command.
 The diagnostic compares evidence use. Native release qualification uses the
 separate frozen product comparison and review criteria.
+
+### Gather Context loss stages
+
+`gather_context_loss_stage.py` reads delivered Gather Context replies and
+reports, for each essential note, the furthest stage its location reached:
+opened by a source read, listed by another read and never opened, present in
+the reply at other lines, or absent from the reply. It uses the harness's
+line-overlap rule and needs no service and no model. The stages describe what
+a reply shows. They do not prove why a read was or was not chosen.
+
+Inputs are the private scenario folder (`<repository>/<slot>.json`) and a
+folder of `<repository>-<slot>.reply.json` MCP results. The output is a table
+on standard output and, with `--output`, a new JSON file that is never
+overwritten.
+
+~~~powershell
+python -B scripts/arbiter-answer-eval/gather_context_loss_stage.py --scenarios (Join-Path $campaign 'scenarios') --replies (Join-Path $campaign 'passes/gather-context-native-candidate-final-r1')
+python -B -m unittest discover -s scripts/arbiter-answer-eval -p 'test_gather_context_loss_stage.py'
+~~~
+
+### Arbiter pair probe
+
+`arbiter_probe_cases.py` and `arbiter_pair_probe.py` test a Qwen3 reranker
+checkpoint outside AIRK, before any export. The first builds evaluator-side
+pair groups from the private scenarios, the pinned source exports and
+delivered replies. The second scores them with PyTorch and Transformers and
+reports, per use, how often the right candidate ranks first.
+
+| Use | Query | Right candidate | Wrong candidates |
+| --- | --- | --- | --- |
+| `passage` | The task | An essential note's own lines | Delivered passages that overlap no note |
+| `action` | The task | A path, range and first lines of a note's location | The same description of an unrelated delivered passage |
+| `coverage` | One essential fact | The note's whole range | The first part of that range, and another note's range |
+
+The reference notes locate the right candidates. They are evaluator
+knowledge and never reach a product prompt. The probe uses the publisher's
+prompt and reads the `yes` against `no` probability at the last position.
+It needs CUDA and does not fall back to CPU. It is not the product runtime
+and says nothing about an AIRK export. `--precision 4bit` loads the weights
+through bitsandbytes NF4, which approximates a 4-bit build and is not the
+delivered quantization.
+
+Run it from a private virtual environment that holds `torch`, `transformers`,
+`accelerate` and `bitsandbytes`. Keep that environment, the downloaded
+checkpoint, the pairs and the results in the private campaign folder. Both
+commands refuse to overwrite an output.
+
+~~~powershell
+python -B scripts/arbiter-answer-eval/arbiter_probe_cases.py --scenarios (Join-Path $campaign 'scenarios') --sources "munarium=$munarium" "bookbuilder=$bookbuilder" --replies $replies --output $pairs
+& $venvPython -B scripts/arbiter-answer-eval/arbiter_pair_probe.py --model $model --pairs $pairs --output $result --precision fp16
+python -B -m unittest discover -s scripts/arbiter-answer-eval -p 'test_arbiter_pair_probe.py'
+~~~
