@@ -20619,3 +20619,64 @@ Hosted entitlement, a production verdict schema and provider-aware
 launcher, reuse and grading still need integration. No scored or paid
 session was started. This entry supersedes the earlier tool-catalog
 admission blocker for the exercised stock loopback configuration.
+
+### 25 November 2026 — Native automatic lexical recovery
+
+The existing automatic Verify cohort can check two authorized files per
+turn, with a 250 ms cooperative window and a live queue of up to 32
+recently changed paths. The remainder is considered by idle rotation.
+The narrow repair admits one missing FTS row on small retained UTF-8
+extractions, with one cited target and independently checked positive and
+no-match controls. It holds the live collection, project and writer
+authority, rechecks saved settings and the prior publication, and uses the
+native transaction to publish a new sequence and lexical commit. Normal
+lexical retrieval confirms the target after commit. The running automatic
+cohort folds that successor into its existing audit intent. A following
+observation of the repair publication did not re-arm that audit.
+
+The disposable Windows Kernel test used real registry eligibility, job
+enqueue/claim and the leased Verify owner with ordinary strict reads.
+The first injected omission was recovered before the first canonical
+Search. Search returned the original UTF-8 body, source hash and line
+citation. The healthy control, no-match and prior pinned token were
+verified. Without another source publication, the test then omitted the
+older control's posting and advanced the existing idle eligibility clock.
+The same maintenance path recovered it before its next Search. Both
+jobs completed with the new exact publication and the source files
+retained their original bytes. The fixture did not launch a subprocess
+supervisor or external Search transport.
+
+The first integration Clippy run stopped on an unintended formatter
+filename header. Its SHA-256 is
+15cd25e17b0cb4913ec01edc0fd136dd8730a4a9be81d6189464d954d0c1d1.
+After correction r2 passed all-target, all-feature Store and Kernel
+Clippy in 45.56 s. Four selected Store tests passed, with 919 skipped,
+in 119.22 s including build. Its receipt is
+e11e235e59a5887ad1631b92322aaa6fae671aa9599888504b46afc2ec0ad621.
+The r3 native test fixture requested optional private authority on an
+unsupported boundary and refused before the repair. The ordinary worker
+activation path keeps strict readers and r4 passed under that path. The
+r5 extended idle fixture advanced the Scheduler clock while its Verify
+observation used wall time, so the later job could not be claimed at
+wall time. The revised test injects the observation clock as well. It
+keeps the production clock path, job eligibility and assertions. These
+three receipts are respectively
+9683305e1ad8315abef1a919e66a45f978f7841dff19db4fd190ce32e73cddc6,
+2cc8bf6751768c2b2605f237e2718e0a6d2c7ca5cd314841c529039e230cd031 and
+b16f628b177d659df31ea2aff75bb3162db7e1fc6130adbb06689f231775568d.
+
+The corrected r6 all-target, all-feature Store and Kernel Clippy passed
+in 7.542 s. Nextest ci selected and passed one Kernel native test with
+577 skipped in 35.686 s including compilation. The checked human shell
+audited 272 changed outputs. Commands, timing, source digests and warm
+Windows target, incremental and resource admission receipts remain at
+L5C/windows-completion-service-repair-preflight-r6. The source receipt
+is 316dfd25cd99f35521ac41a959b796b2d84365ef2a2ec8cfe358d84ea4cbafc3 and
+the execution receipt is fc83aa0f7079d62d151eb6f5ad40050f45a4b9f6d479a3f5564b68c20827d6d1.
+
+This qualifies the bounded service-owner background path on the tested
+fixture. It leaves earlier sticky damage, broader retained document and
+semantic checks, retrieval-triggered nomination, same-request replay and
+deadline qualification open. The next scope is an exact-file lexical
+request under the original read budget and real maintenance authority.
+The cooperative work window does not bound storage sync or response p95.

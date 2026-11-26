@@ -47,6 +47,14 @@ pub struct FileRow {
     pub changed_sequence: u64,
 }
 
+/// One bounded stored chunk identity and its exact physical FTS row state.
+pub(crate) struct FtsRepairRow {
+    pub(crate) ordinal: u32,
+    pub(crate) stable_id: Sha256Digest,
+    pub(crate) citation: Vec<u8>,
+    pub(crate) present: bool,
+}
+
 /// Which files a path lookup lists.
 #[derive(Clone, Debug)]
 pub enum PathLookup {
@@ -204,6 +212,59 @@ impl IndexReader {
                 })
             })
             .transpose()
+    }
+
+    /// Return the entire bounded chunk roster or decline the file before
+    /// loading its retained record or payload.
+    pub(crate) fn fts_repair_rows(
+        &self,
+        path: &str,
+        maximum_chunks: usize,
+    ) -> Result<Option<Vec<FtsRepairRow>>> {
+        validate_path(path)?;
+        let maximum_bytes = i64::try_from(super::FTS_RESTORE_MAX_BYTES)?;
+        let eligible: bool = self.connection.query_row(
+            "SELECT EXISTS (
+                SELECT 1 FROM files f JOIN payloads p ON f.payload=p.digest
+                WHERE f.path=?1 AND length(f.record)<=?2
+                    AND p.raw_bytes BETWEEN 0 AND ?2 AND length(p.body)<=?2
+            )",
+            params![path, maximum_bytes],
+            |row| row.get(0),
+        )?;
+        if !eligible {
+            return Ok(None);
+        }
+        let mut statement = self.connection.prepare_cached(
+            "SELECT c.ordinal,c.stable_id,
+                    CASE WHEN length(c.citation)<=?2 THEN c.citation END,
+                    EXISTS (SELECT 1 FROM fts WHERE fts.rowid=c.id)
+             FROM chunks c JOIN files f ON c.file_id=f.id
+             WHERE f.path=?1 ORDER BY c.ordinal LIMIT ?3",
+        )?;
+        let mut cursor = statement.query(params![
+            path,
+            maximum_bytes,
+            i64::try_from(maximum_chunks.saturating_add(1))?
+        ])?;
+        let mut chunks = Vec::new();
+        let mut citation_bytes = 0usize;
+        while let Some(row) = cursor.next()? {
+            let Some(citation): Option<Vec<u8>> = row.get(2)? else {
+                return Ok(None);
+            };
+            citation_bytes = citation_bytes.saturating_add(citation.len());
+            if chunks.len() == maximum_chunks || citation_bytes > super::FTS_RESTORE_MAX_BYTES {
+                return Ok(None);
+            }
+            chunks.push(FtsRepairRow {
+                ordinal: row.get(0)?,
+                stable_id: digest(row.get(1)?)?,
+                citation,
+                present: row.get(3)?,
+            });
+        }
+        Ok((!chunks.is_empty()).then_some(chunks))
     }
 
     /// The raw bytes of a stored payload, checked against their digest.

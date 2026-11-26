@@ -506,25 +506,8 @@ impl PlainWriter {
         self.index.commit_vectors_with_resources(batch, &resources)
     }
 
-    /// Free space on the volume and the index size cap (D8), before a batch.
     fn check_space(&self, growth: u64) -> Result<()> {
-        let mut stored = 0u64;
-        for name in [
-            index::DATABASE_FILE,
-            &format!("{}-wal", index::DATABASE_FILE),
-        ] {
-            if let Ok(metadata) = std::fs::metadata(self.directory.join(name)) {
-                stored = stored.saturating_add(metadata.len());
-            }
-        }
-        if stored.saturating_add(growth) > MAX_INDEX_BYTES {
-            return Err(anyhow::Error::new(IndexSizeCap {
-                index_bytes: stored,
-                cap_bytes: MAX_INDEX_BYTES,
-            }));
-        }
-        // A batch may briefly need its growth twice (database and WAL).
-        crate::capacity::probe(&self.directory)?.require_growth(growth.saturating_mul(2))
+        check_space(&self.directory, growth)
     }
 
     /// Publish one batch in one transaction.
@@ -659,8 +642,28 @@ impl PlainWriter {
     }
 }
 
-#[cfg(test)]
-pub(super) struct CurrentFtsPermit {
+/// Free space on the volume and the index size cap (D8), before a batch.
+fn check_space(directory: &Path, growth: u64) -> Result<()> {
+    let mut stored = 0u64;
+    for name in [
+        index::DATABASE_FILE,
+        &format!("{}-wal", index::DATABASE_FILE),
+    ] {
+        if let Ok(metadata) = std::fs::metadata(directory.join(name)) {
+            stored = stored.saturating_add(metadata.len());
+        }
+    }
+    if stored.saturating_add(growth) > MAX_INDEX_BYTES {
+        return Err(anyhow::Error::new(IndexSizeCap {
+            index_bytes: stored,
+            cap_bytes: MAX_INDEX_BYTES,
+        }));
+    }
+    // A batch may briefly need its growth twice (database and WAL).
+    crate::capacity::probe(directory)?.require_growth(growth.saturating_mul(2))
+}
+
+pub(crate) struct CurrentFtsPermit {
     directory: std::path::PathBuf,
     scope: CurrentScope,
     token: CurrentToken,
@@ -669,77 +672,67 @@ pub(super) struct CurrentFtsPermit {
     lexical_commit: Sha256Digest,
 }
 
-#[cfg(test)]
 impl FileStore {
-    pub(super) fn capture_current_fts_permit(
+    pub(crate) fn capture_current_fts_permit(
         &self,
         writer: &WriterLock,
     ) -> Result<CurrentFtsPermit> {
+        crate::service::collection::validate_split_store_access(self)?;
         let directory = super::gate::check_writer(self, writer)?;
-        let read = self.plain_read()?;
-        let collection_state = read
-            .reader
-            .meta(COLLECTION_STATE_KEY)?
-            .context("current repair has no applied collection state")?;
-        CollectionState::decode_canonical(&collection_state)?;
-        let lexical_commit = read
-            .reader
-            .meta(LEXICAL_COMMIT_KEY)?
-            .context("current repair has no lexical commit")?
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("current repair lexical commit has the wrong length"))?;
+        let snapshot = IndexWriter::fts_publication_snapshot(&directory)?;
+        let scope = super::plain::decode_stored_scope(&snapshot.scope)?;
+        ensure!(
+            scope.collection == self.collection_id()?,
+            "foreign Current repair scope"
+        );
+        CollectionState::decode_canonical(&snapshot.collection_state)?;
+        let token = plain_token(&scope, snapshot.sequence);
+        let settings =
+            crate::service::collection::settings_digest_with_writer(self, &scope.root, writer)?;
         Ok(CurrentFtsPermit {
             directory,
-            scope: read.scope().clone(),
-            token: read.token(),
-            settings: crate::service::collection::settings_digest_with_writer(
-                self,
-                &read.scope().root,
-                writer,
-            )?,
-            collection_state,
-            lexical_commit: Sha256Digest::from_bytes(lexical_commit),
+            scope,
+            token,
+            settings,
+            collection_state: snapshot.collection_state,
+            lexical_commit: snapshot.lexical_commit,
         })
     }
-}
 
-#[cfg(test)]
-impl PlainWriter {
-    pub(super) fn restore_missing_fts_row(
-        &mut self,
-        store: &FileStore,
+    pub(crate) fn restore_current_fts(
+        &self,
         writer: &WriterLock,
         permit: &CurrentFtsPermit,
         proposal: &index::FtsRestore<'_>,
         deadline: std::time::Instant,
         cancelled: impl Fn() -> bool,
     ) -> Result<CurrentToken> {
-        let directory = super::gate::check_writer(store, writer)?;
+        let directory = super::gate::check_writer(self, writer)?;
         ensure!(
             directory == permit.directory
-                && directory == self.directory.canonicalize()?
-                && self.scope == permit.scope
-                && permit.token == plain_token(&self.scope, proposal.sequence),
+                && permit.token == plain_token(&permit.scope, proposal.sequence),
             "stale or foreign Current FTS repair permit"
         );
         ensure!(
             !cancelled() && std::time::Instant::now() < deadline,
             "Current FTS repair cancelled or expired"
         );
+        crate::service::collection::validate_split_store_access(self)?;
         ensure!(
             crate::service::collection::settings_digest_with_writer(
-                store,
-                &self.scope.root,
+                self,
+                &permit.scope.root,
                 writer,
             )? == permit.settings,
             "Current FTS repair saved settings changed"
         );
-        self.check_space((4 * index::FTS_RESTORE_MAX_BYTES) as u64)?;
+        check_space(&directory, 4 * index::FTS_RESTORE_MAX_BYTES as u64)?;
         writer.invalidate_census_before_mutation()?;
-        let next = self.index.restore_fts(
+        let next = IndexWriter::restore_fts(
+            &directory,
             proposal,
             index::FtsPublication::Current {
-                scope: &self.scope,
+                scope: &permit.scope,
                 collection_state: &permit.collection_state,
                 lexical_commit: permit.lexical_commit,
             },
@@ -747,11 +740,29 @@ impl PlainWriter {
             cancelled,
             |record, retained| repair_chunk_terms(proposal, record, retained),
         )?;
-        Ok(plain_token(&self.scope, next))
+        Ok(plain_token(&permit.scope, next))
     }
 }
 
 #[cfg(test)]
+impl PlainWriter {
+    pub(super) fn restore_missing_fts_row(
+        &self,
+        store: &FileStore,
+        writer: &WriterLock,
+        permit: &CurrentFtsPermit,
+        proposal: &index::FtsRestore<'_>,
+        deadline: std::time::Instant,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<CurrentToken> {
+        ensure!(
+            self.directory.canonicalize()? == permit.directory && self.scope == permit.scope,
+            "stale or foreign Current FTS repair permit"
+        );
+        store.restore_current_fts(writer, permit, proposal, deadline, cancelled)
+    }
+}
+
 fn repair_chunk_terms(
     proposal: &index::FtsRestore<'_>,
     record: &[u8],
@@ -851,7 +862,11 @@ fn file_entry(upsert: PlainUpsert) -> Result<FileEntry> {
     })
 }
 
-fn plain_chunk(compact: &Artifact, ordinal: u64, chunk: &airk_core::Chunk) -> Result<ChunkEntry> {
+pub(super) fn plain_chunk(
+    compact: &Artifact,
+    ordinal: u64,
+    chunk: &airk_core::Chunk,
+) -> Result<ChunkEntry> {
     let path = &compact.path;
     let citation = Citation {
         path: path.clone(),

@@ -360,6 +360,63 @@ impl ServiceRegistry {
             })
             .transpose()
     }
+
+    pub(crate) fn retain_lexical_repair_head(
+        &self,
+        lease: &ProjectLease,
+        context: &AutomaticAuditContext,
+        previous: CurrentToken,
+        current: CurrentToken,
+    ) -> Result<()> {
+        ensure!(
+            previous.incarnation == current.incarnation
+                && previous.sequence.checked_add(1) == Some(current.sequence)
+                && !context.manual,
+            "invalid automatic lexical repair successor"
+        );
+        let tx = rusqlite::Transaction::new_unchecked(
+            &self.connection,
+            TransactionBehavior::Immediate,
+        )?;
+        let epoch = jobs::worker_epoch(&tx, &self.root, lease)?;
+        let job = jobs::record(&tx, context.job)?;
+        ensure!(
+            job.project == lease.identity().0
+                && job.kind == JobKind::Verify
+                && job.state == JobState::Running
+                && job.fencing_generation == context.epoch
+                && epoch == context.epoch,
+            "stale automatic lexical repair completion"
+        );
+        let saved: Option<Vec<u8>> = tx
+            .query_row(
+                "SELECT intent FROM service_background_audit
+                 WHERE project=?1 AND job=?2 AND campaign=?3 AND manual=0
+                 AND intent IS NOT NULL",
+                params![
+                    job.project.to_string(),
+                    job.id.to_string(),
+                    i64::try_from(context.campaign)?
+                ],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(saved) = saved {
+            ensure!(saved.len() <= MAX_STATE, "audit intent exceeds bound");
+            let mut intent: Intent = serde_json::from_slice(&saved)?;
+            ensure!(intent.version == 1, "unknown automatic audit intent version");
+            if intent.head == previous {
+                intent.head = current;
+                tx.execute(
+                    "UPDATE service_background_audit SET intent=?1 WHERE project=?2",
+                    params![serde_json::to_vec(&intent)?, job.project.to_string()],
+                )?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn complete_automatic_audit(
         &mut self,
         lease: &ProjectLease,

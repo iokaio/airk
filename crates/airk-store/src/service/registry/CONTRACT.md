@@ -36,6 +36,31 @@ by the private native control root and is never persisted as registry authority.
 
 A retained canceled job vetoes automatic semantic setup for its own project. The registry checks the worker lease and project epoch before exposing that veto. Its immediate enqueue transaction checks cancellation again alongside the watch, active job and engine/settings signature gates.
 
+## Bounded lexical check in automatic Verify
+
+The existing automatic Verify lane can check up to two authorized files per
+turn with a 250 ms cooperative probe window. The live worker remembers up to
+32 changed paths from ordinary indexing publications and checks them before
+rotating older paths in the same collection. The worker holds the cursor
+in memory. It checks each candidate against a single selected publication
+and resets the roster when the selected incarnation changes.
+
+The probe can restore one completely absent FTS row from authenticated
+retained UTF-8 extraction. It checks the selected directory, live project
+epoch, audit cohort, source-policy fence, saved settings, scope, committed
+publication and old lexical commit. The transaction checks independent
+positive and no-match controls. The owner reopens ordinary lexical retrieval
+on the new publication to confirm the expected citation. The running
+automatic cohort can then update its existing retained intent to that exact
+successor, so the repair publication does not by itself re-arm the same
+audit. A foreign intent stays owned by its existing publisher.
+
+Ordinary physical Verify retains its recovery and cancellation path. The
+probe does not clear sticky damage or change an approved maintenance plan.
+Its work window uses cooperative checks around acquisition and SQLite
+operations. Full synchronous commit has no foreground time guarantee.
+There is no new control shape, durable ticket or persisted schema.
+
 ## Reviewed-grant removal upgrade (change-log entry 68 part 3)
 
 The user decided on 23 November 2026 to remove reviewed catalog grants

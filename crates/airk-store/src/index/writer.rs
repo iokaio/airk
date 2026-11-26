@@ -102,7 +102,6 @@ pub struct IndexWriter {
     connection: Connection,
 }
 
-#[cfg(test)]
 #[derive(Clone, Copy)]
 pub(crate) struct FtsWitness<'a> {
     pub path: &'a str,
@@ -110,7 +109,6 @@ pub(crate) struct FtsWitness<'a> {
     pub expected: Option<(u32, Sha256Digest, &'a [u8])>,
 }
 
-#[cfg(test)]
 #[derive(Clone)]
 pub(crate) struct FtsRestore<'a> {
     pub sequence: u64,
@@ -122,11 +120,17 @@ pub(crate) struct FtsRestore<'a> {
     pub no_match: FtsWitness<'a>,
 }
 
-#[cfg(test)]
 pub(crate) const FTS_RESTORE_MAX_BYTES: usize = 32 * 1024;
 
-#[cfg(test)]
+pub(crate) struct FtsPublicationSnapshot {
+    pub sequence: u64,
+    pub scope: Vec<u8>,
+    pub collection_state: Vec<u8>,
+    pub lexical_commit: Sha256Digest,
+}
+
 pub(crate) enum FtsPublication<'a> {
+    #[cfg(test)]
     Detached,
     Current {
         scope: &'a crate::current::CurrentScope,
@@ -135,7 +139,6 @@ pub(crate) enum FtsPublication<'a> {
     },
 }
 
-#[cfg(test)]
 fn verify_fts_witness(
     transaction: &Transaction<'_>,
     witness: FtsWitness<'_>,
@@ -177,15 +180,41 @@ fn verify_fts_witness(
     Ok(())
 }
 
-#[cfg(test)]
 impl IndexWriter {
+    pub(crate) fn fts_publication_snapshot(directory: &Path) -> Result<FtsPublicationSnapshot> {
+        use crate::current::{MAX_INPUT_METADATA_BYTES, map::MAX_VALUE_BYTES, plain_writer};
+
+        let mut connection = schema::open_reader_nowait(&directory.join(DATABASE_FILE))?;
+        let transaction = connection.transaction()?;
+        Ok(FtsPublicationSnapshot {
+            sequence: sequence(&transaction)?,
+            scope: schema::require_meta_blob(
+                &transaction,
+                plain_writer::SCOPE_KEY,
+                MAX_INPUT_METADATA_BYTES,
+            )?,
+            collection_state: schema::require_meta_blob(
+                &transaction,
+                plain_writer::COLLECTION_STATE_KEY,
+                MAX_VALUE_BYTES,
+            )?,
+            lexical_commit: digest_from(schema::require_meta_blob(
+                &transaction,
+                plain_writer::LEXICAL_COMMIT_KEY,
+                32,
+            )?)?,
+        })
+    }
+
+    #[cfg(test)]
     pub(super) fn restore_missing_fts_row(
         &mut self,
         proposal: &FtsRestore<'_>,
         deadline: std::time::Instant,
         cancelled: impl Fn() -> bool,
     ) -> Result<u64> {
-        self.restore_fts(
+        Self::restore_fts(
+            &self.directory,
             proposal,
             FtsPublication::Detached,
             deadline,
@@ -194,11 +223,10 @@ impl IndexWriter {
         )
     }
 
-    /// Private transactional proof. The Current owner checks its writer permit
-    /// and authenticates the actual retained chunk; the detached fixture uses
-    /// its entire raw source as the only chunk.
+    /// Repair one derived row under the Current owner's checked writer permit.
+    /// The detached unit fixture uses its entire raw source as the only chunk.
     pub(crate) fn restore_fts(
-        &mut self,
+        directory: &Path,
         proposal: &FtsRestore<'_>,
         publication: FtsPublication<'_>,
         deadline: std::time::Instant,
@@ -235,7 +263,8 @@ impl IndexWriter {
             "FTS repair stable identity differs"
         );
 
-        let mut connection = schema::open_writer_nowait(&self.directory.join(DATABASE_FILE))?;
+        let mut connection = schema::open_writer_nowait(&directory.join(DATABASE_FILE))?;
+        connection.progress_handler(1000, Some(move || Instant::now() >= deadline))?;
         let transaction =
             connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         check_budget()?;
@@ -243,7 +272,8 @@ impl IndexWriter {
             sequence(&transaction)? == proposal.sequence,
             "FTS repair publication is stale"
         );
-        let is_current = match &publication {
+        let current_scope = match &publication {
+            #[cfg(test)]
             FtsPublication::Detached => {
                 ensure!(
                     ordinal == 0 && proposal.payload_digest == proposal.source_hash,
@@ -259,7 +289,7 @@ impl IndexWriter {
                         "FTS repair proof requires a detached index"
                     );
                 }
-                false
+                None
             }
             FtsPublication::Current {
                 scope,
@@ -267,17 +297,22 @@ impl IndexWriter {
                 lexical_commit,
             } => {
                 ensure!(
-                    schema::meta_blob(&transaction, plain_writer::SCOPE_KEY)?.as_deref()
-                        == Some(serde_json::to_vec(scope)?.as_slice())
-                        && schema::meta_blob(&transaction, plain_writer::COLLECTION_STATE_KEY)?
-                            .as_deref()
-                            == Some(*collection_state)
-                        && schema::meta_blob(&transaction, plain_writer::LEXICAL_COMMIT_KEY)?
-                            .as_deref()
-                            == Some(digest_bytes(lexical_commit)),
+                    schema::meta_blob_matches(
+                        &transaction,
+                        plain_writer::SCOPE_KEY,
+                        &serde_json::to_vec(scope)?
+                    )? && schema::meta_blob_matches(
+                        &transaction,
+                        plain_writer::COLLECTION_STATE_KEY,
+                        collection_state
+                    )? && schema::meta_blob_matches(
+                        &transaction,
+                        plain_writer::LEXICAL_COMMIT_KEY,
+                        digest_bytes(lexical_commit)
+                    )?,
                     "FTS repair Current publication metadata differs"
                 );
-                true
+                Some(*scope)
             }
         };
         let (id, raw_bytes, encoding, body, record, missing): (i64, i64, u8, Vec<u8>, Vec<u8>, bool) = transaction
@@ -298,7 +333,7 @@ impl IndexWriter {
                     digest_bytes(&stable_id),
                     citation,
                     i64::try_from(MAX_BYTES)?,
-                    is_current,
+                    current_scope.is_some(),
                 ],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
             )
@@ -310,12 +345,14 @@ impl IndexWriter {
             Sha256Digest::from_bytes(Sha256::digest(&raw).into()) == proposal.payload_digest,
             "FTS repair retained payload digest differs"
         );
-        let canonical_terms = if is_current {
-            current_chunk_terms(&record, &raw)?
-        } else {
-            let source = std::str::from_utf8(&raw)?;
-            ensure!(!source.is_empty(), "FTS repair retained source is empty");
-            lexical::chunk_terms(proposal.missing.path, source)
+        let canonical_terms = match publication {
+            FtsPublication::Current { .. } => current_chunk_terms(&record, &raw)?,
+            #[cfg(test)]
+            FtsPublication::Detached => {
+                let source = std::str::from_utf8(&raw)?;
+                ensure!(!source.is_empty(), "FTS repair retained source is empty");
+                lexical::chunk_terms(proposal.missing.path, source)
+            }
         };
         ensure!(
             !proposal.canonical_terms.is_empty() && canonical_terms == proposal.canonical_terms,
@@ -336,7 +373,7 @@ impl IndexWriter {
             .sequence
             .checked_add(1)
             .context("index sequence overflow")?;
-        if let FtsPublication::Current { scope, .. } = publication {
+        if let Some(scope) = current_scope {
             let lexical_commit = plain_writer::lexical_commit(scope, next);
             schema::set_meta(
                 &transaction,

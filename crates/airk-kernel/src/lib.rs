@@ -117,6 +117,9 @@ pub struct Kernel {
     service_collection: Option<airk_store::service::collection::Collection>,
     service_selection: Option<Arc<airk_store::service::collection::Selection>>,
     service_freshness: Option<Arc<service_freshness::Cache>>,
+    lexical_audit: Arc<
+        std::sync::Mutex<airk_store::service::collection::integrity::LexicalAuditCursor>,
+    >,
     split_authority: Option<SplitKernelAuthority>,
     native_owner: Arc<
         std::sync::Mutex<
@@ -409,6 +412,7 @@ impl Kernel {
             service_collection,
             service_selection: None,
             service_freshness: None,
+            lexical_audit: Arc::default(),
             split_authority: None,
             native_owner: Arc::new(std::sync::Mutex::new(None)),
         };
@@ -469,6 +473,7 @@ impl Kernel {
             service_collection: Some(collection),
             service_selection: None,
             service_freshness: None,
+            lexical_audit: Arc::default(),
             split_authority: None,
             native_owner: Arc::new(std::sync::Mutex::new(None)),
         };

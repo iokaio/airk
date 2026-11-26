@@ -231,6 +231,16 @@ impl ProgressiveBase<'_> {
                 dimensions: self.dimensions,
             },
         )?;
+        if self.kernel.service_collection.is_some()
+            && let Ok(mut audit) = self.kernel.lexical_audit.try_lock()
+        {
+            audit.note_publication(result.commit.token, changes.iter().filter_map(|change| {
+                match change {
+                    ArtifactChange::Upsert(input) => Some(input.artifact.path.as_str()),
+                    ArtifactChange::Delete(_) => None,
+                }
+            }));
+        }
         self.published_any = true;
         self.current.changed_artifacts = self
             .current

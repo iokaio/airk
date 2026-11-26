@@ -127,7 +127,6 @@ pub(super) fn open_writer(path: &Path) -> Result<Connection> {
     open_writer_with_timeout(path, BUSY_TIMEOUT)
 }
 
-#[cfg(test)]
 pub(super) fn open_writer_nowait(path: &Path) -> Result<Connection> {
     open_writer_with_timeout(path, std::time::Duration::ZERO)
 }
@@ -168,6 +167,42 @@ pub(super) fn open_reader(path: &Path) -> Result<Connection> {
     connection.busy_timeout(BUSY_TIMEOUT)?;
     configure(&connection)?;
     Ok(connection)
+}
+
+pub(super) fn open_reader_nowait(path: &Path) -> Result<Connection> {
+    let connection = open_read_only(path)?;
+    connection.busy_timeout(std::time::Duration::ZERO)?;
+    check_format(&connection)?;
+    configure(&connection)?;
+    Ok(connection)
+}
+
+pub(super) fn require_meta_blob(
+    connection: &Connection,
+    key: &str,
+    limit: usize,
+) -> Result<Vec<u8>> {
+    use rusqlite::OptionalExtension;
+    connection
+        .query_row(
+            "SELECT value FROM meta WHERE key=?1 AND typeof(value)='blob' AND length(value)<=?2",
+            rusqlite::params![key, i64::try_from(limit)?],
+            |row| row.get(0),
+        )
+        .optional()?
+        .with_context(|| format!("missing, invalid or oversized repair metadata: {key}"))
+}
+
+pub(super) fn meta_blob_matches(
+    connection: &Connection,
+    key: &str,
+    expected: &[u8],
+) -> Result<bool> {
+    Ok(connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM meta WHERE key=?1 AND typeof(value)='blob' AND length(value)=length(?2) AND value=?2)",
+        rusqlite::params![key, expected],
+        |row| row.get(0),
+    )?)
 }
 
 pub(super) fn meta_integer(connection: &Connection, key: &str) -> Result<Option<i64>> {

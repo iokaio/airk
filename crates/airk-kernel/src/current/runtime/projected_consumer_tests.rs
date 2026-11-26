@@ -541,3 +541,247 @@ fn fresh_physical_verify_retires_uncertain_owner_and_preserves_old_reader_revoca
     kernel.settle_native_owner_after_owned_drain(&mut registry)?;
     Ok(())
 }
+
+#[cfg(windows)]
+#[test]
+fn automatic_verify_restores_missing_plain_fts_before_canonical_search() -> Result<()> {
+    use airk_core::{
+        DocumentLocation, SearchQuery,
+        identity::Incarnation,
+        service::{JobKind, JobOutcome, JobState, ProjectRegistration, WorkerIdentity},
+    };
+    use airk_store::{
+        index::DATABASE_FILE,
+        service::{ProjectLease, data_scope, registry::ServiceRegistry},
+    };
+    use rusqlite::{Connection, OpenFlags, params};
+    use sha2::{Digest, Sha256};
+    use std::{fs, sync::Arc};
+
+    const TARGET: &str = "target.txt";
+    const CONTROL: &str = "control.txt";
+    const TARGET_TEXT: &str = "repairneedle café 界";
+    const CONTROL_TEXT: &str = "controlneedle façade";
+    let temporary = crate::unlinked_tempdir()?;
+    let source = temporary.path().join("source");
+    let data = temporary.path().join("data");
+    let control = temporary.path().join("control");
+    fs::create_dir(&source)?;
+    fs::create_dir(&control)?;
+    controlled_private_directory(&data)?;
+    let source = source.canonicalize()?;
+    let data = data.canonicalize()?;
+    fs::write(source.join(TARGET), TARGET_TEXT)?;
+    fs::write(source.join(CONTROL), CONTROL_TEXT)?;
+
+    let namespace = Incarnation::from_bytes([211; 16]);
+    let registration = ProjectRegistration::new(
+        source.to_str().context("non-UTF8 fixture source")?.into(),
+        data.to_str().context("non-UTF8 fixture data")?.into(),
+        "fixture".into(),
+    )?;
+    let mut registry = ServiceRegistry::open(&control, namespace)?;
+    registry.register(&registration)?;
+    let bound = data_scope::bind(&data, &control, namespace)?;
+    let kernel = Kernel::open_service_collection(&source, Some(data), "fixture")?;
+    kernel.configure_vectors(false)?;
+    kernel.index()?;
+
+    let mut lease = ProjectLease::acquire(&control, registration.binding)?;
+    registry.admit_worker(&mut lease)?;
+    let lease = Arc::new(lease);
+    let worker = WorkerIdentity {
+        service: namespace,
+        worker: Incarnation::from_bytes([212; 16]),
+        project: registration.binding,
+        fencing_generation: lease.identity().1.context("worker epoch missing")?,
+    };
+    kernel.try_arm_native_owner(&mut registry, lease.clone(), &bound, worker)?;
+    let store = kernel
+        .service_collection
+        .as_ref()
+        .context("native fixture collection missing")?
+        .selected_store()?;
+    let database = store.directory().join(DATABASE_FILE);
+    let injected = Connection::open_with_flags(&database, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+    let target: i64 = injected.query_row(
+        "SELECT c.id FROM chunks c JOIN files f ON f.id=c.file_id WHERE f.path=?1 AND c.ordinal=0",
+        [TARGET],
+        |row| row.get(0),
+    )?;
+    let positive: i64 = injected.query_row(
+        "SELECT c.id FROM chunks c JOIN files f ON f.id=c.file_id WHERE f.path=?1 AND c.ordinal=0",
+        [CONTROL],
+        |row| row.get(0),
+    )?;
+    let fts_rows = |connection: &Connection| -> Result<(i64, i64)> {
+        Ok(connection.query_row(
+            "SELECT (SELECT count(*) FROM fts WHERE rowid=?1),
+                    (SELECT count(*) FROM fts WHERE rowid=?2)",
+            params![target, positive],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?)
+    };
+    assert_eq!(fts_rows(&injected)?, (1, 1));
+    let previous = store.plain_read()?.token();
+    assert_eq!(
+        injected.execute("DELETE FROM fts WHERE rowid=?1", [target])?,
+        1
+    );
+    assert_eq!(fts_rows(&injected)?, (0, 1));
+    drop(injected);
+
+    let pinned = store.plain_read()?;
+    assert_eq!(pinned.token(), previous);
+    let observed = kernel.current_reader()?;
+    assert_eq!(observed.token()?, previous);
+    // Advance only the scheduler's injected observation clock. The actual
+    // automatic cohort and worker fence are minted by the production registry.
+    const NOW: u64 = 1;
+    registry.observe_retained_audit_index(&lease, &observed, NOW, 64 << 20)?;
+    drop(observed);
+    let due = registry.due_automatic_audits(NOW, 8)?;
+    let [(project, revision)] = due.as_slice() else {
+        anyhow::bail!("expected one due automatic Verify: {due:?}");
+    };
+    assert_eq!(*project, registration.binding);
+    let job = registry.enqueue_automatic_audit(
+        *project,
+        *revision,
+        namespace,
+        Incarnation::from_bytes([213; 16]),
+        NOW,
+    )?;
+    assert_eq!(job.kind, JobKind::Verify);
+    registry
+        .claim_job_id(&lease, job.id)?
+        .context("automatic Verify was not claimed")?;
+    let cohort = registry
+        .automatic_audit_context(&lease, job.id)?
+        .context("automatic Verify cohort missing")?;
+    assert!(!cohort.manual());
+    let turn = kernel.verify_service_turn_inner(
+        &registry, &lease, &bound, job.id, 64 << 20, None, Some(NOW),
+    )?;
+    let proof = turn
+        .query_completed
+        .as_ref()
+        .context("automatic Verify did not produce its sealed completion")?;
+    registry.complete_automatic_audit(&lease, proof, NOW)?;
+    let settled = registry.job(job.id)?;
+    assert_eq!(settled.state, JobState::Succeeded);
+    assert!(matches!(
+        settled.outcome,
+        Some(JobOutcome::Succeeded { revision: Some(revision) }) if revision == proof.revision()
+    ));
+
+    // Prove publication and physical restoration before issuing any Search.
+    let repaired = store.plain_read()?.token();
+    assert_eq!(repaired.incarnation, previous.incarnation);
+    assert_eq!(repaired.sequence, previous.sequence + 1);
+    assert_eq!(repaired.sequence, proof.revision().generation);
+    assert_eq!(repaired.digest, proof.revision().revision);
+    assert_eq!(pinned.token(), previous);
+    let seen = kernel.current_reader()?;
+    registry.observe_retained_audit_index(&lease, &seen, NOW + 1, 64 << 20)?;
+    drop(seen);
+    assert!(registry.due_automatic_audits(NOW + 1, 8)?.is_empty());
+    let after = Connection::open_with_flags(&database, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    assert_eq!(fts_rows(&after)?, (1, 1));
+    drop(after);
+    drop(pinned);
+
+    let search = |literal: &str| {
+        kernel.search(&SearchQuery {
+            text: literal.into(),
+            path_prefix: None,
+            limit: 2,
+            max_bytes: 4096,
+        })
+    };
+    for (literal, path, text) in [
+        ("repairneedle", TARGET, TARGET_TEXT),
+        ("controlneedle", CONTROL, CONTROL_TEXT),
+    ] {
+        let reply = search(literal)?;
+        assert_eq!(reply.generation, repaired.sequence);
+        assert!(!reply.truncated);
+        let [hit] = reply.hits.as_slice() else {
+            anyhow::bail!("expected one canonical Search hit for {literal}");
+        };
+        assert!(!hit.truncated);
+        assert_eq!(hit.text, text);
+        assert_eq!(hit.citation.path, path);
+        assert_eq!(
+            hit.citation.content_hash,
+            format!("{:x}", Sha256::digest(text.as_bytes()))
+        );
+        assert_eq!(
+            hit.citation.location,
+            DocumentLocation::Lines { start: 1, end: 1 }
+        );
+        assert_eq!((hit.citation.start_line, hit.citation.end_line), (1, 1));
+        assert_eq!(fs::read(source.join(path))?, text.as_bytes());
+    }
+    let no_match = search("unmatchedneedle")?;
+    assert_eq!(no_match.generation, repaired.sequence);
+    assert!(!no_match.truncated);
+    assert!(no_match.hits.is_empty());
+    // With no new source publication and no queued recent paths, a later
+    // idle sweep must find the older missing row through the same lane.
+    let idle_time = proof
+        .observation()
+        .lexical_unix_ms
+        .checked_add(24 * 60 * 60 * 1000)
+        .context("idle audit clock overflow")?;
+    let damaged = Connection::open_with_flags(&database, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+    assert_eq!(
+        damaged.execute("DELETE FROM fts WHERE rowid=?1", [positive])?,
+        1
+    );
+    assert_eq!(fts_rows(&damaged)?, (1, 0));
+    drop(damaged);
+    assert_eq!(store.plain_read()?.token(), repaired);
+    let due = registry.due_automatic_audits(idle_time, 8)?;
+    let [(idle_project, idle_revision)] = due.as_slice() else {
+        anyhow::bail!("expected one due idle Verify: {due:?}");
+    };
+    assert_eq!(*idle_project, registration.binding);
+    let idle_job = registry.enqueue_automatic_audit(
+        *idle_project,
+        *idle_revision,
+        namespace,
+        Incarnation::from_bytes([214; 16]),
+        idle_time,
+    )?;
+    registry
+        .claim_job_id(&lease, idle_job.id)?
+        .context("idle Verify was not claimed")?;
+    let turn = kernel.verify_service_turn_inner(
+        &registry, &lease, &bound, idle_job.id, 64 << 20, None, Some(idle_time),
+    )?;
+    let idle_proof = turn
+        .query_completed
+        .as_ref()
+        .context("idle Verify did not produce its sealed completion")?;
+    registry.complete_automatic_audit(&lease, idle_proof, idle_time)?;
+    let idle_token = store.plain_read()?.token();
+    assert_eq!(idle_token.sequence, repaired.sequence + 1);
+    assert_eq!(idle_token.digest, idle_proof.revision().revision);
+    let after = Connection::open_with_flags(&database, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    assert_eq!(fts_rows(&after)?, (1, 1));
+    drop(after);
+    let reply = search("controlneedle")?;
+    assert_eq!(reply.generation, idle_token.sequence);
+    assert!(!reply.truncated);
+    let [hit] = reply.hits.as_slice() else {
+        anyhow::bail!("expected one canonical Search hit after idle Verify");
+    };
+    assert_eq!(
+        (hit.citation.path.as_str(), hit.text.as_str()),
+        (CONTROL, CONTROL_TEXT)
+    );
+    assert!(registry.recorded_integrity_damage(&lease)?.is_empty());
+    kernel.settle_native_owner_after_owned_drain(&mut registry)?;
+    Ok(())
+}

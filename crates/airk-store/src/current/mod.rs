@@ -12,6 +12,7 @@ pub mod graph;
 mod journal;
 pub mod legacy_retirement;
 pub mod lexical;
+pub(crate) mod lexical_repair;
 pub mod maintenance;
 pub mod map;
 pub mod metadata;

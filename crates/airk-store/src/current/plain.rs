@@ -117,7 +117,11 @@ fn stored_scope(index: &IndexReader) -> Result<CurrentScope> {
     let bytes = index
         .meta(SCOPE_KEY)?
         .context("index scope missing; rebuild the index")?;
-    let scope: CurrentScope = serde_json::from_slice(&bytes)?;
+    decode_stored_scope(&bytes)
+}
+
+pub(super) fn decode_stored_scope(bytes: &[u8]) -> Result<CurrentScope> {
+    let scope: CurrentScope = serde_json::from_slice(bytes)?;
     scope.validate()?;
     ensure!(
         serde_json::to_vec(&scope)? == bytes,

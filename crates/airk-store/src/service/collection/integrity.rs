@@ -6,6 +6,8 @@ pub mod native_owner;
 use crate::service::{ProjectLease, data_scope::BoundDataRoot, registry::ServiceRegistry};
 
 pub mod census;
+mod lexical_repair;
+pub use lexical_repair::LexicalAuditCursor;
 pub mod verify;
 
 const RECEIPT: &str = "integrity-observation.json";

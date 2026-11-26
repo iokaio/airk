@@ -205,7 +205,7 @@ impl IntegrityOwner<'_> {
             head,
         })
     }
-    fn native_no_damage(&self, head: &CurrentHead, recovery: bool) -> Result<()> {
+    pub(super) fn native_no_damage(&self, head: &CurrentHead, recovery: bool) -> Result<()> {
         let fence = self.check()?;
         ensure!(
             !self.bound.native_integrity_revoked(),

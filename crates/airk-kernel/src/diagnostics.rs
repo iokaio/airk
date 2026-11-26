@@ -316,7 +316,7 @@ impl Kernel {
         job: airk_core::identity::Sha256Digest,
         max_bytes: u64,
     ) -> Result<airk_store::service::collection::integrity::verify::VerifyTurn> {
-        self.verify_service_turn_inner(registry, lease, bound, job, max_bytes, None)
+        self.verify_service_turn_inner(registry, lease, bound, job, max_bytes, None, None)
     }
 
     pub fn begin_service_native_recovery(
@@ -358,11 +358,11 @@ impl Kernel {
         epoch: &airk_store::service::collection::integrity::verify::RecoveryEpoch,
         max_bytes: u64,
     ) -> Result<airk_store::service::collection::integrity::verify::VerifyTurn> {
-        self.verify_service_turn_inner(registry, lease, bound, epoch.job(), max_bytes, Some(epoch))
+        self.verify_service_turn_inner(registry, lease, bound, epoch.job(), max_bytes, Some(epoch), None)
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn verify_service_turn_inner(
+    pub(crate) fn verify_service_turn_inner(
         &self,
         registry: &airk_store::service::registry::ServiceRegistry,
         lease: &airk_store::service::ProjectLease,
@@ -370,6 +370,7 @@ impl Kernel {
         job: airk_core::identity::Sha256Digest,
         max_bytes: u64,
         recovery: Option<&airk_store::service::collection::integrity::verify::RecoveryEpoch>,
+        observed_ms: Option<u64>,
     ) -> Result<airk_store::service::collection::integrity::verify::VerifyTurn> {
         ensure!(
             (64 << 20..=512 << 20).contains(&max_bytes),
@@ -380,6 +381,21 @@ impl Kernel {
             .as_ref()
             .context("Verify requires service collection")?;
         let owner = collection.integrity_owner(registry, lease, bound)?;
+        let automatic = if recovery.is_none() {
+            registry.automatic_audit_context(lease, job)?
+        } else {
+            None
+        };
+        if let Some(context) = automatic.as_ref()
+            && let Ok(mut cursor) = self.lexical_audit.try_lock()
+        {
+            owner.check_automatic_lexical_turn(
+                context,
+                &mut cursor,
+                |read| self.attach_source_policy_read(read),
+                crate::service_execution::checkpoint,
+            )?;
+        }
         let selected = collection.selected_store()?;
         let mut writer = selected.lock()?;
         {
@@ -395,10 +411,13 @@ impl Kernel {
                 owner.anchor(&read)?;
             }
         }
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_millis()
-            .try_into()?;
+        let now = match observed_ms {
+            Some(value) => value,
+            None => std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_millis()
+                .try_into()?,
+        };
         let mut turn = if let Some(epoch) = recovery {
             owner.verify_recovery_turn(
                 &mut writer,
@@ -408,7 +427,7 @@ impl Kernel {
                 now,
                 crate::service_execution::checkpoint,
             )?
-        } else if let Some(context) = registry.automatic_audit_context(lease, job)? {
+        } else if let Some(context) = automatic {
             owner.verify_automatic_turn(
                 &mut writer,
                 &context,

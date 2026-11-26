@@ -175,32 +175,34 @@ the next Store sequence. Existing readers keep their snapshots. The proof
 does not bound SQLite sync latency or exercise service diagnosis, admission,
 Current publication authority, or request replay.
 
-## Private Current publication proof
+## Restricted Current lexical repair
 
-The Store transaction also has a test-only Current caller. A permit captured
-under the checked collection writer binds the native directory, Current token,
-scope, applied collection-state bytes, old lexical commit and saved-settings
-digest. The writer rechecks saved settings under that same native lock. The
-transaction rechecks the committed sequence, scope, applied state and old
-lexical commit.
+The Current owner can restore one completely absent FTS row through a
+crate-private transaction. A permit captured under the checked collection
+writer binds the native directory, Current token, scope, applied collection
+state, old lexical commit and saved-settings digest. Capture uses a zero-wait
+read transaction. It limits the scope and state to 256 KiB each and requires
+an exact 32-byte lexical commit. The writer rechecks saved settings under the
+same native lock. The repair transaction checks committed sequence and exact
+scope, state and old lexical commit before binding any candidate chunk.
 
 The Current witness binds the retained extraction JSON digest separately from
 the original source hash. The transaction limits payload and compact record
 reads to 32 KiB, checks retained JSON bytes against their digest, and uses the
 Current reader's extraction binding and the ordinary writer's chunk mapping.
-The initial proof admits UTF-8 source only and also hashes the retained
-original source bytes. The chunk ordinal, stable identity, citation, and
-canonical terms must agree with the proposal.
+It admits UTF-8 source only and hashes the retained original source bytes.
+The chunk ordinal, stable identity, citation and canonical terms must agree
+with the proposal.
 
-The same three lexical witnesses run against the transaction before and
-after insertion. A successful transaction advances the Store sequence and
-writes the Current lexical commit calculated for that sequence. The reader
-proof publishes the original data through the ordinary Current writer, omits
-one complete FTS row, and verifies native lexical search and retained citation
-on the new publication. Earlier readers retain their snapshots and the
-existing vector generation remains readable. This proof does not qualify a
-service repair permit, hard deadline, trigger, or scheduler.
-
+The same three lexical witnesses run against the ordinary Store query before
+and after insertion. The repair opens its own zero-wait SQLite writer without
+the normal writer's vector retirement step. SQLite progress checks use the
+repair deadline. Cancellation is rechecked at transaction boundaries and
+before commit. Full synchronous durability still applies. A successful
+transaction advances the Store sequence and writes the Current lexical commit
+calculated for that sequence. Earlier readers retain their snapshots and the
+existing vector generation remains readable. Foreground time guarantees
+require separate qualification because SQLite sync latency is not bounded here.
 
 ## Not yet
 
