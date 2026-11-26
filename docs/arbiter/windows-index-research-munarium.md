@@ -58,6 +58,12 @@ control was retained and its held-out cases remain unqueried.
 
 The authenticated Munarium export has no DOCX, PDF, XLSX or PPTX
 source paths. Its 33 plain-text native reads establish the measured
-line-range evidence. The CPU-query versus CUDA-vector and separate
-writer-route checks remain open. The Windows OpenAI baseline and
-improvement rounds are pending.
+line-range evidence.
+
+An exact 614-byte retained Rust test unit reproduced its committed
+embedding key. Its stored coordinates agreed with the independent
+native CPU and CUDA embeddings within tolerance. The sample comes from
+the earlier closed matrix with recorded CUDA writer activity.
+Historical per-row route metadata is unavailable. The Windows OpenAI
+baseline and improvement rounds are pending.
+[Committed-row fidelity](../simplify/one-process-ledger.md#25-november-2026--native-cross-route-embeddings-and-committed-row-checks)

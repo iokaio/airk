@@ -63,6 +63,14 @@ retained and its held-out cases remain unqueried.
 
 The independent OOXML check anchored all 30 full retained DOCX hits
 across 12 source documents, including 28 original paragraph blocks
-and two table rows. The CPU-query versus CUDA-vector and separate
-writer-route checks remain open. The Windows OpenAI baseline and
-improvement rounds are pending.
+and two table rows.
+
+The independent CPU/CUDA rank comparison returned the same ordered
+top 40 for the frozen C1 query on both the earlier closed matrix
+and the retained development matrix. Each comparison scored 156,255
+live rows. The exact 45-byte sampled source unit reproduced its
+committed embedding key. Its stored coordinates agreed with both
+native model routes within tolerance. Historical per-row route
+metadata is unavailable. The Windows OpenAI baseline and improvement
+rounds are pending.
+[Closed-matrix proof](../simplify/one-process-ledger.md#25-november-2026--native-cross-route-embeddings-and-committed-row-checks)

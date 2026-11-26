@@ -936,3 +936,9 @@ closed_matrix_cross_route.py compare with the same case, the native
 probe receipt hash, the closed writer handle and its matrix SHA-256.
 The comparator uses independent double-precision dots over live
 committed rows. Its rank agreement describes the selected closed matrix.
+
+For a single-member stored vector, audit_committed_vector.py authenticates
+its source span, committed key and physical row in the closed publication.
+Use prepare to write only the exact query input, keep original bytes and
+newlines, and run the same native probe. Use compare to report actual
+coordinate agreement under the retained numeric tolerance for both routes.

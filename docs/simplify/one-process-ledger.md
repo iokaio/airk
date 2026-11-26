@@ -20431,3 +20431,79 @@ fbbc76cd5cd426629e062a71b13a90b76db57052c30911d4a9f13ec384ef8b26.
 Scoped Inference test Clippy passed on the warm Windows target.
 Execution receipt SHA-256 is d7978d3fef5e2f62c4b8e17d7b364f71e64d3e4eca436c49be37d6a0627cbe03. The native query run and
 closed-matrix measurement remain to run.
+
+### 25 November 2026 — Native cross-route embeddings and committed-row checks
+
+Built the signed Inference probe from cdee7e74 in 105.09 s on the warm
+Windows target with incremental enabled. It audited 1,259 changed
+outputs. The build receipt SHA-256 is
+3d069b35b13fc4e2ffe59958572ef5a1ba7c2c30a1f3b18beaa7e7c51582ca288.
+The staged native test SHA-256 is
+4e9e774c7f5bdd8f83527a78f7e114e8e7a7ecb053f7e1d0797fedae0224e1e4.
+
+The frozen Bookbuilder C1 query ran through the canonical CPU MiniLM and
+the admitted strict native CUDA path using the same model assets. The
+384 coordinates passed the existing tolerance, with maximum difference
+0.0001922734 and dot product 0.9999994451. Exact placement was
+3761c7dc65d393a8ac2593b87578fe2bb7a2d714318aad902de2577ec4878801.
+The native probe passed one selected test with 255 filtered in 5.89 s.
+Output SHA-256 is
+da1071e57d28add625b6864fa2f176cd0b6415b931f4bc3b40ca3533218e02a1.
+
+The independent double-precision comparator scored 156,255 live rows
+on each closed Bookbuilder matrix. The CPU and CUDA query vectors gave
+the same ordered top 40 on the historically CUDA-observed writer
+publication and on the retained development control. The maximum row
+score differences were 0.0003148543 and 0.0003149001 respectively.
+The exact comparison receipt SHA-256s are
+d70cd6ae0a74a918b1708fee8375f8bc87c27178a93f49d438e275b63635ed4b
+and c46036f2d9d437a174f39e14c6873eab5302f0beaa0206c80777f9f6ad505d57.
+
+A second independent chain reproduced two committed embedding keys
+from original source bytes, retained member spans and pipeline identity.
+The 45-byte Bookbuilder documentation sample preserves its final CRLF.
+The 614-byte Munarium sample is Rust test code. Each was recomputed
+through the actual native CPU and strict CUDA routes and compared with
+its authenticated existing f32 matrix row.
+
+| Repository | CPU maximum delta / dot | CUDA maximum delta / dot |
+| --- | ---: | ---: |
+| Bookbuilder | 0.0001794063 / 0.9999994126 | 0.0001573600 / 0.9999995507 |
+| Munarium | 0.0001715720 / 0.9999994519 | 0.0001359480 / 0.9999996705 |
+
+Both routes agreed with both retained samples under the admitted 0.005
+coordinate and 0.9995 dot thresholds. Neither route was bit-identical
+to the stored row. Each native row probe passed one selected test with
+255 filtered. Native times were 5.38 s and 5.75 s. The stored-row
+comparison receipt SHA-256s are
+b62d6cb0b74fce0f009b090ef503266b4d2ea43ec29506ef15bad32fd0427177
+and a9ec71ee99ec7fe97873ef3adf88c47249eadc2a3a76dc44869a11d39c473ea1.
+
+These checks used closed authenticated matrices and wrote no index
+records. An actual historical CUDA embedding observation applies to
+the earlier build. Persisted rows do not record each operator route.
+The closed comparison establishes rank and numerical agreement for
+the exercised cases. The live matched service CUDA-query measurement
+remains unavailable from the attempted lifetimes.
+
+The duplicate test binary was removed after the native processes
+settled. Cleanup recovered 230,479,872 bytes and left
+1,087,412,678,656 bytes free on D:. Cleanup receipt SHA-256 is
+2161d87931571e44bc94a2137588db2a90479e02951594a20bd8442fe27a79be.
+
+### 25 November 2026 — Retained development index and Search control
+
+The remaining unclassified source paths do not include any of the 55
+Bookbuilder or 53 Munarium accepted evidence paths in the frozen target
+roster. This is a bounded finding for these development cases. The
+captured queries, retained source anchors and sampled vector checks
+found no material source-fidelity mismatch in their measured scope.
+Keep the original Search comparison policy and both settled
+publications. The separate held-out inputs remain unqueried. Record
+the seven unclassified Bookbuilder paths, the live service CUDA-query
+admission limit and the historical per-row attribution gap.
+
+Private disposition SHA-256 is 0d4cc7bd114ca43e39bc49d3c473f34ba2625a59b53229094446fb582d9be3af. The next executable work is
+the autonomous index repair phase on isolated disposable fixtures.
+The Windows complete-evidence and judged series still require a
+qualified exact-tool Codex runner.
