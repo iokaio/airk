@@ -21655,3 +21655,42 @@ baseline remains paused at the Windows review.
   - Coverage: the whole passage outranked its partial and neighbouring passages in 104 of 113 groups. As an absolute judgment it is weak: 50% of the incomplete candidates still scored above 0.5.
 - Weights loaded at 4 bits through bitsandbytes NF4 (`nf4.json`, SHA-256 `bb4278a2510e3a488a39b83882d289d1c96a57ad3dd75dabb24b484d4cd22f89`): 78.4 s, peak 8.7 GB. The top candidate matched FP16 in 12 of 20 passage groups, 15 of 20 action groups and 109 of 113 coverage groups, with a mean first-five overlap of 0.85 for passages and actions. NF4 is uncalibrated and is not the delivered quantization.
 - Reading, as Claude's judgment. With no training and the whole task as the query, the published checkpoint separates the essential passages from the loop's own distractors only modestly, and least in Bookbuilder. Coverage ranks well and cannot yet be used as a stopping threshold, which supports the plan's safeguard. Uncalibrated 4-bit weights do not keep the ranking. None of the plan's first tests is passed outright. Next: repeat with one query per need in place of the whole task, and with a calibrated 4-bit method, before deciding what training is needed.
+
+### 26 November 2026 — Six follow-ups on the published Qwen3-Reranker-4B
+
+- The user asked for the two follow-ups and up to four more before the plan moves on. All ran on the RTX A6000 through the same PyTorch probe, on the same 20 cases and candidates as the first probe. The probe gained several queries per group, block-wise weight rounding expanded to FP16, and AIRK's one-pass roster form. The case builder gained query modes, longer read descriptions, the publisher's instruction and roster groups. The report gained a separation measure (AUC, the chance a right candidate outscores a wrong one). Sixteen unit tests pass under the private environment, and 15 pass with one skipped where torch is absent. Private inputs and results are in `answer-eval-r1/arbiter-single-stage/pair-probe-r2`.
+- FP16 results. "First five" counts the 113 required passages that rank in the first five places of their case; about 26 is chance.
+
+| Run | Passage: right first | Passage: in first five | Passage AUC | Action: right first | Action: in first five |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Whole task as the query (first probe) | 9 of 20 | 40 | 0.59 | 8 of 20 | 35 |
+| 1. Task cut into clauses by a fixed rule | 15 of 20 | 46 | 0.60 | 10 of 20 | 38 |
+| 1. Evaluator's statement of each need (upper bound) | 20 of 20 | 92 | 0.98 | 19 of 20 | 71 |
+| 4. Publisher's default instruction | 10 of 20 | 39 | 0.59 | 8 of 20 | 35 |
+| 6. Read described with 12 lines in place of 3 | 9 of 20 | 40 | 0.59 | 11 of 20 | 39 |
+
+- 1, the query. Cutting the task into clauses helps a little. Stating the need lifts the required passages in the first five from 40 to 92 of 113, with Bookbuilder at 48 of 61. The model recognizes the right passage when it is told what is needed. It cannot work that out from the task. The upper bound uses the reference notes' own wording, which no product prompt may use.
+- 2, 4-bit weights. Linear weights were rounded in blocks of 32 inputs with a scale and zero point per block and expanded to FP16, which stands in for the plan's first build. The packed form would be about 3.05 GB at 4 bits and 4.86 GB at 8 bits, with 388 million embedding and normalization parameters kept in FP16. On whole-task queries the top candidate matched FP16 in 13 of 20 passage cases at 4 bits, 15 of 20 with a per-block range search, and 19 of 20 at 8 bits, where no score moved by more than 0.05. On the need-stated queries the 4-bit build with range search kept the result: 20 of 20 right first and 91 of 113 in the first five against 92. Its top candidate differed in 6 cases, each time between right candidates. So 4 bits changes close calls and keeps clear ones, and 8 bits is close to FP16 throughout.
+- 3, thresholds. For coverage the whole passage ranks first in 104 of 113 groups and the AUC is 0.90, but 50% of incomplete candidates score above 0.5. A stopping threshold would need calibration, and no fixed 0.5 cut is usable.
+- 4, instruction wording. The publisher's default instruction and the task-specific one gave the same result within one case.
+- 5, scoring form. With eight options and one right, the one-pass roster put the right option first in 6 of 20 cases and the same options as pairs in 4 of 20. Chance is 2.5. Twenty rosters and 160 pairs took 10 seconds together. Neither form works untrained with the whole task as the question, and the roster is no worse.
+- 6, read descriptions. Twelve lines in place of three moved the right read to first place in 11 of 20 cases from 8.
+- Speed and memory at FP16: 0.04 to 0.06 seconds a pair at up to 2,048 tokens, peak 13.9 to 14.8 GB at batch 8. The peak is PyTorch's at that batch and is not a measure of an AIRK export.
+- Reading, as Claude's judgment. The checkpoint is a capable judge and the missing piece is the statement of each need. Wording of the instruction, the scoring form and the description length matter little by comparison. This bears on the plan's check that a judge is enough: either the kernel must derive much better need statements than clause cutting gives, or a model must write them. An 8-bit build is safe now, and a 4-bit build needs a better rounding method or acceptance on outcomes, not on identical order.
+
+### 26 November 2026 — Needs written by a calling agent from the prompt alone
+
+- The user asked whether the tool's parameters and description could have the calling agent supply the need statements, and to measure it. A fresh Claude subagent was given only the 20 task texts and a draft `gather_context(task, needs, anchors, deliverable)` description. It reported reading that one file and nothing else, with no search, web or AIRK tool. It wrote 6 to 8 needs per task, 7.3 on average, plus exact anchors copied from each task. Claude did not write the needs, because it has read some reference notes.
+- The case builder gained `--query-mode needs --needs <file>`. Each candidate is scored against every need and keeps its highest score. Seventeen unit tests pass, one skipped where torch is absent. Private inputs and results are in `answer-eval-r1/arbiter-single-stage/pair-probe-r3`: `prompts.json`, `caller-needs.json`, `pairs-needs.json` and `fp16-needs.json`.
+- FP16 result on the same candidates as before, 6,649 pairs in 237 s:
+
+| Query | Passage: right first | Passage: in first five of 113 | Passage AUC | Action: right first | Action: in first five |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Whole task | 9 of 20 | 40 | 0.59 | 8 of 20 | 35 |
+| Clauses by a fixed rule | 15 of 20 | 46 | 0.60 | 10 of 20 | 38 |
+| Needs written by a calling agent | 17 of 20 | 56 | 0.73 | 12 of 20 | 45 |
+| Evaluator's statement of each need (upper bound) | 20 of 20 | 92 | 0.98 | 19 of 20 | 71 |
+
+- By repository, the agent-written needs put 27 of 52 Munarium and 29 of 61 Bookbuilder required passages in the first five. Bookbuilder gained most, from 16.
+- Reading, as Claude's judgment. Needs written before the agent has seen the repository close about a third of the gap between the whole task and the upper bound. The rest depends on vocabulary and facts only the repository holds, which a second call can use. One agent session wrote all the needs, so this is a single sample. Adding optional inputs to the public call needs the user's contract decision.
+- The user then decided the design ("Yes, one call"): Gather Context stays one tool, takes optional `needs`, `anchors`, `deliverable` and `known` beside the required `task`, runs each need as its own parallel job and unions the results by need. A separate tool for establishing needs was considered and not adopted. The [combined strategy](../arbiter/retrieval-strategy-combined.md#windows-cuda-model-comparison-and-iteration) records the design. The public call shape still has to be recorded in its owning contract before any code changes it.

@@ -45,6 +45,34 @@ def recall(groups: list[dict]) -> dict:
     return table
 
 
+def separation(groups: list[dict]) -> dict:
+    """Per use: how well one threshold could split right from wrong scores across all groups. ``auc`` is the
+    chance that a right candidate scores above a wrong one, counting ties as half. The two shares say how
+    many right and wrong candidates score above 0.5."""
+    table: dict[str, dict] = {}
+    for group in groups:
+        row = table.setdefault(group["use"], {"right_scores": [], "wrong_scores": []})
+        for candidate in group["candidates"]:
+            row["right_scores" if candidate["label"] else "wrong_scores"].append(candidate["score"])
+    for row in table.values():
+        right, wrong = row.pop("right_scores"), sorted(row.pop("wrong_scores"))
+        wins = 0.0
+        for value in right:
+            below = _count_below(wrong, value)
+            ties = _count_below(wrong, value, inclusive=True) - below
+            wins += below + ties / 2
+        row["right"], row["wrong"] = len(right), len(wrong)
+        row["auc"] = round(wins / (len(right) * len(wrong)), 4) if right and wrong else None
+        row["right_above_half"] = round(sum(v > 0.5 for v in right) / len(right), 4) if right else None
+        row["wrong_above_half"] = round(sum(v > 0.5 for v in wrong) / len(wrong), 4) if wrong else None
+    return table
+
+
+def _count_below(ordered_values: list[float], value: float, inclusive: bool = False) -> int:
+    import bisect
+    return bisect.bisect_right(ordered_values, value) if inclusive else bisect.bisect_left(ordered_values, value)
+
+
 def coverage_losses(groups: list[dict]) -> dict:
     """Which wrong candidate outranked the whole passage in coverage groups."""
     losses = {"groups": 0, "whole_first": 0, "first-part": 0, "other-note": 0}
@@ -86,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--other", type=pathlib.Path)
     args = parser.parse_args(argv)
     first = json.loads(args.result.read_text(encoding="utf-8"))["groups"]
-    report = {"recall": recall(first), "coverage": coverage_losses(first)}
+    report = {"recall": recall(first), "coverage": coverage_losses(first), "separation": separation(first)}
     if args.other is not None:
         second = json.loads(args.other.read_text(encoding="utf-8"))["groups"]
         report["other_recall"] = recall(second)

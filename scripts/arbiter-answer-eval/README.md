@@ -1195,6 +1195,21 @@ and says nothing about an AIRK export. `--precision 4bit` loads the weights
 through bitsandbytes NF4, which approximates a 4-bit build and is not the
 delivered quantization.
 
+Variants. `arbiter_probe_cases.py --query-mode clauses` cuts the task into
+clauses by a fixed rule and scores each candidate against every clause,
+keeping the highest score. `--query-mode fact` uses the evaluator's own
+statement of each need and is an upper bound that no product prompt may
+use. `--head-lines` sets how many lines describe a read,
+`--publisher-instruction` uses the publisher's default instruction for
+passages, and `--roster` builds AIRK's one-pass choice among eight options
+together with the same options as pairs. `arbiter_pair_probe.py --precision
+block` rounds every linear weight in blocks (`--bits`, `--block`,
+`--clip-search`) and expands it to FP16 before the run, which stands in for
+block-wise weight storage expanded at load. It accepts several `--pairs`
+files with one `--output` each on a single model load.
+`arbiter_pair_report.py --result <file> --other <file>` reports recall in
+the first places, a separation measure and the agreement of two results.
+
 Run it from a private virtual environment that holds `torch`, `transformers`,
 `accelerate` and `bitsandbytes`. Keep that environment, the downloaded
 checkpoint, the pairs and the results in the private campaign folder. Both

@@ -100,7 +100,95 @@ class CaseBuilderTest(unittest.TestCase):
             self.assertEqual(cases.build_case("demo-C1", scenario, {"records": []}, source), [])
 
 
+class VariantTest(unittest.TestCase):
+    def test_clauses_cut_at_fixed_marks_and_join_short_pieces(self):
+        task = "Raise the cap from 500 to 1,000 files. Update every place that enforces it, and leave it."
+        self.assertEqual(cases.clauses(task), ["Raise the cap from 500 to 1,000 files.",
+                                               "Update every place that enforces it leave it."])
+        self.assertEqual(cases.clauses("Fix it"), ["Fix it"])
+
+    def test_several_queries_or_one_and_roster_limits(self):
+        row = {"id": "a", "use": "passage", "instruction": "i", "queries": ["q1", "q2"],
+               "candidates": [{"id": "r", "text": "t", "label": 1}, {"id": "w", "text": "t", "label": 0}]}
+        self.assertEqual(probe.queries_of(probe.validate({"groups": [row]})[0]), ["q1", "q2"])
+        for broken in (dict(row, query="q"), dict(row, queries=[]), dict(row, form="roster"),
+                       dict(row, form="other")):
+            with self.assertRaises(ValueError):
+                probe.validate({"groups": [broken]})
+        nine = [{"id": str(n), "text": "t", "label": int(n == 0)} for n in range(9)]
+        with self.assertRaises(ValueError):
+            probe.validate({"groups": [{"id": "a", "use": "roster", "form": "roster", "instruction": "i",
+                                        "query": "q", "candidates": nine}]})
+
+    def test_caller_needs_become_the_queries_and_must_be_present(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source = pathlib.Path(folder)
+            (source / "a.rs").write_text("\n".join(f"line {n}" for n in range(1, 30)), "utf-8")
+            scenario = {"instruction": "the task", "notes": [
+                {"id": "N1", "mark": "essential", "path": "a.rs", "lines": [5, 14], "fact": "the evaluator's fact"}]}
+            reply = {"records": [{"operation": "search", "arguments": {}, "canonical_result": {"hits": [
+                {"citation": {"path": "docs/g.md", "start_line": 1, "end_line": 9},
+                 "text": "unrelated delivered text " * 6}]}}]}
+            groups = cases.build_case("demo-C1", scenario, reply, source, query_mode="needs",
+                                      caller_needs=["need one", "need two"])
+            with self.assertRaises(ValueError):
+                cases.build_case("demo-C1", scenario, reply, source, query_mode="needs")
+        by_use = {item["use"]: item for item in groups}
+        self.assertEqual(by_use["passage"]["queries"], ["need one", "need two"])
+        self.assertEqual(by_use["action"]["queries"], ["need one", "need two"])
+        self.assertNotIn("query", by_use["passage"])
+        # Coverage still tests the evaluator's statement and is unchanged by the caller's needs.
+        self.assertEqual(by_use["coverage"]["query"], "the evaluator's fact")
+
+    def test_the_roster_text_follows_the_airk_compiler_layout(self):
+        text = probe.roster_text("state", "question", [("N1", "first"), ("w0", "second")])
+        self.assertIn('State:\n"state"\nQuestion:\n"question"\nOptions:\nA = "N1": "first"\nB = "w0": "second"\n'
+                      "Choose one option symbol:", text)
+        self.assertTrue(text.startswith("<|im_start|>system\nSelect exactly one listed option"))
+        self.assertTrue(text.endswith("<|im_start|>assistant\n<think>\n\n</think>\n\n"))
+
+    def test_roster_groups_hold_one_right_option_and_a_pair_twin(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source = pathlib.Path(folder)
+            (source / "a.rs").write_text("\n".join(f"line {n}" for n in range(1, 30)), "utf-8")
+            scenario = {"instruction": "t", "notes": [
+                {"id": "N1", "mark": "essential", "path": "a.rs", "lines": [5, 14], "fact": "f"}]}
+            hits = [{"citation": {"path": f"docs/{n}.md", "start_line": 1, "end_line": 9},
+                     "text": "unrelated delivered text " * 6} for n in range(12)]
+            reply = {"records": [{"operation": "search", "arguments": {}, "canonical_result": {"hits": hits}}]}
+            groups = cases.build_case("demo-C1", scenario, reply, source, roster=True)
+        self.assertEqual([item["use"] for item in groups], ["roster", "roster_as_pairs"])
+        self.assertEqual(len(groups[0]["candidates"]), 8)
+        self.assertEqual(sum(option["label"] for option in groups[0]["candidates"]), 1)
+        self.assertEqual([o["id"] for o in groups[0]["candidates"]], [o["id"] for o in groups[1]["candidates"]])
+
+    def test_block_rounding_is_exact_at_many_bits_and_bounded_at_four(self):
+        try:
+            import torch
+        except ImportError:
+            self.skipTest("torch is not installed in this interpreter")
+        torch.manual_seed(0)
+        weight = torch.randn(6, 70)
+        self.assertLess((probe.quantize_blocks(weight, 16, 32, False) - weight).abs().max().item(), 1e-3)
+        plain = (probe.quantize_blocks(weight, 4, 32, False) - weight).pow(2).sum().item()
+        searched = (probe.quantize_blocks(weight, 4, 32, True) - weight).pow(2).sum().item()
+        self.assertLessEqual(searched, plain)
+        step = (weight[:, :32].amax(dim=1) - weight[:, :32].amin(dim=1)) / 15
+        error = (probe.quantize_blocks(weight, 4, 32, False)[:, :32] - weight[:, :32]).abs().amax(dim=1)
+        self.assertTrue(bool((error <= step / 2 + 1e-5).all()))
+        self.assertEqual(probe.quantize_blocks(weight, 4, 32, False).shape, weight.shape)
+
+
 class ReportTest(unittest.TestCase):
+    def test_separation_is_the_chance_a_right_score_beats_a_wrong_one(self):
+        import arbiter_pair_report as report
+        groups = [group("a-C1/passage", "passage", [("r1", 1, 0.9), ("r2", 1, 0.3), ("w1", 0, 0.5), ("w2", 0, 0.3)])]
+        row = report.separation(groups)["passage"]
+        self.assertEqual((row["right"], row["wrong"]), (2, 2))
+        self.assertEqual(row["auc"], round((1 + 1 + 0 + 0.5) / 4, 4))
+        self.assertEqual(row["wrong_above_half"], 0.0)
+        self.assertEqual(row["right_above_half"], 0.5)
+
     def test_recall_counts_right_candidates_in_the_first_places(self):
         import arbiter_pair_report as report
         groups = [group("alpha-C1/passage", "passage",
