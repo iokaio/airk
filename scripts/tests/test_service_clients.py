@@ -997,6 +997,53 @@ class ServiceClientTests(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError,"duplicates differ"):
             CLIENTS.answer_packet(envelope)
 
+    def test_budget_probe_requires_a_terminal_partial_with_evidence_read_work(self):
+        packet = {"schema": "airk.arbiter.context/3", "partial": {"reason": "budget"},
+                  "ticket": None, "work": {"calls": 1}}
+
+        def envelope(body):
+            return {"content": [{"type": "text", "text": json.dumps(body)}], "structuredContent": body}
+
+        CLIENTS.assert_answer_budget_partial(envelope(packet), 1)
+        combined = {"schema": "airk.combined-read/1", "context": {"schema": "airk.combined-context/2"},
+                    "members": [{"result": envelope(packet)}]}
+        CLIENTS.assert_answer_budget_partial(envelope(combined), 1)
+        for changed, message in (
+                ({"ticket": {"id": "queued"}}, "queued ticket"),
+                ({"partial": {"reason": "deadline"}}, "deadline"),
+                ({"work": {"calls": 2}}, "exhaust its call allowance")):
+            with self.subTest(changed=changed), self.assertRaisesRegex(AssertionError, message):
+                CLIENTS.assert_answer_budget_partial(envelope({**packet, **changed}), 1)
+
+    def test_malformed_continuation_refusal_compares_full_typed_envelopes(self):
+        arguments = {"continuation": "not-a-sha256", "index_ids": ["index-a", "index-b"]}
+        body = {"error": {"code": "invalid_native_arguments", "query_submitted": False,
+                          "retryable": False, "query_replay_safe": False},
+                "requested_scope": {"confirmed": False, "selection": {
+                    "open_scope": {"index_ids": ["index-a", "index-b"]}, "scope_identity": "scope"}}}
+
+        def envelope(payload):
+            return {"content": [{"type": "text", "text": json.dumps(payload)}],
+                    "structuredContent": payload, "isError": True}
+
+        cli = {**envelope(body), "resultType": "complete"}
+        mcp = envelope(body)
+        proof = CLIENTS.validate_answer_continuation_refusal(arguments, cli, mcp, "2025-11-25")
+        self.assertEqual(proof, {"arguments": arguments, "cli": cli, "mcp": mcp, "protocol": "2025-11-25"})
+        changed = {**body, "requested_scope": {**body["requested_scope"], "future": "different"}}
+        with self.assertRaisesRegex(AssertionError, "Complete CLI/MCP"):
+            CLIENTS.validate_answer_continuation_refusal(arguments, cli, envelope(changed), "2025-11-25")
+        wrong_index = {**body, "requested_scope": {**body["requested_scope"], "selection": {
+            **body["requested_scope"]["selection"], "open_scope": {"index_ids": ["index-a", "other"]}}}}
+        with self.assertRaisesRegex(AssertionError, "other"):
+            CLIENTS.validate_answer_continuation_refusal(arguments, cli, envelope(wrong_index), "2025-11-25")
+        confirmed_read = {**body, "read_scope": {"source": "named", "index_ids": ["index-a", "index-b"]}}
+        with self.assertRaisesRegex(AssertionError, "confirmed read scope"):
+            CLIENTS.validate_answer_continuation_refusal(arguments, cli, envelope(confirmed_read), "2025-11-25")
+        submitted = {**body, "error": {**body["error"], "query_submitted": True}}
+        with self.assertRaisesRegex(AssertionError, "query_submitted"):
+            CLIENTS.validate_answer_continuation_refusal(arguments, cli, envelope(submitted), "2025-11-25")
+
     def test_answer_validator_binds_exact_rust_input_image_and_compiled_sources_without_cargo(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)

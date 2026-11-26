@@ -63,7 +63,8 @@ class WorkbenchEvidenceTests(unittest.TestCase):
             class Fixture:
                 catalog_authority = True
                 environment = {}
-                def __init__(self, runtime, owner):
+                def __init__(self, runtime, owner, *, preserve_pair_metadata):
+                    assert preserve_pair_metadata is True, 'Workbench must stage the verified original schema-3 pair'
                     self.cli = cli; self.control = owner / 'control'
                     self.control.mkdir(); self.projects = {}; self.scopes = {}
                 def __enter__(self): return self

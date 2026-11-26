@@ -64,18 +64,21 @@ def qualify(runtime, node, report, target):
     assert '\n' not in answer_request['question'] and '\r' not in answer_request['question']
     with clients.owned_client_fixture() as directory:
         owner = Path(directory).resolve(strict=True)
-        (owner / 'data').mkdir(mode=0o700)
+        # Python 3.13 applies a special ACL for mode 0700 on Windows. Use
+        # the inherited ACL from the already verified private fixture owner.
+        directory_mode = 0o777 if os.name == 'nt' else 0o700
+        (owner / 'data').mkdir(mode=directory_mode)
         roots, source_hashes = [], {}
         for ordinal in ('a', 'b'):
             source = owner / ('source-' + ordinal)
-            source.mkdir(mode=0o700)
+            source.mkdir(mode=directory_mode)
             content = ('# ' + answer_request['question'] + '\n' +
                        'def workbench_fixture():\n    return "workbenchneedle-' + ordinal + '"\n').encode()
             file = source / 'fixture.py'
             file.write_bytes(content)
             source_hashes[str(file)] = sha256(file)
             roots.append(source)
-        with clients.Fixture(runtime, owner) as fixture:
+        with clients.Fixture(runtime, owner, preserve_pair_metadata=True) as fixture:
             assert fixture.cli is not None and fixture.catalog_authority
             setup = module('workbench_native_setup', ROOT / 'scripts/check-runtime-upgrade.py')
             for name, source in zip(('workbench-a', 'workbench-b'), roots):

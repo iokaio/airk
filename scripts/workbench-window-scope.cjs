@@ -49,7 +49,7 @@ const bodyOf = envelope => {
   return JSON.parse(text);
 };
 const nativeBody = delivery => bodyOf(JSON.parse(delivery.result.stdout));
-let exactComparisons = 0, answerComparisons = 0, answerSourceOpens = 0;
+let exactComparisons = 0, answerComparisons = 0, answerSourceOpens = 0, answerBudgetPartials = 0;
 let copied; const editorOpens = [], exportsWritten = [];
 const exportFile = path.join(input.owner, 'workbench-answer-export.json');
 setEvidenceTransport((launch, client) => {
@@ -132,27 +132,46 @@ function qualifiedAnswerPartitions(envelope) {
   assert.equal(partitions[0].packet?.schema,'airk.arbiter.context/3');
   return partitions;
 }
-async function runAnswer(expectedSelection) {
-  journeyStage=`answer-${expectedSelection}-invoke`;
+async function runAnswer(expectedSelection, budgetPartial = false) {
+  const caseLabel = budgetPartial ? 'budget-partial' : expectedSelection;
+  journeyStage = `answer-${caseLabel}-invoke`;
   const before = deliveries.length, original = structuredClone(input.answer_request);
+  if (budgetPartial) {
+    original.question = 'Where is `workbench_fixture` defined and who calls it?';
+    Object.assign(original.budget, { calls: 1, candidates: 1, fanout: 1 });
+  }
   await workbench.message({type:'answer',question:original.question,budget:original.budget}); await workbench.saveQueue;
   const turn = workbench.session.turns.at(-1), delivered = parsedDelivery('airk_answer',before);
   assert.equal(turn.error,undefined,JSON.stringify(turn));
-  journeyStage=`answer-${expectedSelection}-projection`;
-  const partitions=qualifiedAnswerPartitions(turn.envelope);
-  assert.deepEqual(turn.request,original,'Workbench uses the complete unchanged Rust-emitted current request');
+  journeyStage = `answer-${caseLabel}-projection`;
+  const [{ packet }] = qualifiedAnswerPartitions(turn.envelope);
+  assert.deepEqual(turn.request, original, 'Workbench retains the complete Answer request');
   assert.deepEqual(JSON.parse(delivered.argv[delivered.argv.indexOf('--args')+1]),original,'real framed native request preserves every input field');
   assert.deepEqual(turn.envelope,nativeBody(delivered),'complete native Answer result including all work, history, provenance and records is retained');
   if(expectedSelection==='window')assert.ok(!delivered.argv.includes('--index')&&!delivered.argv.includes('--service-project'));
   else assert.ok(delivered.argv.includes('--index'));
-  assert.ok(partitions[0].packet.records.length>0,'actual question search must retain canonical evidence');
-  assert.ok(partitions[0].packet.records.some(record => record.operation === "search" && record.canonical_result?.projection === "airk.arbiter.loop-evidence/1" && record.canonical_result.hits_total > 0 && record.canonical_result.spans.some(span => typeof span.text === "string" && span.text.includes(original.question))),'indexed exact Rust fixture question must return actual hits');
-  journeyStage=`answer-${expectedSelection}-copy-export`;
+  assert.ok(packet.records.length > 0, 'actual question search must retain canonical evidence');
+  if (budgetPartial) {
+    assert.equal(delivered.argv[delivered.argv.indexOf('--index') + 1], input.selection.index_id);
+    assert.equal(packet.scope.index_id, input.selection.index_id);
+    assert.equal(packet.ticket, null, 'a queued ticket does not prove budget exhaustion');
+    assert.equal(packet.partial?.reason, 'budget', JSON.stringify(packet.partial));
+    assert.equal(packet.work.calls, original.budget.calls, 'native read allowance must be exhausted');
+  } else {
+    assert.ok(packet.records.some(record => record.operation === "search" && record.canonical_result?.projection === "airk.arbiter.loop-evidence/1" && record.canonical_result.hits_total > 0 && record.canonical_result.spans.some(span => typeof span.text === "string" && span.text.includes(original.question))),'indexed exact Rust fixture question must return actual hits');
+  }
+  journeyStage = `answer-${caseLabel}-copy-export`;
   await workbench.message({type:'copy',turn:turn.id,format:'json'});
   assert.deepEqual(JSON.parse(copied).turns[0],turn,'actual host copy preserves entire original turn/request/result');
   await workbench.message({type:'export',turn:turn.id,format:'json'});
   assert.equal(exportsWritten.at(-1),exportFile);
   assert.deepEqual(JSON.parse(fs.readFileSync(exportFile,'utf8')).turns[0],turn,'actual host export preserves entire original turn/request/result');
+  if (budgetPartial) {
+    observations.push({ name: 'airk_answer', selection: expectedSelection, outcome: 'budget_partial',
+      request: original, delivery: delivered, turn: structuredClone(turn) });
+    answerBudgetPartials++;
+    return;
+  }
   const cards=evidenceCards(turn.envelope),card=cards.find(card=>card.step&&/^\/spans\/\d+$/.test(card.resultPointer));
   assert.ok(card,'actual native source verification must provide an unambiguous Answer citation');
   const sourceBefore=deliveries.length,openBefore=editorOpens.length;
@@ -214,7 +233,9 @@ async function main() {
   await runSlash('/status', 'explicit');
   await runSlash('/search workbenchneedle --mode lexical', 'explicit');
   await runAnswer('explicit');
-  fs.writeFileSync(input.output, JSON.stringify({ schema: 1, protocol: native.hello, exactComparisons, answerComparisons, answerSourceOpens,
+  await runAnswer('explicit', true);
+  assert.equal(answerBudgetPartials, 1, 'one explicit native budget partial is required');
+  fs.writeFileSync(input.output, JSON.stringify({ schema: 1, protocol: native.hello, exactComparisons, answerComparisons, answerSourceOpens, answerBudgetPartials,
     observations, source_before: input.source_hashes, host: 'actual Workbench callbacks; injected VS Code host; real native session' }, null, 2) + '\n');
   console.log(JSON.stringify({ tests: 1, passed: 1, exactComparisons, observations: observations.length, output: input.output }));
 }

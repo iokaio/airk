@@ -335,6 +335,46 @@ def answer_packet(envelope):
     return packet
 
 
+def assert_answer_budget_partial(envelope, calls):
+    """Observe the bounded single-index reply before the full Rust comparison."""
+    packet = answer_packet(envelope)
+    if packet["schema"] == "airk.combined-read/1":
+        members = packet["members"]
+        assert len(members) == 1, "Budget probe must address exactly one index"
+        packet = answer_packet(members[0]["result"])
+    assert packet["schema"] == "airk.arbiter.context/3", packet
+    assert packet["ticket"] is None, "A queued ticket does not prove budget exhaustion"
+    assert (packet["partial"] or {}).get("reason") == "budget", packet
+    assert packet["work"]["calls"] == calls, "Budget probe must exhaust its call allowance"
+
+
+def validate_answer_continuation_refusal(arguments, cli, mcp, protocol):
+    """Check a complete typed refusal before either requested member is read."""
+    indexes = sorted(arguments["index_ids"])
+    assert len(indexes) == 2 and indexes[0] != indexes[1], "Expected two distinct fixture indexes"
+    for envelope in (cli, mcp):
+        assert envelope.get("isError") is True, "Malformed Answer continuation was accepted"
+        body = tool_value(envelope)
+        if "structuredContent" in envelope:
+            assert body == envelope["structuredContent"], "Answer refusal copies differ"
+        error = body.get("error", {})
+        assert (error.get("code") == "invalid_native_arguments" and error.get("query_submitted") is False
+                and error.get("retryable") is False and error.get("query_replay_safe") is False), body
+        requested = body["requested_scope"]
+        assert requested["confirmed"] is False, requested
+        assert sorted(requested["selection"]["open_scope"]["index_ids"]) == indexes, requested
+        assert "read_scope" not in body, "A pre-submission refusal must not claim a confirmed read scope"
+    transport = http_transport()
+    left, right = transport.parity_envelope(cli), transport.parity_envelope(mcp)
+    assert protocol in ("2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25", "2026-07-28"), protocol
+    if protocol != "2026-07-28":
+        # The negotiated legacy SDK wire omits only this fixed discriminator.
+        assert "resultType" not in right
+        assert left.pop("resultType", "complete") == "complete"
+    assert left == right, "Complete CLI/MCP Answer continuation refusal differs"
+    return {"arguments": arguments, "protocol": protocol, "cli": cli, "mcp": mcp}
+
+
 def tool_value(envelope):
     assert isinstance(envelope, dict) and isinstance(envelope.get("content"), list), envelope
     assert len(envelope["content"]) == 1 and envelope["content"][0].get("type") == "text", "Invalid native text envelope"
@@ -881,6 +921,7 @@ class Fixture:
         self.answer_validator = None
         self.answer_comparisons = []
         self.answer_references = {}
+        self.answer_continuation_refusal = None
         if type(preserve_pair_metadata) is not bool:
             raise ValueError("Original pair metadata requires explicit split fixture opt-in")
         if preserve_pair_metadata:
@@ -1550,6 +1591,43 @@ class Fixture:
                 protocol = "2026-07-28" if lifecycle == "inline" else initialized["protocolVersion"]
                 validate_answer_pair(self, "CLI/" + ("HTTPS MCP" if self.single_image else "stdio MCP"), arguments, reference, reply["result"], protocol)
                 self.answer_references[name] = (arguments, reference)
+                if self.single_image:
+                    bounded = current_answer_arguments("Where is `polar_fixture_0` defined and who calls it?")
+                    bounded["budget"].update(calls=1, candidates=1, fanout=1)
+                    reference_partial = self.answer_once(name, bounded)
+                    send({"jsonrpc":"2.0", "id":10, "method":"tools/call", "params":{
+                        **params, "name":"answer", "arguments":bounded}})
+                    mcp_partial = receive(10)["result"]
+                    for envelope in (reference_partial, mcp_partial):
+                        assert_answer_budget_partial(envelope, bounded["budget"]["calls"])
+                    validate_answer_pair(self, "CLI/HTTPS MCP budget partial", bounded,
+                                         reference_partial, mcp_partial, protocol)
+
+                    # The named singleton uses the native parameter codec. Two named
+                    # indexes reach the combined owner's typed pre-member refusal.
+                    indexes = [self.scopes[index]["index_id"] for index in (name, "project-b")]
+                    assert len(set(indexes)) == 2, "Expected two distinct fixture indexes"
+                    invalid = {**arguments, "continuation":"not-a-sha256"}
+                    selector = [item for index in indexes for item in ("--index", index)]
+                    cli = self.run(*self.open_service(), "tools", "call", "airk_answer", *selector,
+                                   "--args", json.dumps(invalid), check=False, timeout=90)
+                    mcp_arguments = {**invalid, "index_ids":indexes}
+                    mcp = None
+                    try:
+                        send({"jsonrpc":"2.0", "id":11, "method":"tools/call", "params":{
+                            **params, "name":"answer", "arguments":mcp_arguments}})
+                        mcp = receive(11)
+                    finally:
+                        # Retain the original observations even if decoding or parity
+                        # fails. The owner-private fixture survives a failed run.
+                        capture = self.owner / "answer-continuation-refusal.json"
+                        with capture.open("x", encoding="utf-8") as output:
+                            json.dump({"arguments":mcp_arguments, "protocol":protocol,
+                                       "cli":{"exit_code":cli.returncode, "stdout":cli.stdout, "stderr":cli.stderr},
+                                       "mcp":mcp}, output, ensure_ascii=False)
+                    assert cli.returncode == 1, "CLI did not refuse the malformed Answer continuation"
+                    self.answer_continuation_refusal = validate_answer_continuation_refusal(
+                        mcp_arguments, json.loads(cli.stdout), mcp["result"], protocol)
         if workbench:
             # Keep learned review and finite conversational execution distinct.
             # Each execution is sent once, never replayed after uncertainty.
@@ -2044,6 +2122,7 @@ def qualify(runtime, files, model, answer_validator=None, *, preserve_pair_metad
                       "answer_transports": {"executed": bool(fixture.answer_comparisons),
                                             "scope": ANSWER_VALIDATOR_SCOPE if fixture.answer_comparisons else "not_executed",
                                             "comparisons": fixture.answer_comparisons,
+                                            "malformed_continuation_refusal": fixture.answer_continuation_refusal,
                                             "remaining": ["learned prompt/decision transport parity", "many/Open/Admin actual native integration selections"]},
                       # start() proved the installed service bytes equal the runtime's image.
                       "images": {"service_sha256": file_sha256(fixture.binary),
