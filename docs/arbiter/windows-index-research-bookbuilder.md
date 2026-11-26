@@ -53,7 +53,14 @@ lost another relative to width 16. Mean scoring time was 1.97 s at width
 response packing.
 [Matched CUDA scoring](../simplify/one-process-ledger.md#25-november-2026--wider-focus-measured-on-windows-cuda)
 
-Extraction anchors on the selected export, the independent CPU-query
-versus CUDA-vector check and held-out selection remain open. No candidate
-representation or full rebuild has been selected. The Windows OpenAI
-baseline and improvement rounds are pending.
+The one-factor path-prior pilot raised ordinary top-ten coverage from
+5/61 to 6/61 and widened delivery from 9/61 to 10/61. All original
+top-ten essentials remained covered. Query p95 was 2,286 ms on the
+original policy and 2,278 ms with the prior. The combined pilot missed
+the net top-40 gain requirement. The original development control was
+retained and its held-out cases remain unqueried.
+[Path-prior decision](../simplify/one-process-ledger.md#25-november-2026--path-prior-pilot-rejected-on-windows)
+
+Extraction anchors on the selected export and the independent CPU-query
+versus CUDA-vector check remain open. The Windows OpenAI baseline and
+improvement rounds are pending.

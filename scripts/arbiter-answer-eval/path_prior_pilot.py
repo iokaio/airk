@@ -40,6 +40,7 @@ def ranked(handle, request, arguments, index, timeout, limit):
                    "pilot Search did not admit comparable ranked evidence")
     spans = [evidence.extract(hit) for hit in hits]
     return {"hit_sha256": [search.hit_identity(hit) for hit in hits],
+            "hit_citations": [hit["citation"] for hit in hits],
             "notes": [note["id"] for note in request["essential"]
                       if depth.ranks(spans, note)["rule2"] is not None],
             "result_sha256": common.sha256_bytes(call.stdout), "elapsed_ms": call.elapsed_ms,
@@ -137,7 +138,19 @@ def compare(control, trial):
             common.require(len(times) == REPETITIONS * len(group)
                            and all(math.isfinite(t) and t > 0 for t in times), "invalid pilot latency")
             timings.append(times[math.ceil(0.95 * len(times)) - 1])
+        response_bounds = []
+        for arm in (0, 1):
+            normal = [item for pair in group for item in pair[arm]["ordinary"]]
+            wide = [pair[arm]["wide"] for pair in group]
+            response_bounds.append({
+                "ordinary_incomplete": sum(item["incomplete"] for item in normal),
+                "ordinary_truncated": sum(item["truncated"] for item in normal),
+                "widened_incomplete": sum(item["incomplete"] for item in wide),
+                "widened_truncated": sum(item["truncated"] for item in wide),
+                "widened_min_hits": min(len(item["hit_sha256"]) for item in wide),
+            })
         repositories[repo] = {"changes": affected, "query_p95_ms": timings,
+                              "response_bounds": response_bounds,
                               "query_p95_ratio": timings[1] / timings[0],
                               "counts": {f"{field}_{arm}": sum(len(pair[i][field]) for pair in group)
                                          for field in ("top10", "top40")
@@ -150,12 +163,25 @@ def compare(control, trial):
             "scope": "Query-only pilot on identical settled publications and writer. Query p95 includes native CLI transport."}
 
 
+def verify_closed(result, closed, reuse):
+    identity = result["identity"]
+    common.require(closed["state"] == "closed" and closed["final_stage_idle"] is True
+                   and closed["service_exit_code"] == 0
+                   and closed["lifetime"] == identity["lifetime"]
+                   and closed["instance"] == identity["instance"] == reuse["instance"]
+                   and closed["control"] == identity["control"] == reuse["control"]
+                   and reuse["new_index_and_vector_jobs"] == 0
+                   and reuse["preserved_index_and_vector_jobs"] > 0,
+                   "native pilot lifetime did not close with its original Index/Vectors jobs")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     modes = parser.add_subparsers(dest="mode", required=True)
     collect_cmd = modes.add_parser("collect")
     compare_cmd = modes.add_parser("compare")
-    names = {"collect": ("cohort", "freeze", "reference", "handle"), "compare": ("original", "prior")}
+    names = {"collect": ("cohort", "freeze", "reference", "handle"),
+             "compare": ("original", "prior", "original-closed", "prior-closed", "original-reuse", "prior-reuse")}
     for command, cmd in (("collect", collect_cmd), ("compare", compare_cmd)):
         for name in names[command]:
             cmd.add_argument(f"--{name}", type=Path, required=True)
@@ -167,9 +193,13 @@ def main():
     if args.mode == "collect":
         report = collect(args)
     else:
-        report = compare(*(json.loads(search.pinned(getattr(args, name), getattr(args, f"{name}_sha256")))
-                           for name in names["compare"]))
-        report["input_sha256"] = {"original": args.original_sha256, "prior": args.prior_sha256}
+        pins = {name.replace("-", "_"): getattr(args, name.replace("-", "_") + "_sha256")
+                for name in names["compare"]}
+        data = {name: json.loads(search.pinned(getattr(args, name), pin)) for name, pin in pins.items()}
+        for arm in ("original", "prior"):
+            verify_closed(data[arm], data[f"{arm}_closed"], data[f"{arm}_reuse"])
+        report = compare(data["original"], data["prior"])
+        report["input_sha256"] = pins
     search.write_new(args.output, report)
 
 

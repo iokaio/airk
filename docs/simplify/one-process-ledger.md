@@ -20357,3 +20357,52 @@ error in the comparison expression. That expression was replaced with
 explicit per-case gain and loss accounting before the passing run.
 The Cargo execution receipt SHA-256 is 1546921b5314de923bdca1a0d1bfa0013cda5bb33bb7b52ab16173eba612664a. The next action is to
 build the reviewed test image and run the original and path-prior arms.
+
+### 25 November 2026 — Path-prior pilot rejected on Windows
+
+Built one private CUDA-capable image from 754951d7 and used it for both
+arms. The service and CLI builds took 55.90 s and 0.57 s on the warm
+incremental target. The receipt audited 418 changed outputs. Build and
+staged image manifest SHA-256s are
+6bf02a4f9261da67e9d8d62e6f049ceaca444a31ddefe95efb7df085d8499f55
+and 1b6429c436d27ff8008be4bb11a997afb092826dd69298ff0f82aa4143b70179.
+
+Both arms ran the same 20 task instructions on the same settled pair,
+with CPU query embedding observed under the explicit resource policy
+and both optional stages off. Each original request ran three times
+with identical ranked hit identities, followed by a separate 40-hit
+request with the same approved scope and an equally widened byte budget
+in both arms. The widened metric is delivered coverage from that
+request. It does not measure the first ordinary request's pre-packing
+rank order. All widened replies returned 40 hits. All ordinary and
+widened replies disclosed truncation and zero execution-incomplete
+flags. The test retained exact citation metadata and used frozen
+coverage rules. It did not independently adjudicate wrong citations.
+
+| Repository | Original / prior top 10 | Original / prior widened top 40 | Top-40 gains / losses | Original / prior p95 | Ratio |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Bookbuilder | 5 / 6 | 9 / 10 | 1 / 0 | 2,286 / 2,278 ms | 0.997 |
+| Munarium | 9 / 10 | 17 / 16 | 0 / 1 | 552 / 602 ms | 1.091 |
+
+Both original top-ten sets were preserved. Both latency ratios fit
+their envelopes. The pilot gained zero net top-40 essentials and
+missed the six-gain requirement. The original Search policy remains
+the development control for both repositories. The held-out sets
+remain unqueried. No rebuild was selected.
+
+The original and treatment collections took 102.057 s and 95.434 s.
+Both lifetime Jobs closed with no descendants and preserved 41 original
+Index/Vectors job identities with zero new ones. The score tool requires
+both closed custody receipts at comparison. Original, treatment, and
+comparison receipt SHA-256s are
+ae1cedab067515952ed0fddf81260da9bc9f78041d8a193c4e731877497992a6,
+338295f18c88c04ae416adbc8ef2dd37eabe368a08611aab73fe475879efadf5,
+and c00fea915d579695519c7e17e89fc00ac4451a3debf219cf329cfd295ff502dd.
+The retained control receipt SHA-256 is
+34e2efea088fef5670b3dfec47df81312c6824f2d68f9a766fbb2337a5f7a45d.
+It records the open source-fidelity checks.
+
+Verified duplicate runtime and CLI files were reclaimed after both
+Jobs settled. The 1,912,298,288 reclaimed bytes left
+1,088,706,826,240 bytes free on D:. Cleanup receipt SHA-256
+93943a3a68a79c1f1ecc6b7f3e90bc98e688505fb165e9be1c7f6b581bfb840a.

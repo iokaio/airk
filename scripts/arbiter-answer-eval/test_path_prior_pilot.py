@@ -26,7 +26,9 @@ class Selection(unittest.TestCase):
                 data["rows"].append({"repo": repo, "key": f"{repo}/{number}",
                                      "request_sha256": f"request-{repo}-{number}",
                                      "top10": ["N1"], "top40": ["N1"],
-                                     "ordinary": [{"elapsed_ms": 100}] * 3})
+                                     "ordinary": [{"elapsed_ms": 100, "incomplete": True, "truncated": False}] * 3,
+                                     "wide": {"hit_sha256": ["first", "second"],
+                                              "incomplete": False, "truncated": False}})
         trial = copy.deepcopy(data)
         trial["identity"]["search_profile"] = pilot.TRIAL
         for repo_start in (0, 10):
@@ -44,7 +46,7 @@ class Selection(unittest.TestCase):
         self.assertEqual(rejected["repositories"]["bookbuilder"]["changes"]["top10_lost"],
                          [{"key": "bookbuilder/0", "id": "N1"}])
         trial["rows"][0]["top10"] = ["N1"]
-        trial["rows"][10]["ordinary"] = [{"elapsed_ms": 111}] * 3
+        trial["rows"][10]["ordinary"] = [{"elapsed_ms": 111, "incomplete": True, "truncated": False}] * 3
         rejected = pilot.compare(original, trial)
         self.assertAlmostEqual(rejected["repositories"]["munarium"]["query_p95_ratio"], 1.11)
         self.assertFalse(rejected["qualifies"])

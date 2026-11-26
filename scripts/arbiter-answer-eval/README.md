@@ -912,7 +912,7 @@ replays each ordinary request three times for p95 latency, and issues one
 separate top-40 request under the same scope. The held-out cases are never
 queried by this development collector.
 
-Use path_prior_pilot.py compare on the two pinned results. Require a net
+Use path_prior_pilot.py compare with the two pinned results and their closed handles and reuse receipts. Require a net
 gain of at least six top-40 essentials, preservation of every original
 top-ten essential, and query p95 within 1.10x for each repository. The
 pilot reuses the same writer and publications, so it runs no builds of
