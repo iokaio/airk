@@ -220,7 +220,24 @@ def step_comparison(a_rows: dict, b_rows: dict) -> dict:
 # ---------------------------------------------------------------- rows
 
 
+def require_model_identity(rows: list[dict], freeze: dict | None = None) -> None:
+    identities = {(row.get("agent_model"), row.get("agent_effort")) for row in rows}
+    openai = any(model in common.OPENAI_EVAL_AGENT_MODELS for model, _ in identities)
+    if freeze is not None:
+        expected = (freeze.get("model"), freeze.get("effort"))
+        common.require(expected[0] in common.OPENAI_EVAL_AGENT_MODELS and expected[1] in common.EFFORTS
+                       and identities <= {expected}, "grade rows differ from the frozen agent model or effort")
+    elif openai:
+        common.require(len(identities) == 1 and next(iter(identities))[1] in common.EFFORTS,
+                       "mixed agent model or effort in an OpenAI grading pass")
+
+
 def build_rows(index: dict, adjudications: dict) -> list[dict]:
+    freeze = index.get("agent_freeze")
+    common.require(freeze is not None or not any(row.get("agent_model") in common.OPENAI_EVAL_AGENT_MODELS
+                                                 for row in index["results"]),
+                   "OpenAI grading requires the pass agent freeze")
+    require_model_identity(index["results"], freeze)
     rows = []
     by_key = {r["key"]: r for r in index["results"]}
     for entry in index["results"]:
@@ -230,6 +247,10 @@ def build_rows(index: dict, adjudications: dict) -> list[dict]:
         if record_path is None or not record_path.is_file():
             continue  # not run yet (e.g. an arm that runs after this grading): not a result
         session = common.read_json(record_path)
+        observed_agent = (session.get("model_requested"), session.get("effort_requested"))
+        if freeze is not None:
+            common.require(observed_agent == (freeze["model"], freeze["effort"]),
+                           f"{entry['key']}: session agent differs from the frozen model or effort")
         coverage = common.read_json(source["coverage"]) if source.get("coverage") and Path(source["coverage"]).is_file() else None
         judged = []
         for path in source.get("judges", []):
@@ -245,6 +266,7 @@ def build_rows(index: dict, adjudications: dict) -> list[dict]:
             "key": entry["key"], "series": index["series"], "repo": entry["repo"], "slot": entry["slot"],
             "kind": entry["kind"], "configuration": entry["configuration"], "device": entry["device"],
             "path": entry.get("path"), "arm": entry.get("arm"),
+            "agent_model": observed_agent[0], "agent_effort": observed_agent[1],
             "sample": entry.get("sample", 1), "session_id": session.get("session_id"),
             "reused_from": entry.get("reused_from") or "",
             "judge1_grade": None if g[0] is None else g[0]["grade"],
@@ -279,6 +301,7 @@ FIRST_GRADE_SECOND_JOBS = "first-grade-second-jobs.json"
 
 
 def summarize(rows: list[dict], series: str, second_jobs=None) -> dict:
+    require_model_identity(rows)
     frozen = {tuple(job) for job in second_jobs} if second_jobs is not None else None
     controls = {scenario: name for scenario, name in frozen or () if name in BASELINES}
     scen = lambda r: f"{r['repo']}-{r['slot']}"  # noqa: E731

@@ -609,6 +609,25 @@ class CaseTable(unittest.TestCase):
         self.assertEqual(result_row["case"]["samples"], 2)
         self.assertEqual(result(first + second[:1])["case"]["case"], "pending")
 
+    def test_openai_passes_keep_their_own_model_controls(self):
+        def result(model, configuration, turns):
+            return row(turns, repo="bookbuilder", slot="A1", configuration=configuration,
+                       device="gpu" if configuration == "focus" else "none", key=configuration,
+                       adjudication="agree", agent_model=model, agent_effort="medium", reused_from=None,
+                       rubric_b_j1=None, rubric_b_j2=None, cost_usd=None, judge_cost_usd=None)
+
+        sol = [result("gpt-6.2-sol", "search", 4), result("gpt-6.2-sol", "focus", 2)]
+        astra = [result("gpt-6.2-astra", "search", 2), result("gpt-6.2-astra", "focus", 4)]
+        for first, second in ((sol, astra), (astra, sol)):
+            for rows in (first, second):
+                case = grade.summarize(rows, "synthetic")["configurations"]["focus-gpu"]["scenarios"][0]["case"]
+                self.assertEqual(case["substantial"], rows[0]["agent_model"] == "gpt-6.2-sol")
+                self.assertEqual(case["worse"], rows[0]["agent_model"] == "gpt-6.2-astra")
+            with self.assertRaisesRegex(common.HarnessError, "mixed agent"):
+                grade.summarize(first + second, "mixed")
+        with self.assertRaisesRegex(common.HarnessError, "frozen agent model or effort"):
+            grade.require_model_identity(sol, {"model": "gpt-6.2-sol", "effort": "high"})
+
     def test_headroom(self):
         best = {"a": row(1), "b": row(2), "c": row(3), "d": row(None, 1), "e": None}
         room = grade.headroom(best)

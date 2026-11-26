@@ -20023,3 +20023,83 @@ provenance, and the indexed-source hash portion of fidelity. Next are
 label and corpus review, the remaining fidelity checks and matched
 follow-up and wider-Focus probes. The selected controls, autonomous
 repair, Windows L6 and judged Windows series are still pending.
+
+### 25 November 2026 — Corpus composition and synthetic Codex judge isolation
+
+The corpus path audit classified the indexed files and committed units
+and verified the paired Step 7 shortlist roster before counting it once.
+Documentation occupies 298/400 Bookbuilder shortlist slots, compared
+with 45,524/167,368 committed units. For Munarium it occupies 232/400
+slots, compared with 5,263/43,772 units. Source accounts for 96 and 151
+slots respectively, and tests six and 17. The observed pattern supports
+testing a query-time path-class weight before any index rebuild.
+Class labels are path heuristics. The two repositories and the retained
+Step 7 profile have separate counts and original publication identities.
+Report SHA-256
+`b0893dec47296984b05661d083b6d65fb26a8fb6d4838d762ebd4fea0dd82ce6`.
+
+The checked Windows Codex 0.171.0 binary hash was
+`cefea4ffee1fff04983a99c0dda99944d8b380e891e740a28b32f4b815a6e0b7`.
+The first synthetic loopback attempt timed out during startup. The
+diagnostic rerun preserved request arrivals and response event markers.
+Astra at medium effort offered zero tools. The captured request contained
+neither the synthetic workspace instruction canary nor the AIRK
+repository instructions. No Authorization header reached the endpoint.
+The synthetic server deliberately returned HTTP 400 after the capture.
+The project, log, state and temporary scratch paths were checked under
+the interactive Windows SID. Probe report SHA-256
+`56f6c5b956fef42a16d5a7a0e1a5c32af74b2b30e14bb692db067023579dfb0b`.
+The hosted model request, schema-valid verdict, per-arm tool offers and
+call-cap reconciliation remain to be verified before grading.
+
+The synthetic Sol Search wrapper started with the six expected tools in
+its wrapper receipt. Requests captured with both a custom provider and
+the built-in OpenAI provider set to loopback omitted all six. For the
+built-in provider, the endpoint confirmed the dummy credential and
+received no live credential. Requiring catalog rather than connection
+readiness gave the same result. The distinct synthetic reports have
+SHA-256s `42f555c1d97dc103a8b41280d0adbb445885362491c7a427c756070dec25914b`,
+`e656405c4296e38c397ce9bc0ea4cdf1ee4a21e71bc449980d9b262f654e7fbf`
+and `b99fec0388b37562b844bdca4a0b7c6be5303db1cafeb12277cd57e298a524e0`.
+One further projection captured startup error markers and identified no
+specific handshake error, SHA-256
+`19232bb812405dddae1a9595fed1cfc562c8881524e02fef39a220f15d1d8bfc`.
+No hosted evaluation was admitted. The grader pins OpenAI actor model
+and effort across the compared arms and rejects mismatches in reused
+sample identity. Nine CaseTable and one PassFlow checks passed.
+
+### 25 November 2026 — Recorded follow-up Search and reads on Windows CUDA
+
+Replayed the exact archived sent arguments for 56 Search and 68 indexed
+read calls across 20 change-set-1 scenarios. Each replay matched its
+source request digest, calling order and response mode. Each arm used
+the same Windows image and the same alternate publications and scopes
+as the rank trace. Focus and Arbiter were disabled in both arms. Each
+lifetime reused 41 predecessors and completed with zero new Index or
+Vectors jobs.
+
+| Repository | Search calls | Original distinct essentials | Step 8 distinct essentials | Gained | Lost | Distinct read essentials in each arm |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Bookbuilder | 35 | 14 | 19 | 5 | 0 | 18 |
+| Munarium | 21 | 17 | 20 | 5 | 2 | 21 |
+
+Both arms reproduced the same two recorded read errors. The original
+policy took 128.436 s, SHA-256
+`2d449601ad87520b9169deb5a30fd3f6090482cce075a9c79119f7d25cfd8692`.
+Step 8 took 139.163 s, SHA-256
+`34de9e7730896a5fae5e0743db9f5c0c2cea952364da67159acae19a3c1d1b3e`.
+Step 8 failed the no-loss requirement and remains unfrozen.
+
+Both lost Munarium Search notes came from explicit-limit requests.
+W1 call 4 lost N4 at the ranked-keyword stage and did not recover it
+with semantic subqueries. A2 call 2 retained N2 through those two
+profiles and through file diversity, then lost it when keyword-centered
+packing was added to the comparison. This localizes the stage and does
+not identify a particular packing mechanism. The semantic and ranked
+two-call profiles took 5.826 and 5.889 s, SHA-256s
+`3b942607d09d74760f3a68e690b98551a9f44040cf2b997f04eae79aa282a555`
+and `25655480ce517a62492a3e2e42ef5f31435d2bedbb7df50920e15191643cf4fd`.
+The isolated diversity call took 6.310 s, SHA-256
+`0b042194cefaded9ceac6854d7323b006b0513b45ef6a7d848b40fa3be8dfd7a`.
+The wider Focus check, remaining source fidelity and configuration
+selection are separate pending checks.

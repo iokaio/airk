@@ -26,6 +26,7 @@ DEFAULT_R = REPO_ROOT / "artifacts" / "v190" / "final-plan" / "exec-20261116T052
 
 # User decision, 21 Nov 2026 (plan section 2, "Changed by the user during execution"): agents on Haiku,
 # judges on Sonnet, both at medium effort. The pilot ran Sonnet agents and Opus judges at the default effort.
+OPENAI_EVAL_AGENT_MODELS = frozenset({"gpt-6.2-sol", "gpt-6.2-astra", "gpt-6.1-terra"})
 AGENT_MODEL = "claude-haiku-5-5"
 AGENT_EFFORT = "medium"
 JUDGE_MODEL = "claude-sonnet-5-5"

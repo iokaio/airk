@@ -798,7 +798,20 @@ canonical FTS term, stable chunk, column and offset identities and vector
 matrix hashes from two pinned closed handles. It keeps their publication
 tokens separate. Run both from the checked Windows shell with fresh
 `--output` paths under the private campaign root. Neither changes a
-database or Git export.
+database or Git export. `corpus_path_classes.py` adds reproducible
+heuristic path classes to the closed index file and vector-unit rosters
+and the retained Step 7 top-40 candidate trace. Its inputs are the pinned
+closed handle, frozen cohort, Focus-off receipt and paired native trace.
+
+### Synthetic Codex tool-offer preflight
+
+`codex_isolation_probe.py` sends a synthetic request to a separate
+loopback Responses endpoint and records the outbound model, effort and
+tool-schema digests. It deliberately returns a terminal HTTP error after
+capture. It records no headers or raw prompt. Run it with a checked
+scratch directory containing `workspace`, `logs`, `state` and `tmp`.
+The workspace can contain an instruction canary. This probe does not
+qualify hosted admission, verdict generation or the wrapper's call cap.
 
 ### Wider Search shortlist coverage
 
@@ -833,3 +846,17 @@ It checks the returned text bytes, unique paths and complete ordinary
 Focus permutation. The cumulative report keeps separate measures at
 rank three, rank ten and across the full response. The original cohort
 and accepted Step 5 pair keep their original identities.
+
+### Recorded follow-up Search and indexed reads
+
+Use `followup_search_replay.py` with the pinned development cohort, archived
+pass index, settled control handle and ready matched arm handle. Supply the
+SHA-256 of each input and choose the service's matching `--profile`.
+The collector replays the archived sent arguments for Search and indexed
+reads and writes a fresh private JSON report. It preserves archived order,
+response mode and failure status, and rechecks the ready publication and
+scope after replay. Run the original and adaptive profiles on the same
+service image and frozen publications. Compare labeled coverage per
+repository, keeping Search and indexed reads separate. Use `--target` to
+reduce a loss to an exact repository, scenario and Search call ordinal
+under an intermediate profile.

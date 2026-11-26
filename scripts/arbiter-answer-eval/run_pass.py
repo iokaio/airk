@@ -639,6 +639,9 @@ class Pass:
         index = {"schema": "airk.private.answer-eval-pass-index/1", "series": self.series,
                  "generated": common.now_iso(), "freeze": self.freeze, "prompts_freeze": self.prompts,
                  "pilot": self.pilot, "results": results}
+        if self.spec.get("agent_model") in common.OPENAI_EVAL_AGENT_MODELS:
+            index["agent_freeze"] = {"model": self.spec["agent_model"],
+                                     "effort": self.spec.get("agent_effort") or common.AGENT_EFFORT}
         # Reused rows point at a key; grade.py reads the source's files through the row itself.
         for row in results:
             if row.get("reused_from") and ":" in row["reused_from"]:
