@@ -1112,3 +1112,38 @@ For a full ordinary-tools export check, add
 compares every exported file to the archived Git stream and checks the
 original archive digest and path roster. A missing retained tar can be
 regenerated in memory from the receipt's checkout and pinned commit.
+
+
+
+The native capture command reads a live, settled control or candidate with
+both optional stages disabled. Use the same frozen spec for both arms. Pass
+the current admitted handle and the paired service image SHA-256. Prepare a
+fresh private capture directory and check its receipt parents and files.
+The command retains an exact reply and a normalized case record for each
+task, then writes `capture.json` after the final publication and stage check.
+Use that file as the arm input to `compare`.
+
+~~~powershell
+python -B $runner capture --campaign-root $campaign --spec $spec --arm control --output $controlDir --handle $handle --handle-sha256 $handleSha --native-sha256 $serviceSha
+~~~
+
+The fresh diagnostic actor uses GPT-6.2 Sol medium for ordinary source-tool
+reads, original archived evidence, and regrouped archived evidence. A
+private source snapshot and run specification bind the actor inputs. It
+runs one app-server writer at a time in the approved isolated home based on
+the observed cache race. The controller retains cap violations and timeouts
+in the case roster. Use `--case bookbuilder-C2` for the representative case,
+or omit the selector to cover all 20. The dedicated judging command
+reopens the completed actor captures and runs two fresh masked Astra medium
+sessions per eligible result with the existing rubric.
+
+~~~powershell
+$pwshExe = (Get-Command pwsh).Source
+$gitExe = (Get-Command git).Source
+python -B scripts/arbiter-answer-eval/gather_context_diagnostic.py --campaign-root $campaign --run-root $actorDir --disposition-sha256 $disposition --expected-sid $sid --pwsh $pwshExe --git $gitExe --case bookbuilder-C2
+python -B scripts/arbiter-answer-eval/gather_context_judge.py --campaign-root $campaign --actor-root $actorDir --run-root $judgeDir --actor-spec-sha256 $actorSpecSha --disposition-sha256 $disposition --expected-sid $sid --pwsh $pwshExe
+~~~
+
+The caller creates and audits fresh run directories before either command.
+The diagnostic compares evidence use. Native release qualification uses the
+separate frozen product comparison and review criteria.

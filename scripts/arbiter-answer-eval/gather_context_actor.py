@@ -137,7 +137,8 @@ class ActorDispatch:
             "ordinal": ordinal, "tool": tool, "arguments": arguments, "success": success,
             "elapsed_ms": int((finished - began) * 1000), "reply_text_bytes": size,
             "evidence_text_bytes": size if success else 0, "reply_sha256": common.sha256_bytes(raw),
-            "dispatch_sha256": _digest(items), "reply_file": f"reply-{ordinal:03d}.json",
+            "dispatch_sha256": _digest(items),
+            "reply_file": f"reply-{ordinal:03d}.json" if ordinal <= common.TURN_CAP else None,
         })
         self.replies.append(raw)
         return reply
@@ -275,7 +276,8 @@ def run_actor(*, config: run_session.CodexRunConfig, instruction: str, directory
         "tool-offer.json": common.canonical_json(planned), "stream.jsonl": stream, "stderr.txt": stderr,
         "brief.md": brief, "turns.jsonl": turns,
     }
-    artifacts.update((row["reply_file"], raw) for row, raw in zip(dispatch.rows, dispatch.replies))
+    artifacts.update((row["reply_file"], raw) for row, raw in zip(dispatch.rows, dispatch.replies)
+                     if row["reply_file"] is not None)
     record = {
         "schema": SCHEMA, "arm": arm, "status": status, "exit_code": code, "problems": problems,
         "started": started, "elapsed_ms": elapsed_ms, "actor": provenance, "observed": observed,

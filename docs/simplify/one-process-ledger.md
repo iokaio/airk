@@ -21433,3 +21433,40 @@ Nextest selected 20, passed 20 and skipped 468. Changed Rust formatting
 and scoped whitespace passed. Compiler descendants had exited and newly
 observed outputs passed the human-owner audit. The slice establishes
 native planner and retrieval behavior under the tested configuration.
+
+
+### 26 November 2026 — Gather Context Windows controls and representative diagnosis
+
+Both settled Windows CUDA publications reopened with the exact historical
+`0b8b9d4b` service and paired CLI. The scoped runtime reported Focus and
+Arbiter off at start and end. The canonical Answer path returned all 20
+native control replies. The capture
+`passes/gather-context-native-control-r1/capture.json` has SHA-256
+`bb508ea88d70549b4bd1dc8407d8865cf7d79f6dd7dab71a9ac834d1ee302009`.
+It authenticated 218 exact delivered Bookbuilder passages and 169 Munarium
+passages. Clipped, unresolved or differing passages stay explicit. Exact
+passage counts are independent of essential coverage and brief grading.
+The private native lifetime `win-gather-context-control-r1` closed naturally
+under its owned job. Both frozen universes and the prior 2/20 disposition
+retain their original identities.
+
+The representative Bookbuilder C2 Sol diagnostic closed all three actors and
+six independent masked Astra judging sessions. Both judges agreed on each
+finish. Ordinary source tools made 12 calls and covered 3/5 essentials,
+grade 0. Both presentation variants delivered 114,593 evidence bytes and
+5/5 essentials. The original scored 0 and the regrouped layout scored 1.
+None of the three reached a correct finish. The retained actor spec SHA-256
+is `135c2da34b18c2b0cc07de9f28c624c37de5f4fc9bf1fde0538949bd9756dc3d`.
+The judgment summary is
+`passes/gather-context-representative-judges-r1/diagnostic-results.json`
+with SHA-256 `d780a9318d94711f829bd93339724ad3df470ccec67683eb9e1be3e136b1bcf3`.
+The representative closed with no surviving actor processes.
+
+The first full hosted trial halted on a shared isolated-home temporary file
+vanishing during the owner audit. No comparison was claimed. Its completed
+and discarded evidence is retained under
+`passes/gather-context-development-actors-r1`. A fresh serial run under
+`passes/gather-context-development-actors-r2` uses the same models and limits.
+It maintains the 12-call cutoff and records actor failures in the denominator.
+The workspace's verified same-user PowerShell and child output checks still
+apply. The full diagnostic and the matched native candidate remain open.

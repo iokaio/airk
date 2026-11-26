@@ -207,39 +207,39 @@ def freeze_reference(campaign: Path, repo_root: Path, spec: dict, spec_sha: str)
     return {"schema": REFERENCE_SCHEMA, "spec_sha256": spec_sha, "cases": rows}
 
 
-def verify_presentations(campaign: Path, spec: dict, reference: dict) -> dict:
+def archived_presentation(campaign: Path, case: dict, repository: dict, recorded: dict, archive: dict):
     from complete_evidence import CompleteEvidence
     from gather_context_presentation import render
     from run_session import verify_complete_evidence
 
+    case_id, repo = case["id"], case["repo"]
+    require(recorded["repo"] == repo and recorded["status"] == "eligible",
+            f"archived actor receipt is ineligible for {case_id}")
+    path, digest = checked_pin(campaign, campaign_pin(campaign, archive["manifest"],
+                               archive["manifest_sha256"]), "archived essential inputs")
+    treatment = CompleteEvidence.from_manifest(
+        path.read_bytes(), expected_sha256=digest, source_root=source_root(campaign, repo, repository),
+        repo=repo, slot=case["slot"], scenario_sha256=case["scenario_sha256"],
+        publication_token=case["publication"], essential_ids=[item["id"] for item in case["obligations"]],
+    )
+    directory = Path(recorded["session"])
+    session_pin = campaign_pin(campaign, str(directory / "session.json"), recorded["receipt_hashes"]["session"])
+    session = load_pinned(campaign, session_pin, "archived actor session")
+    observed = verify_complete_evidence(directory, session, treatment)
+    require(observed == recorded["first_dispatch"], f"archived dispatch differs for {case_id}")
+    result_dir = directory / "wrapper" / "results"
+    native = common.read_json(result_dir / "turn-01.native.stdout.json")
+    text = common.envelope_text(common.read_json(result_dir / "turn-01.stdout.json"))
+    return render(native, text.encode("utf-8"), treatment=treatment, recorded_output_sha256=observed["output_sha256"])
+
+
+def verify_presentations(campaign: Path, spec: dict, reference: dict) -> dict:
     freeze = load_pinned(campaign, spec["scenario_freeze"], "scenario freeze")
     repositories, history, archives = read_ceiling(campaign, spec, freeze)
     rows = []
     for case in reference["cases"]:
         case_id, repo = case["id"], case["repo"]
-        recorded = history[case_id]
-        require(recorded["repo"] == repo and recorded["status"] == "eligible",
-                f"archived actor receipt is ineligible for {case_id}")
-        archive = archives[case_id]
-        path, digest = checked_pin(campaign, campaign_pin(campaign, archive["manifest"],
-                                   archive["manifest_sha256"]), "archived essential inputs")
-        treatment = CompleteEvidence.from_manifest(
-            path.read_bytes(), expected_sha256=digest,
-            source_root=source_root(campaign, repo, repositories[repo]),
-            repo=repo, slot=case["slot"], scenario_sha256=case["scenario_sha256"],
-            publication_token=case["publication"],
-            essential_ids=[obligation["id"] for obligation in case["obligations"]],
-        )
-        directory = Path(recorded["session"])
-        session_pin = campaign_pin(campaign, str(directory / "session.json"), recorded["receipt_hashes"]["session"])
-        session = load_pinned(campaign, session_pin, "archived actor session")
-        observed = verify_complete_evidence(directory, session, treatment)
-        require(observed == recorded["first_dispatch"], f"archived dispatch differs for {case_id}")
-        result_dir = directory / "wrapper" / "results"
-        native = common.read_json(result_dir / "turn-01.native.stdout.json")
-        text = common.envelope_text(common.read_json(result_dir / "turn-01.stdout.json"))
-        pair = render(native, text.encode("utf-8"), treatment=treatment,
-                      recorded_output_sha256=observed["output_sha256"])
+        pair = archived_presentation(campaign, case, repositories[repo], history[case_id], archives[case_id])
         rows.append({"id": case_id, "bytes": len(pair.original), "original": pair.original_output_sha256,
                      "grouped": pair.grouped_output_sha256, "changed": pair.original != pair.grouped})
     return {"schema": "airk.private.gather-context-presentation-audit/1",
@@ -266,6 +266,12 @@ def main(argv: list[str] | None = None) -> int:
     output = freeze.add_mutually_exclusive_group(required=True)
     output.add_argument("--output", type=Path)
     output.add_argument("--preflight", action="store_true")
+    capture = commands.add_parser("capture")
+    for option in ("campaign-root", "spec", "output", "handle"):
+        capture.add_argument(f"--{option}", required=True, type=Path)
+    for option in ("handle-sha256", "native-sha256"):
+        capture.add_argument(f"--{option}", required=True)
+    capture.add_argument("--arm", choices=("control", "candidate"), required=True)
     compare = commands.add_parser("compare")
     for option in ("reference", "control", "candidate", "output"):
         compare.add_argument(f"--{option}", required=True, type=Path)
@@ -277,6 +283,14 @@ def main(argv: list[str] | None = None) -> int:
     judgment.add_argument("--unjudged", action="store_true")
     args = parser.parse_args(argv)
     try:
+        if args.command == "capture":
+            from gather_context_capture import capture
+
+            result = capture(campaign=args.campaign_root, spec_path=args.spec, output=args.output,
+                             arm=args.arm, handle_path=args.handle, handle_sha=args.handle_sha256,
+                             native_sha=args.native_sha256)
+            print(f"Recorded {len(result['cases'])} cases with settled start and end observations")
+            return 0
         if args.command == "compare":
             from gather_context_compare import compare
 
