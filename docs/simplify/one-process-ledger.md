@@ -21083,3 +21083,69 @@ members. Its native close SHA-256 is
 c7a14b4e568d750baead89cba379ea3415bca7207190d3e5e0a29439553bf59f.
 The current native transport and normal managed client parity
 check is the next L6 action.
+
+### 25 November 2026 — Current Windows L6 transport and managed clients
+
+On 68ff4c6a, Nextest CI selected four combined_reads cases with all
+features, locked and offline. All four passed with 60 skipped.
+The native cases took 23.136 s and the command took 121.66 s with
+compilation. The warm answer-loop/target-cuda used incremental 1.
+The selected cases compare complete singleton and many/Open Answer
+packets across the native pipe, CLI and HTTPS MCP, plus canonical
+read families including Search and Parse. The exact execution receipt
+under L5C/windows-completion-l6-current-pair-r1 has SHA-256
+ddccb30331ec6358961f0648568a1ce42adf605af9c6e704c8e93c97f7dd64b8.
+
+The matched normal Windows 1.8.209 debug runtime staged on the
+same source in 359.434 s under the checked r7 static CPU environment.
+Its install manifest SHA-256 is
+c2401bf750cdcf3f87b1a4462f647d79f71e67350cc54bb0ad9f7fc1fd9ac951.
+The build execution SHA-256 is
+1b77a3b6d0182b6907444b9262b350b509ccc390b9d2caa8161e437c868889ef.
+
+The owned managed client preflight passed on two 16-file projects.
+It validated three normalized full Answer /3 envelopes across CLI
+and HTTPS MCP, HTTPS API, and framed I2 Invoke. It exercised 20
+native and 30 MCP tools, first-status flows and airkctl session.
+The embedded MiniLM FP16 model returned repeatable 384-dimensional
+results on onnxruntime-cpu/1.30.0. Missing-source recovery retained
+one job identity and the automatic orphan recovery passed. The
+induced scope metadata failure matched its typed receipt and log,
+and the verifier restored the metadata and preserved source bytes.
+Managed shutdown completed. The client fixture was empty afterward,
+and the pair manifest hash stayed unchanged. The measured test
+reported 223.567 s and the outer command took 300.455 s. The report
+and exact command receipts have SHA-256
+64e49a2ad220bdcd66a733cbf80179001408dbe35291669eee1d2292cca3130e
+and 154b3dc2f0598d2898fb7ef350d591a3fd5424f127c2de9ab6ab5c125a4f2b54.
+
+These are the current scoped L6 checks relevant to the private
+Windows evaluation. The earlier full workspace sweep remains
+recorded with its 261 failed cases and no doctest selection. The
+frozen private /3 CUDA configuration follows the reviewed typed
+device-status refusal for profiles outside the compiled catalog.
+The tested legacy profile and index reads passed. This does not
+establish a successful device-configuration migration on any
+compiled-catalog setup.
+
+The capacity trace verified 12 distinct fresh delivered jobs and
+174 distinct dispatches with admission, response and settlement.
+Receipt SHA-256 is
+b6810e14531fca1ce6d68d526768eb154982e7f1b82628583722562919f37115.
+The repair-disabled control's 17 checked disposable staged files
+were removed after closure and reauthentication of all originals.
+The exact copy size was 2,237,340,258 bytes. The reclaim receipt has
+SHA-256 5dc1fcd55050f9decb89fe80c96f802dd2bff0ab28669d08806600299a0e1ee7.
+The candidate image and compact evidence remain available for resume.
+
+Both CUDA lifetimes are cleanly closed. The 20-case complete-evidence
+freeze was reverified and has no hosted sign-in or scored sessions.
+The next executable action after interactive sign-in is to reopen
+the same settled candidate from win-completion-repair-control-r1,
+check the two frozen publication tokens and catalog, and enable
+focus-1024-cuda and context-compact-fp16-cuda. Generate a fresh
+complete_evidence_pass.py spec bound to that Ready handle and run
+run_pass.py --stage all on the pinned Sol/Astra roles. Apply the
+12-of-20 and five-per-repository review trigger before opening the
+judged Windows baseline. The three cumulative Windows change sets
+and the manual Windows results review remain ahead.
