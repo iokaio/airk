@@ -20507,3 +20507,40 @@ Private disposition SHA-256 is 0d4cc7bd114ca43e39bc49d3c473f34ba2625a59b53229094
 the autonomous index repair phase on isolated disposable fixtures.
 The Windows complete-evidence and judged series still require a
 qualified exact-tool Codex runner.
+
+### 25 November 2026 — Detached lexical repair proof on Windows
+
+The bounded index research disposition is recorded in 02c094fd. Autonomous
+repair began on a new disposable Store fixture. Its missing FTS row was
+first refused by ordinary snapshot Verify. The repair test authenticated one
+bounded UTF-8 payload, the associated chunk and its canonical terms.
+The same native lexical query checked the target, a nearby known hit and
+a known no-match inside the transaction. After commit the missing citation
+returned through the ordinary reader at the next sequence. Previously
+opened readers kept their snapshots. The earlier change record, both file
+records and the committed vector row remained readable. Stale or mismatched
+inputs, a failed control, expiry, cancellation before commit and SQLite
+writer contention each left the old publication intact.
+
+Cargo 1.98 Windows Store Clippy passed on all targets and features with
+warnings denied in 32.966 s. Nextest ci selected two Store library tests
+with all features, passed both and skipped 919 in 106.593 s including the
+build. The guarded human shell used the warm answer-loop/target-cuda
+target with incremental compilation enabled and audited 564 changed
+outputs. The input digest receipt is
+2db00fa180403c4e21a5489d2a30a7af31cf97bc562d62fefcb793ab70feca01.
+Exact commands, build timings and owner admission are in
+L5C/windows-completion-fts-repair-preflight-r1. The execution receipt is
+9ce5fbae9700c0cedd7bf6c549a5628068e10540aa7c265b59df8c7152ecc208.
+
+This proof uses a raw, detached payload. The live Current owner uses
+retained extraction JSON with a separate digest. Independent Search and
+scheduler reviews located the next boundary at the Current writer, with
+the existing project lease, source policy and settings guards. The next
+native test should bind the actual retained extraction and publish the
+restored posting and lexical commit together. The existing automatic
+Verify scheduler owns post-publication and idle work. Its physical check
+alone cannot establish an omitted posting from source evidence. Inline
+admission still needs the original allowance and a measured repair and
+fallback bound. No service-triggered repair, same-request replay, or
+repair latency gate has been measured.

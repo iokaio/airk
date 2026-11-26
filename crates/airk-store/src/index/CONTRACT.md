@@ -153,6 +153,28 @@ here first.
   It uses ordinary Verify and creates no private owner session. Existing
   private owner receipts retain their original custody and recovery checks.
 
+
+## Private missing-row repair proof
+
+A Store unit test can restore one completely absent FTS row in a detached
+index. It refuses Current collection metadata, where the Current writer
+owns the scope and lexical commit. The fixture uses one bounded raw UTF-8
+source payload as its sole chunk. Current collections store extraction JSON
+under a separate digest. The writer checks the committed sequence,
+source digest against the actual retained bytes, path, chunk ordinal, stable
+identity and citation. The supplied posting must equal the canonical terms
+recomputed from the retained source.
+
+A scoped writer connection uses a zero SQLite busy timeout and the normal
+FULL synchronous mode. The immediate transaction acquires the write lock
+without waiting. Exact-path unranked MATCH uses the shared reader query for
+the omitted posting, a neighboring positive and a no-match control. All
+three are checked before and after insertion. The writer checks cancellation
+and the deadline before commit, then publishes only the restored posting and
+the next Store sequence. Existing readers keep their snapshots. The proof
+does not bound SQLite sync latency or exercise service diagnosis, admission,
+Current publication authority, or request replay.
+
 ## Not yet
 
 Compaction of dead vector rows; the free-space and size-cap check (D8) is

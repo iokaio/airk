@@ -275,6 +275,17 @@ fn replacing_a_file_removes_its_old_rows_and_unshared_payload() -> Result<()> {
     writer.verify()
 }
 
+fn omit_first_fts_row(connection: &rusqlite::Connection) -> Result<()> {
+    assert_eq!(
+        connection.execute(
+            "DELETE FROM fts WHERE rowid=(SELECT min(id) FROM chunks)",
+            []
+        )?,
+        1
+    );
+    Ok(())
+}
+
 #[test]
 fn snapshot_verify_rejects_missing_fts_rows() -> Result<()> {
     let directory = tempfile::tempdir()?;
@@ -284,17 +295,201 @@ fn snapshot_verify_rejects_missing_fts_rows() -> Result<()> {
     IndexWriter::verify_snapshot(directory.path(), sequence)?;
 
     let connection = schema::open_writer(&directory.path().join(DATABASE_FILE))?;
-    assert_eq!(
-        connection.execute(
-            "DELETE FROM fts WHERE rowid=(SELECT min(id) FROM chunks)",
-            []
-        )?,
-        1
-    );
+    omit_first_fts_row(&connection)?;
     let error = IndexWriter::verify_snapshot(directory.path(), sequence).unwrap_err();
     assert!(error.is::<crate::current::PrivateIntegrityFailure>());
     assert_eq!(writer.sequence()?, sequence);
     assert!(!reader.lexical(&query(&["xalpha"], true))?.0.is_empty());
+    Ok(())
+}
+
+#[test]
+fn detached_missing_fts_row_repair_is_atomic_and_preserves_snapshots() -> Result<()> {
+    use crate::current::lexical;
+    use std::{
+        cell::Cell,
+        time::{Duration, Instant},
+    };
+    use writer::{FtsRestore, FtsWitness};
+
+    const PATH: &str = "src/a.rs";
+    const BODY: &str = "fn alpha() {}";
+    const CANONICAL_TERMS: &str = "xa xalpha xfn xrs xsrc";
+    let directory = tempfile::tempdir()?;
+    let mut writer = IndexWriter::create(directory.path())?;
+    let target_id = lexical::stable_id(PATH, 0)?;
+    let mut target = entry(PATH, BODY, "rust", &[CANONICAL_TERMS])?;
+    target.chunks[0].stable_id = target_id;
+    writer.apply(Batch {
+        files: vec![
+            upsert(target),
+            upsert(entry(
+                "src/b.py",
+                "def gamma(): pass",
+                "python",
+                &["xgamma"],
+            )?),
+        ],
+        change: Some(b"first".to_vec()),
+        ..Default::default()
+    })?;
+    writer.configure_vectors(Some(&setup()))?;
+    writer.commit_vectors(VectorBatch {
+        setup: setup(),
+        files: vec![FileVectors {
+            path: PATH.into(),
+            source_hash: hash(BODY),
+            units: vec![unit(0, "north")],
+            failed: false,
+        }],
+        vectors: vec![(hash("north"), vec![0.0, 1.0])],
+    })?;
+    let sequence = writer.sequence()?;
+    let healthy = IndexReader::open(directory.path())?;
+
+    let mut connection = schema::open_writer(&directory.path().join(DATABASE_FILE))?;
+    omit_first_fts_row(&connection)?;
+    let damaged = IndexReader::open(directory.path())?;
+    let target_query = query(&["xalpha", "xfn"], false);
+    let healthy_hit = healthy.lexical(&target_query)?;
+    assert_eq!(healthy_hit.0.len(), 1);
+    assert_eq!(healthy_hit.0[0].citation, b"src/a.rs:0");
+    assert_eq!(damaged.lexical(&target_query)?, (Vec::new(), false));
+
+    let proposal = FtsRestore {
+        sequence,
+        source_hash: hash(BODY),
+        canonical_terms: CANONICAL_TERMS,
+        missing: FtsWitness {
+            path: PATH,
+            terms: &["xalpha", "xfn"],
+            expected: Some((0, target_id, b"src/a.rs:0")),
+        },
+        positive: FtsWitness {
+            path: "src/b.py",
+            terms: &["xgamma"],
+            expected: Some((0, hash("src/b.py#0"), b"src/b.py:0")),
+        },
+        no_match: FtsWitness {
+            path: PATH,
+            terms: &["xabsent"],
+            expected: None,
+        },
+    };
+    let deadline = || Instant::now() + Duration::from_secs(5);
+    let stale = FtsRestore {
+        sequence: sequence - 1,
+        ..proposal.clone()
+    };
+    assert!(
+        writer
+            .restore_missing_fts_row(&stale, deadline(), || false)
+            .unwrap_err()
+            .to_string()
+            .contains("stale")
+    );
+    let wrong_source = FtsRestore {
+        source_hash: hash("wrong"),
+        ..proposal.clone()
+    };
+    assert!(
+        writer
+            .restore_missing_fts_row(&wrong_source, deadline(), || false)
+            .unwrap_err()
+            .to_string()
+            .contains("binding differs")
+    );
+    let wrong_terms = FtsRestore {
+        canonical_terms: "xalpha xfn",
+        ..proposal.clone()
+    };
+    assert!(
+        writer
+            .restore_missing_fts_row(&wrong_terms, deadline(), || false)
+            .unwrap_err()
+            .to_string()
+            .contains("canonical terms differ")
+    );
+    let broken_control = FtsRestore {
+        no_match: FtsWitness {
+            terms: &["xfn"],
+            ..proposal.no_match
+        },
+        ..proposal.clone()
+    };
+    assert!(
+        writer
+            .restore_missing_fts_row(&broken_control, deadline(), || false)
+            .unwrap_err()
+            .to_string()
+            .contains("witness match differs")
+    );
+    let checks = Cell::new(0);
+    assert!(
+        writer
+            .restore_missing_fts_row(&proposal, deadline(), || {
+                checks.set(checks.get() + 1);
+                checks.get() == 4 // Abort after the row and sequence writes, before COMMIT.
+            })
+            .unwrap_err()
+            .to_string()
+            .contains("cancelled")
+    );
+    assert!(
+        writer
+            .restore_missing_fts_row(&proposal, Instant::now(), || false)
+            .unwrap_err()
+            .to_string()
+            .contains("deadline expired")
+    );
+    let competing =
+        connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let busy = writer
+        .restore_missing_fts_row(&proposal, deadline(), || false)
+        .unwrap_err();
+    assert_eq!(
+        busy.downcast_ref::<rusqlite::Error>()
+            .and_then(rusqlite::Error::sqlite_error_code),
+        Some(rusqlite::ErrorCode::DatabaseBusy)
+    );
+    competing.rollback()?;
+    let refused = IndexReader::open(directory.path())?;
+    assert_eq!(refused.sequence(), sequence);
+    assert_eq!(refused.lexical(&target_query)?, (Vec::new(), false));
+    drop(refused);
+
+    assert_eq!(
+        writer.restore_missing_fts_row(&proposal, deadline(), || false)?,
+        sequence + 1
+    );
+    let repaired = IndexReader::open(directory.path())?;
+    assert_eq!(repaired.sequence(), sequence + 1);
+    assert_eq!(repaired.lexical(&target_query)?, healthy_hit);
+    assert_eq!(damaged.sequence(), sequence);
+    assert_eq!(damaged.lexical(&target_query)?, (Vec::new(), false));
+    assert_eq!(healthy.lexical(&target_query)?, healthy_hit);
+    for control in [query(&["xgamma"], false), query(&["xabsent"], false)] {
+        assert_eq!(repaired.lexical(&control)?, damaged.lexical(&control)?);
+    }
+    let unchanged = repaired.lexical(&query(&["xgamma"], false))?;
+    assert_eq!(unchanged.0.len(), 1);
+    assert_eq!(unchanged.0[0].citation, b"src/b.py:0");
+    assert_eq!(
+        repaired.lexical(&query(&["xabsent"], false))?,
+        (Vec::new(), false)
+    );
+    assert_eq!(repaired.file(PATH)?, damaged.file(PATH)?);
+    assert_eq!(repaired.file("src/b.py")?, damaged.file("src/b.py")?);
+    assert_eq!(
+        repaired.changes_since(0, 10)?,
+        damaged.changes_since(0, 10)?
+    );
+    assert_eq!(repaired.vector_setup()?, damaged.vector_setup()?);
+    assert_eq!(repaired.units(PATH)?, damaged.units(PATH)?);
+    let matrix = repaired.load_vectors()?.expect("vector generation");
+    assert_eq!(matrix.rows(), 1);
+    assert_eq!(matrix.search(&[0.0, 1.0], 1, None)?[0].score, 1.0);
+    IndexWriter::verify_snapshot(directory.path(), sequence + 1)?;
     Ok(())
 }
 

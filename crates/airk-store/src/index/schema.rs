@@ -81,8 +81,9 @@ CREATE TABLE changes(
   PRIMARY KEY(sequence, ordinal)) WITHOUT ROWID;
 ";
 
+const BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
 fn configure(connection: &Connection) -> Result<()> {
-    connection.busy_timeout(std::time::Duration::from_secs(5))?;
     connection.execute_batch(
         "PRAGMA temp_store=MEMORY; PRAGMA cache_size=-65536; PRAGMA foreign_keys=OFF;",
     )?;
@@ -104,6 +105,7 @@ pub(super) fn create(path: &Path) -> Result<Connection> {
     connection.pragma_update(None, "application_id", APPLICATION_ID)?;
     connection.execute_batch(TABLES)?;
     connection.pragma_update(None, "user_version", USER_VERSION)?;
+    connection.busy_timeout(BUSY_TIMEOUT)?;
     configure(&connection)?;
     Ok(connection)
 }
@@ -122,11 +124,21 @@ fn check_format(connection: &Connection) -> Result<()> {
 }
 
 pub(super) fn open_writer(path: &Path) -> Result<Connection> {
+    open_writer_with_timeout(path, BUSY_TIMEOUT)
+}
+
+#[cfg(test)]
+pub(super) fn open_writer_nowait(path: &Path) -> Result<Connection> {
+    open_writer_with_timeout(path, std::time::Duration::ZERO)
+}
+
+fn open_writer_with_timeout(path: &Path, timeout: std::time::Duration) -> Result<Connection> {
     let connection = Connection::open_with_flags(
         path,
         OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .context("open index database for writing")?;
+    connection.busy_timeout(timeout)?;
     check_format(&connection)?;
     connection.execute_batch("PRAGMA synchronous=FULL;")?;
     configure(&connection)?;
@@ -153,6 +165,7 @@ pub(crate) fn is_legacy_database(path: &Path) -> Result<bool> {
 pub(super) fn open_reader(path: &Path) -> Result<Connection> {
     let connection = open_read_only(path)?;
     check_format(&connection)?;
+    connection.busy_timeout(BUSY_TIMEOUT)?;
     configure(&connection)?;
     Ok(connection)
 }

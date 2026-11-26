@@ -102,6 +102,174 @@ pub struct IndexWriter {
     connection: Connection,
 }
 
+#[cfg(test)]
+#[derive(Clone, Copy)]
+pub(super) struct FtsWitness<'a> {
+    pub path: &'a str,
+    pub terms: &'a [&'a str],
+    pub expected: Option<(u32, Sha256Digest, &'a [u8])>,
+}
+
+#[cfg(test)]
+#[derive(Clone)]
+pub(super) struct FtsRestore<'a> {
+    pub sequence: u64,
+    pub source_hash: Sha256Digest,
+    pub canonical_terms: &'a str,
+    pub missing: FtsWitness<'a>,
+    pub positive: FtsWitness<'a>,
+    pub no_match: FtsWitness<'a>,
+}
+
+#[cfg(test)]
+fn verify_fts_witness(
+    transaction: &Transaction<'_>,
+    witness: FtsWitness<'_>,
+    expected: Option<(u32, Sha256Digest, &[u8])>,
+) -> Result<()> {
+    validate_path(witness.path)?;
+    ensure!(
+        witness.terms.len() <= 8
+            && witness
+                .terms
+                .iter()
+                .all(|term| !term.is_empty() && term.len() <= 256),
+        "FTS repair witness exceeds term bounds"
+    );
+    let query = super::LexicalQuery {
+        terms: witness
+            .terms
+            .iter()
+            .map(|term| (*term).to_owned())
+            .collect(),
+        path_prefix: None,
+        paths: Some(vec![witness.path.to_owned()]),
+        limit: 1,
+        ranked: false,
+    };
+    let (hits, more) = super::IndexReader::lexical_on(transaction, &query)?;
+    ensure!(!more, "FTS repair witness is ambiguous");
+    match (hits.as_slice(), expected) {
+        ([], None) => {}
+        ([hit], Some((ordinal, stable_id, citation))) => ensure!(
+            hit.path == witness.path
+                && hit.ordinal == ordinal
+                && hit.stable_id == stable_id
+                && hit.citation.as_slice() == citation,
+            "FTS repair witness evidence differs"
+        ),
+        _ => anyhow::bail!("FTS repair witness match differs"),
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+impl IndexWriter {
+    /// Private proof for a detached index with one UTF-8 chunk covering the whole source.
+    pub(super) fn restore_missing_fts_row(
+        &mut self,
+        proposal: &FtsRestore<'_>,
+        deadline: std::time::Instant,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<u64> {
+        use crate::current::{lexical, plain_writer};
+        use sha2::{Digest, Sha256};
+        use std::time::Instant;
+
+        const MAX_BYTES: usize = 32 * 1024;
+
+        let check_budget = || {
+            ensure!(!cancelled(), "FTS repair cancelled");
+            ensure!(Instant::now() < deadline, "FTS repair deadline expired");
+            Ok::<(), anyhow::Error>(())
+        };
+        check_budget()?;
+        let (ordinal, stable_id, citation) = proposal
+            .missing
+            .expected
+            .context("missing expected repair evidence")?;
+        ensure!(
+            proposal.positive.expected.is_some()
+                && proposal.no_match.expected.is_none()
+                && proposal.missing.path != proposal.positive.path
+                && ordinal == 0
+                && citation.len() <= MAX_BYTES
+                && proposal.canonical_terms.len() <= MAX_BYTES,
+            "invalid FTS repair proposal"
+        );
+        validate_path(proposal.missing.path)?;
+        ensure!(
+            lexical::stable_id(proposal.missing.path, u64::from(ordinal))? == stable_id,
+            "FTS repair stable identity differs"
+        );
+
+        let mut connection = schema::open_writer_nowait(&self.directory.join(DATABASE_FILE))?;
+        let transaction =
+            connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        check_budget()?;
+        ensure!(
+            sequence(&transaction)? == proposal.sequence,
+            "FTS repair publication is stale"
+        );
+        for key in [
+            plain_writer::SCOPE_KEY,
+            plain_writer::COLLECTION_STATE_KEY,
+            plain_writer::LEXICAL_COMMIT_KEY,
+        ] {
+            ensure!(
+                schema::meta_blob(&transaction, key)?.is_none(),
+                "FTS repair proof requires a detached index"
+            );
+        }
+        let (id, raw_bytes, encoding, body, missing): (i64, i64, u8, Vec<u8>, bool) = transaction
+            .query_row(
+                "SELECT c.id, p.raw_bytes, p.encoding, p.body, \
+                   NOT EXISTS(SELECT 1 FROM fts WHERE fts.rowid=c.id) \
+                 FROM chunks c JOIN files f ON f.id=c.file_id JOIN payloads p ON p.digest=f.payload \
+                 WHERE f.path=?1 AND f.source_hash=?2 AND f.payload=?2 AND c.ordinal=?3 \
+                   AND c.stable_id=?4 AND c.citation=?5 AND p.raw_bytes BETWEEN 0 AND ?6 \
+                   AND length(p.body)<=?6 AND NOT EXISTS(SELECT 1 FROM chunks other \
+                     WHERE other.file_id=f.id AND other.id<>c.id)",
+                params![proposal.missing.path, digest_bytes(&proposal.source_hash), ordinal, digest_bytes(&stable_id), citation, i64::try_from(MAX_BYTES)?],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            )
+            .optional()?
+            .context("FTS repair retained chunk binding differs or exceeds bounds")?;
+        ensure!(missing, "FTS repair requires an absent row");
+        let raw = super::decode_payload(encoding, u64::try_from(raw_bytes)?, &body)?;
+        ensure!(
+            Sha256Digest::from_bytes(Sha256::digest(&raw).into()) == proposal.source_hash,
+            "FTS repair retained source digest differs"
+        );
+        let source = std::str::from_utf8(&raw)?;
+        ensure!(
+            !source.is_empty()
+                && !proposal.canonical_terms.is_empty()
+                && lexical::chunk_terms(proposal.missing.path, source) == proposal.canonical_terms,
+            "FTS repair canonical terms differ"
+        );
+        verify_fts_witness(&transaction, proposal.missing, None)?;
+        verify_fts_witness(&transaction, proposal.positive, proposal.positive.expected)?;
+        verify_fts_witness(&transaction, proposal.no_match, None)?;
+        check_budget()?;
+        transaction.execute(
+            "INSERT INTO fts(rowid,terms) VALUES(?1,?2)",
+            params![id, proposal.canonical_terms],
+        )?;
+        verify_fts_witness(&transaction, proposal.missing, proposal.missing.expected)?;
+        verify_fts_witness(&transaction, proposal.positive, proposal.positive.expected)?;
+        verify_fts_witness(&transaction, proposal.no_match, None)?;
+        let next = proposal
+            .sequence
+            .checked_add(1)
+            .context("index sequence overflow")?;
+        schema::set_meta(&transaction, "sequence", i64::try_from(next)?)?;
+        check_budget()?;
+        transaction.commit()?;
+        Ok(next)
+    }
+}
+
 fn apply_resource(transaction: &Transaction<'_>, resource: &ResourceChange) -> Result<()> {
     ensure!(
         !resource.key.is_empty()

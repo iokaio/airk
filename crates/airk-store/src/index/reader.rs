@@ -325,6 +325,13 @@ impl IndexReader {
     /// Citation units that contain every term. Returns the hits and whether
     /// more matched than `limit`.
     pub fn lexical(&self, query: &LexicalQuery) -> Result<(Vec<LexicalHit>, bool)> {
+        Self::lexical_on(&self.connection, query)
+    }
+
+    pub(super) fn lexical_on(
+        connection: &Connection,
+        query: &LexicalQuery,
+    ) -> Result<(Vec<LexicalHit>, bool)> {
         ensure!(
             (1..=MAX_LEXICAL_HITS).contains(&query.limit),
             "lexical limit out of range"
@@ -346,7 +353,7 @@ impl IndexReader {
              WHERE fts MATCH ?1 AND (?2 IS NULL OR substr(f.path,1,length(?2))=?2) \
              AND (?3 IS NULL OR f.path IN (SELECT value FROM json_each(?3))) ORDER BY {order} LIMIT ?4"
         );
-        let mut statement = self.connection.prepare_cached(&sql)?;
+        let mut statement = connection.prepare_cached(&sql)?;
         let mut rows = statement.query(params![
             expression,
             query.path_prefix,
