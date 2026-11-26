@@ -759,6 +759,274 @@ fn current_tool(
     Ok((response, started))
 }
 
+/// Measures admitted Window reads against an already running service. The
+/// private manifest pins the published scope and the exact Search arguments.
+#[cfg(windows)]
+#[test]
+#[ignore = "requires a pinned private input and an admitted Windows service"]
+fn window_search_external_latency_observer() -> anyhow::Result<()> {
+    use airk_core::{
+        catalog_management::{CatalogEntity, CatalogItem},
+        identity::RevisionToken,
+        index_catalog::{IndexId, QueryProjectId},
+        scoped_reads::ScopeObservation,
+        service::{ControlMethod, ControlResponse, ToolResponseMode},
+    };
+    use anyhow::{Context, anyhow, ensure};
+    use serde::Deserialize;
+    use sha2::{Digest, Sha256};
+    use std::{collections::BTreeSet, io::Read, path::PathBuf, time::Instant};
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Input {
+        schema: String,
+        control: PathBuf,
+        repetitions: usize,
+        repositories: Vec<Repository>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Repository {
+        repo: String,
+        index_id: IndexId,
+        project_id: QueryProjectId,
+        worktree: PathBuf,
+        publication_token: RevisionToken,
+        requests: Vec<Request>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Request {
+        id: String,
+        arguments_json: String,
+    }
+
+    let path = PathBuf::from(
+        std::env::var_os("AIRK_WINDOW_SEARCH_OBSERVER_INPUT")
+            .context("missing Window Search observer input")?,
+    );
+    let expected = std::env::var("AIRK_WINDOW_SEARCH_OBSERVER_INPUT_SHA256")?;
+    ensure!(
+        path.is_absolute() && path.is_file(),
+        "invalid observer input path"
+    );
+    const MAX_INPUT_BYTES: u64 = 512 * 1024;
+    let mut bytes = Vec::new();
+    fs::File::open(path)?
+        .take(MAX_INPUT_BYTES + 1)
+        .read_to_end(&mut bytes)?;
+    ensure!(
+        bytes.len() as u64 <= MAX_INPUT_BYTES,
+        "observer input exceeds cap"
+    );
+    let input_sha256 = format!("{:x}", Sha256::digest(&bytes));
+    ensure!(input_sha256 == expected, "observer input digest differs");
+    let input: Input = serde_json::from_slice(&bytes).context("invalid observer input")?;
+    ensure!(
+        input.schema == "airk.private.window-search-observer-input/1"
+            && input.control.is_absolute()
+            && input.control.is_dir()
+            && (1..=16).contains(&input.repetitions)
+            && (1..=2).contains(&input.repositories.len()),
+        "invalid observer input scope or repetition count"
+    );
+
+    let mut repos = BTreeSet::new();
+    let mut indexes = BTreeSet::new();
+    for repo in &input.repositories {
+        ensure!(
+            matches!(repo.repo.as_str(), "bookbuilder" | "munarium")
+                && repos.insert(&repo.repo)
+                && indexes.insert(repo.index_id)
+                && repo.worktree.is_absolute()
+                && repo.worktree.is_dir()
+                && (1..=32).contains(&repo.requests.len()),
+            "invalid observer repository"
+        );
+        let mut ids = BTreeSet::new();
+        for request in &repo.requests {
+            ensure!(
+                !request.id.is_empty()
+                    && request.id.len() <= 64
+                    && request
+                        .id
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || b"_-".contains(&byte))
+                    && ids.insert(&request.id)
+                    && request.arguments_json.len() <= 16 * 1024,
+                "invalid observer request identity or size"
+            );
+        }
+    }
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let rows = runtime.block_on(async {
+        let mut rows = Vec::new();
+        for repo in &input.repositories {
+            let mut requests = Vec::new();
+            for request in &repo.requests {
+                let arguments: serde_json::Map<String, Value> =
+                    serde_json::from_str(&request.arguments_json)
+                        .map_err(|_| anyhow!("invalid observer arguments for {}", request.id))?;
+                let parsed: airk_mcp::SearchArgs =
+                    serde_json::from_value(Value::Object(arguments.clone()))
+                        .map_err(|_| anyhow!("unrecognized Search arguments for {}", request.id))?;
+                ensure!(
+                    matches!(parsed.mode, None | Some(airk_mcp::SearchMode::Lexical))
+                        && !parsed.semantic,
+                    "unexpected Search mode for {}",
+                    request.id
+                );
+                let args_sha256 =
+                    format!("{:x}", Sha256::digest(request.arguments_json.as_bytes()));
+                requests.push((&request.id, arguments, args_sha256));
+            }
+
+            let window = common::pipe::open_window(
+                &input.control,
+                "window-search-latency-observer",
+                vec![repo.index_id],
+                vec![repo.project_id],
+            )
+            .await?;
+            let observed = async {
+                let response = airk_cli::service_runtime::request(
+                    &input.control,
+                    ControlMethod::CatalogDetail {
+                        entity: CatalogEntity::Index { id: repo.index_id },
+                        expected_catalog_revision: Some(window.catalog_revision),
+                    },
+                )
+                .await?;
+                let ControlResponse::CatalogDetail { detail, .. } = response else {
+                    anyhow::bail!("observer catalog detail unavailable");
+                };
+                let Some(CatalogItem::Index(index)) = detail.item else {
+                    anyhow::bail!("observer catalog index unavailable");
+                };
+                ensure!(
+                    detail.namespace == window.selection.namespace
+                        && detail.revision == window.catalog_revision
+                        && index.id == repo.index_id
+                        && !index.tombstone
+                        && fs::canonicalize(&index.backing.root)?
+                            == fs::canonicalize(&repo.worktree)?,
+                    "observer catalog worktree or scope differs"
+                );
+
+                for repetition in 0..input.repetitions {
+                    common::pipe::renew(&input.control, &window).await?;
+                    for offset in 0..requests.len() {
+                        let position = if repetition % 2 == 0 {
+                            offset
+                        } else {
+                            requests.len() - 1 - offset
+                        };
+                        let (id, arguments, args_sha256) = &requests[position];
+                        let method = ControlMethod::ToolsCall {
+                            read_attempt: None,
+                            tool: "airk_search".into(),
+                            arguments: arguments.clone(),
+                            selection: window.tool_selection(),
+                            response_mode: ToolResponseMode::Terse,
+                            usage_client: airk_core::usage::ClientFamily::Cli,
+                        };
+                        let started = Instant::now();
+                        let response =
+                            airk_cli::service_runtime::request(&input.control, method).await;
+                        let elapsed_ns = u64::try_from(started.elapsed().as_nanos())?;
+                        let result = match response? {
+                            ControlResponse::ToolResult { result } => result,
+                            ControlResponse::Failure { code } => {
+                                anyhow::bail!(
+                                    "native Search refused for {}/{id}: {code}",
+                                    repo.repo
+                                );
+                            }
+                            other => anyhow::bail!(
+                                "unexpected native Search response for {}/{id}: {:?}",
+                                repo.repo,
+                                std::mem::discriminant(&other)
+                            ),
+                        };
+                        ensure!(
+                            result["isError"] != true,
+                            "native Search failed for {}/{id}",
+                            repo.repo
+                        );
+                        let body: Value = serde_json::from_str(
+                            result["content"][0]["text"]
+                                .as_str()
+                                .context("observer Search reply body missing")?,
+                        )?;
+                        let scope: ScopeObservation =
+                            serde_json::from_value(body["scope_observation"].clone())?;
+                        scope.validate()?;
+                        let [member] = scope.members.as_slice() else {
+                            anyhow::bail!("observer Search did not project a singleton scope");
+                        };
+                        let token: RevisionToken =
+                            serde_json::from_value(body["publication"]["token"].clone())?;
+                        ensure!(
+                            scope.selection == window.source()
+                                && member.index_id == repo.index_id
+                                && matches!(member.memberships.as_slice(), [membership]
+                                    if membership.project_id == repo.project_id)
+                                && token == repo.publication_token,
+                            "observer Search scope or publication differs"
+                        );
+                        let hits = body["hits"]
+                            .as_array()
+                            .context("observer Search hits missing")?;
+                        let truncated = body["truncated"]
+                            .as_bool()
+                            .context("observer Search truncation missing")?;
+                        let response_sha256 =
+                            format!("{:x}", Sha256::digest(serde_json::to_vec(&result)?));
+                        let hits_sha256 =
+                            format!("{:x}", Sha256::digest(serde_json::to_vec(hits)?));
+                        rows.push(json!({
+                            "repo": repo.repo,
+                            "id": id,
+                            "repetition": repetition + 1,
+                            "arguments_sha256": args_sha256,
+                            "elapsed_ns": elapsed_ns,
+                            "response_sha256": response_sha256,
+                            "scope_observation": scope,
+                            "publication_token": token,
+                            "execution": body["execution"],
+                            "hit_count": hits.len(),
+                            "hits_sha256": hits_sha256,
+                            "truncated": truncated,
+                        }));
+                    }
+                }
+                Ok::<_, anyhow::Error>(())
+            }
+            .await;
+            let closed = common::pipe::close_window(&input.control, &window).await;
+            closed.context("failed to close observer Window")?;
+            observed?;
+        }
+        Ok::<_, anyhow::Error>(rows)
+    })?;
+    println!(
+        "AIRK_WINDOW_SEARCH_OBSERVER_RECEIPT {}",
+        json!({
+            "schema": "airk.private.window-search-observer-receipt/1",
+            "input_sha256": input_sha256,
+            "response_mode": "terse",
+            "rows": rows,
+        })
+    );
+    Ok(())
+}
+
 fn current_ctl(control: &Path, selection: &[&str], arguments: &[&str]) -> anyhow::Result<Output> {
     current_ctl_routed(control, None, selection, arguments)
 }

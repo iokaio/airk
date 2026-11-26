@@ -20947,3 +20947,139 @@ observations in the actual native in-process worker. Shorter
 deadline and cancellation decisions passed at component scope.
 External peer-close propagation during an in-flight repair and the
 matched ordinary workload latency measurement remain open.
+
+### 25 November 2026 — Current Windows CUDA candidate shakedown
+
+Workspace Clippy passed on 334dec45 with all features and targets,
+locked and offline, in 66.02 s. The private service fixture compiled
+in 293.00 s and the matched CLI in 0.44 s in the warm
+answer-loop/target-cuda with incremental 1. Build execution in
+L5C/windows-completion-review-image-r2 has SHA-256
+84c654c8717de3039ff0bb1a434b6f67f0d5707968078a4dea56baeb347a8a40.
+The source-bound CUDA image manifest has SHA-256
+009b111ab90996a322c0cb20f957e2d6c2e4b91100fcd5d8003ed097fe9aae36.
+The checked candidate staged byte-verified provider files from the
+existing approved runtime. The first preparation stopped before Cargo
+when the older Search image lacked reclaimed DLL copies.
+
+The same-install fixture reopened both original Ready Hybrid
+publications with the authenticated Focus 1024 W8 and Compact FP16
+CUDA pair. All ten final native Answer smoke responses passed,
+including the fresh re-enable records.
+
+| Stages | Bookbuilder | Munarium |
+| --- | ---: | ---: |
+| Neither | 4,966 ms | 1,145 ms |
+| Focus | 5,980 ms | 1,974 ms |
+| Arbiter | 7,282 ms | 2,112 ms |
+| Both | 7,451 ms | 3,280 ms |
+| Both after Focus re-enable | 7,690 ms | 3,285 ms |
+
+The first Arbiter-only probe identified the remaining Focus stage.
+The harness explicitly disabled Focus and passed the fresh replay.
+Recorded legacy status tracked the requested configurations.
+The separate device-status interface continued to return the exact
+typed arbiter_configuration_migration_refused response across the
+legacy configuration transitions. Canonical index status and Answer
+continued to serve. The checked final switch receipt is
+L5C/windows-completion-review-live-r1/switch-execution-r4.json,
+SHA-256 eb4cc0080293ad5fe49a11acc82e2e05cb414825acd7485704905cd860ca413e.
+
+Cold Focus and Arbiter enables took 7.682 and 9.199 s. Focus re-enable
+took 4.674 s. A 200 ms adapter-wide switch sample peaked at
+10,271 MiB across 170 samples. Arbiter's manual disable and reload
+took 8.688 s for re-enable. A Munarium Answer admitted during that
+transition reached delivery in 8.429 s, retained seven records,
+and disclosed context_absent and search_focus_deferred. Reload
+receipt SHA-256 is
+7ba757630fbc1e3b977b363ab62bc1ec6753edb237e0e15723fe3603e04ea1a3.
+The separate Munarium 1,800 ms work-budget case delivered a typed
+deadline partial with six records after 3,333 ms of client time
+including attachment. That observation does not establish a 1,800 ms
+client wall ceiling. Deadline replay SHA-256 is
+f5e87c7b039b4a95f8f6ca2e7dd75cffec934a511178e548e2ba15da8250c24f.
+
+All 16 native wrapper tool probes and all 30 predeclared leak probes
+passed. The leak check listed all 8,116 and 1,023 indexed paths,
+respectively, with no forbidden index or leak finding. The final
+settled read retained both publication tokens. The exact report
+hashes are 3bdb7ba93c6f1a0556a529d9403b9b4f94fff4ba86d893e70d5924edafa85a6e
+for tool probes and
+d71d2bc7d574bd32cd40cec74af6cec8aeb7dca45c1d0f92461679176617f07b
+for the leak check. On clean shutdown the job had zero active
+processes and zero members. The native close digest is
+7ed69a9bf6418bc09e013d1e131bee34be8e8e23c1e7e024ce1373a00e80ae2c.
+
+### 25 November 2026 — Windows capacity observation and live evidence freeze
+
+On this separate capacity workload, all four fresh Answers completed
+at each of serial, two-way and four-way admission. The measured
+rates were 10.822, 11.975 and 9.870 Answers/minute. The two-way
+rate was 1.1065 times serial, below the 1.3 threshold to increase
+concurrency. The sampled adapter-wide peak was 10,842 MiB at each
+level. These data do not establish a same-session batch gain or
+runtime pressure shedding. Existing owner and device-resource tests
+cover distinct contracts. The workload receipt in
+L5C/windows-completion-review-live-r1/capacity/concurrency.json
+has SHA-256 bc5cba863a7c4209d133e8b28b57ac4f3de0fe3cf3881ef8f8fb8717c8409460.
+
+The 20-case complete-evidence freeze pinned both genuinely admitted
+target publication tokens, 113 authenticated source spans, and the
+60-tool live catalog. The freeze hash is
+77afe3c5581533534e1a16d24cd0d3df75b64a91f0a3df5e9ffb2aeb6e09b878.
+A fresh native Answer through the treatment wrapper on one development
+case per repository delivered the approved 8 and 5 evidence passages
+respectively and retained both unchanged native replies separately.
+The live preflight did not launch a hosted actor or judge.
+
+The dedicated hosted account has no recorded sign-in yet. Once signed
+in, reopen the exact settled Windows candidate if necessary, check
+the same publication tokens and tool catalog bytes, and enable Focus
+and Compact FP16. Bind a fresh ceiling spec to that live handle using
+complete_evidence_pass.py and run it with run_pass.py --stage all.
+The baseline remains gated on the ceiling disposition. Windows
+transport parity and cost accounting continue separately.
+
+### 25 November 2026 — Matched ordinary Window Search timing
+
+On the same checked Windows host, the 334dec45 private CUDA
+candidate and exact retained pre-repair 754951d7 fixture served
+the same 20 frozen ordinary Search inputs. Both optional stages
+were disabled. Each arm warmed on one complete pass and measured
+four more passes, for 40 paired observations per repository.
+All measured replies used terse standalone M3 Window Search,
+the default requested mode and complete Hybrid execution. Each
+pair retained the same query arguments, scoped index and project
+memberships, policy and publication. No hit or truncation digest
+changed.
+
+| Repository | Control p95 | Candidate p95 | Ratio |
+| --- | ---: | ---: | ---: |
+| Bookbuilder | 1,502.655 ms | 1,472.583 ms | 0.980 |
+| Munarium | 367.846 ms | 370.417 ms | 1.007 |
+
+Both passed the 1.10 times nearest-rank p95 limit for this ordinary
+workload. These frozen default-mode calls have no path prefix and
+cannot nominate explicit lexical repair. The separate synthetic
+four-in-40 workload exceeded its mixed p95 limit. These results
+leave the cost of real repair-eligible ordinary traffic unmeasured.
+Inline same-request success, deferred recovery and coalescing have
+their own Windows fixture evidence above.
+
+The unprivileged observer initially opened a Window with no project
+membership. The read guard refused it before Search, and the
+diagnostic confirmed scoped_read_unavailable. The final observer
+pins the reviewed query project for each repository and validates
+the returned membership. Scoped all-feature Tools Clippy took
+2.62 s and the Cargo test build took 44.80 s, warm
+answer-loop/target-cuda with incremental 1. Build receipt digest
+is 1b919aa4bae05eb2dcf364454616ef9e65c8cf3fc557e584a6b72c2b6968786a.
+
+The input, ownership and raw measurements are under
+L5C/windows-completion-corpus-timing-r2. The comparison receipt has
+SHA-256 d9399af73394687c754d56c4353f7ded08f88d8eb73509202d6132b77ba19e39.
+The repair-disabled control closed with zero owned processes and
+members. Its native close SHA-256 is
+c7a14b4e568d750baead89cba379ea3415bca7207190d3e5e0a29439553bf59f.
+The current native transport and normal managed client parity
+check is the next L6 action.

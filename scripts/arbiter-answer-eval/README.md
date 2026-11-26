@@ -924,6 +924,35 @@ actor, dispatch and scoring evidence. It requires at least 12
 correct finishes overall and five per repository. Preserve an
 incomplete or below-threshold disposition with its own receipts.
 
+### Matched Window Search latency
+
+The Windows-only, ignored `window_search_external_latency_observer` selector
+in `crates/airk-cli/tests/tools.rs` measures a ready matched fixture through
+standalone native Window Search. It grants the exact index and query project
+from the authenticated catalog, verifies the published worktree and observed
+scope, and closes the Window after serving the bounded request roster.
+
+Set `AIRK_WINDOW_SEARCH_OBSERVER_INPUT` to the absolute private input and
+`AIRK_WINDOW_SEARCH_OBSERVER_INPUT_SHA256` to its lowercase SHA-256. The input
+has schema `airk.private.window-search-observer-input/1`, the absolute
+`control` directory, a `repetitions` count, and `repositories`. Each repository
+pins `repo`, `index_id`, `project_id`, the absolute `worktree`,
+`publication_token`, and `requests`. Each request has an `id` and an exact
+UTF-8 `arguments_json` string. Run the already built integration test binary
+once with `--exact --ignored --nocapture window_search_external_latency_observer`
+for each admitted image and input. Prepare the immutable publications, stage
+settings and request bytes before timing. Warm both arms on the identical
+request sequence and keep those rows separate from the measured samples.
+
+The selector emits one `AIRK_WINDOW_SEARCH_OBSERVER_RECEIPT` line with private
+per-call timings, request and result digests, projected scope and Search
+execution. Check complete matched samples, pinned publications and execution
+route before aggregating nearest-rank p95 per repository. The frozen whole-repo
+default Search workload can measure ordinary latency. Its requests cannot
+nominate the path-qualified explicit lexical repair. The injected Windows
+`window_search_synthetic_repair_latency_stress` selector measures triggering
+calls separately.
+
 ### Wider Search shortlist coverage
 
 Run the paired Search collector with a fixture launched under the private
