@@ -536,6 +536,7 @@ fn build(
             ),
         })
         .collect();
+    let delivered = records.iter().map(|record| (record.id, record)).collect();
     let removed_ids: BTreeSet<Sha256Digest> = removed
         .iter()
         .map(|index| gather.records[*index].id)
@@ -648,20 +649,12 @@ fn build(
             stop,
             shortened,
         });
-        for paragraph in super::compose::part(gather, part, level >= COMPACT_PARAGRAPHS) {
-            let evidence: Vec<Sha256Digest> = paragraph
-                .evidence
-                .iter()
-                .copied()
-                .filter(|id| !removed_ids.contains(id))
-                .collect();
-            if !evidence.is_empty() {
-                paragraphs.push(GroundedParagraph {
-                    evidence,
-                    ..paragraph
-                });
-            }
-        }
+        paragraphs.extend(super::compose::part(
+            gather,
+            part,
+            &delivered,
+            level >= COMPACT_PARAGRAPHS,
+        ));
     }
     let retained: BTreeSet<Sha256Digest> = records.iter().map(|record| record.id).collect();
     let conflicts = surviving(gather, conflicts(gather, assembly.parts), &retained);

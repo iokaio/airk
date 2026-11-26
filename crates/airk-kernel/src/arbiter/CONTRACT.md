@@ -427,6 +427,12 @@ What holds:
   frame less the handler's reserve (4,096, or twice the verification
   receipt floor plus 4,096 when verification is on), the representation the
   handler's reply ceiling and the receipt allocation are measured on.
+- **Clause paragraphs cite the packed reply.** They list delivered source
+  reads before discovery results within a clause. A span must survive at its
+  original citation pointer to appear in the location list. Clipped excerpts,
+  withheld spans and omitted records are counted in the paragraph, including
+  the compact form when it can retain a citation. The typed coverage, stop,
+  record and omission fields retain their existing meanings.
 - **Presentation trimming is not omission.** Union levels 1 to 4 shorten
   records (uncited hits, excerpt cuts, compact paragraphs) and disclose it
   per projection (`hits_total`, `rows_total`, `truncated`); a part is

@@ -672,7 +672,10 @@ fn level_one_still_trims_overlaps_and_delivers_every_text_whole() {
     ];
     let rows = rows_at(&hits, 1);
     locations_kept(&rows, &hits);
-    assert_eq!(rows[1]["overlaps"], json!([{"row":0,"bytes":319,"side":"head"}]));
+    assert_eq!(
+        rows[1]["overlaps"],
+        json!([{"row":0,"bytes":319,"side":"head"}])
+    );
     assert_eq!(rows[1]["text"], json!(numbered(41, 60)));
     for (index, hit) in hits.iter().enumerate() {
         assert_eq!(delivered(&rows, index), hit.text);
@@ -746,4 +749,191 @@ fn from_level_two_overlapping_spans_are_cut_each_on_their_own() {
     assert_eq!(rows[1]["same_as"], json!({"row":0}));
     assert_eq!(rows[1]["truncated"], json!(false));
     assert_eq!(delivered(&rows, 1), short);
+}
+#[test]
+fn clause_citations_follow_delivered_sources_in_normal_and_compact_packing() -> Result<()> {
+    use super::super::gather::Observed;
+    use crate::arbiter::answer::tests::{hit, reply};
+
+    let scope = scope();
+    let budget = v3::BudgetV3::default();
+    let mut gather = Gathering::new(budget.clone(), scope.clone())?;
+    let question = "Which branch closes the request, and when does that branch defer?";
+    let mut part = PartState::new(1, (0, question.len()), question);
+    let mut need = NeedState::new(Need {
+        id: 1,
+        kind: NeedKind::Implementation,
+        subject: None,
+        query: "Determine the branch and its exception".into(),
+    });
+    need.coverage = v3::Coverage::Partial;
+    for (path, source, bounded) in [
+        (
+            "docs/discovery.md",
+            "The terminology used by the source.",
+            false,
+        ),
+        ("src/old_owner.rs", "The predecessor's behavior.", true),
+        ("src/current.rs", &"é".repeat(520), true),
+        (
+            "src/defer.rs",
+            "When deferred, hand back the current permit.",
+            true,
+        ),
+    ] {
+        let ((tool, operation), target, cause, kind, arguments) = if bounded {
+            (
+                ("read_file", v3::LoopRead::ReadFile),
+                Some(1),
+                Cause::Structural,
+                software::FollowUp::Excerpt,
+                json!({"path":path,"start_line":2,"end_line":3}),
+            )
+        } else {
+            (
+                ("search", v3::LoopRead::Search),
+                None,
+                Cause::PartSearch,
+                software::FollowUp::Initial,
+                json!({"query":"terminology"}),
+            )
+        };
+        let request = gather.dispatch(
+            (tool, operation),
+            arguments,
+            (1, target, 1),
+            cause,
+            kind,
+            Step::Leaf,
+            path,
+        )?;
+        gather.offer(request);
+        let dispatched = gather.take(1, 1);
+        let Observed::Retained(index) = gather.observe(
+            dispatched[0].seq,
+            Ok(reply(&scope, vec![hit(path, 2, 3, source)])),
+        )?
+        else {
+            anyhow::bail!("expected a retained source read");
+        };
+        need.evidence.push(index);
+        for (pointer, hit) in super::super::coverage::record_hits(&gather.records[index]) {
+            need.history.push(Span {
+                record: index,
+                pointer,
+                hit,
+                round: 1,
+                focus: None,
+                from: 0,
+            });
+        }
+    }
+    need.spans.push(need.history[0].clone());
+    need.unrun.push(v3::UnrunRead {
+        operation: v3::LoopRead::Context,
+        target: "src/later.rs:20".into(),
+        reason: v3::UnrunReason::Deadline,
+    });
+    part.needs.push(need);
+    part.stop = Some(v3::PartStop::Deadline);
+    part.stopped_in = Some(v3::LoopStage::Retrieve);
+    part.share_ms = 1000;
+    part.rounds.push(RoundState {
+        calls: 4,
+        fanout: 1,
+        new_evidence: 4,
+        ..RoundState::default()
+    });
+    let built = Built {
+        gather,
+        parts: vec![part],
+        ledger: Ledger::default(),
+    };
+    let assembly = Assembly {
+        elapsed_ms: 20,
+        ..assembly_for(&built, &scope, question)
+    };
+    let log = built.ledger.log(question, &scope);
+    let hits: Vec<_> = built
+        .gather
+        .records
+        .iter()
+        .map(super::super::coverage::record_hits)
+        .collect();
+    let spans = (0..4)
+        .map(|record| (record, BTreeMap::from([("/hits/0".to_owned(), None)])))
+        .collect();
+    let cited = Cited {
+        spans: &spans,
+        records: &BTreeSet::from([0, 1, 2, 3]),
+        hits: &hits,
+    };
+    let complete = build(&assembly, &log, &cited, 0, 0, &BTreeSet::new())?;
+    let removed = BTreeSet::from([1]);
+    let normal = build(&assembly, &log, &cited, 0, 2, &removed)?;
+    let compact = build(&assembly, &log, &cited, 0, COMPACT_PARAGRAPHS, &removed)?;
+    let ids: Vec<_> = built
+        .gather
+        .records
+        .iter()
+        .map(|record| record.id)
+        .collect();
+
+    for response in [&normal, &compact] {
+        response.validate_with_log(&log, &budget)?;
+        assert_eq!(
+            response
+                .records
+                .iter()
+                .map(|record| record.id)
+                .collect::<Vec<_>>(),
+            [ids[0], ids[2], ids[3]],
+        );
+        assert_eq!(response.omitted_evidence, [ids[1]]);
+        assert_eq!(response.omitted_count, 1);
+        assert_eq!(response.parts[0].sub_needs[0].evidence_omitted, 1);
+        assert_eq!(response.parts[0].sub_needs[0].evidence, ids);
+        let partial = response.partial.as_ref().expect("scoped partial");
+        assert_eq!(
+            (partial.reason, partial.part),
+            (v3::PartialReason::Deadline, Some(1))
+        );
+        assert_eq!(response.work.calls, 4);
+        assert_eq!(response.work.bytes, complete.work.bytes);
+        assert_eq!(response.paragraphs[0].evidence, [ids[2], ids[3], ids[0]]);
+        let text = &response.paragraphs[0].text;
+        assert!(text.contains("Evidence records omitted (1)."));
+        assert!(text.contains("Cited excerpts clipped (1)."));
+        assert!(text.contains("Context src/later.rs:20 (Deadline)"));
+        assert!(!text.contains("src/old_owner.rs"));
+        for record in &response.records {
+            let original = complete
+                .records
+                .iter()
+                .find(|item| item.id == record.id)
+                .unwrap();
+            assert_eq!(
+                record.canonical_result["full_digest"],
+                original.canonical_result["full_digest"],
+            );
+        }
+        assert_eq!(
+            response.records[1].canonical_result["spans"][0]["truncated"],
+            true
+        );
+        assert_eq!(
+            response.records[2].canonical_result["spans"][0]["truncated"],
+            false
+        );
+    }
+    let text = &normal.paragraphs[0].text;
+    let deciding = text
+        .find("- src/current.rs:2-3 (round 1, excerpt clipped)")
+        .unwrap();
+    let exception = text.find("- src/defer.rs:2-3 (round 1)").unwrap();
+    let discovery = text.find("- docs/discovery.md:2-3 (round 1)").unwrap();
+    assert!(deciding < exception && exception < discovery);
+    assert!(!compact.paragraphs[0].text.contains("\n- "));
+    assert_eq!(normal.record_uses, compact.record_uses);
+    Ok(())
 }
