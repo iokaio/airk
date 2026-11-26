@@ -1053,3 +1053,62 @@ its source span, committed key and physical row in the closed publication.
 Use prepare to write only the exact query input, keep original bytes and
 newlines, and run the same native probe. Use compare to report actual
 coordinate agreement under the retained numeric tolerance for both routes.
+
+
+### Gather Context development comparator
+
+The Gather Context tools freeze an evaluator-only reference from the Windows
+complete-evidence disposition, the two versioned walkthroughs and the scenario
+freeze. They reopen the archived source ranges and check their exact bytes.
+Author step counts keep each author's recorded units. The reference retains the
+original trace text and marks its coverage limits. Annotated alternative
+locations require independent source review.
+
+Use the checked Windows shell from the repository root. With the archived
+campaign in `$campaign`, run the following read-only preflight.
+
+~~~powershell
+$runner = 'scripts/arbiter-answer-eval/gather_context_replay.py'
+$disposition = '4e0e6eedd013e5db5972804e37a20195ba141f9a46d6fbd6f184a77cc23fd0ec'
+python -B $runner prepare-spec --campaign-root $campaign --disposition-sha256 $disposition --verify-presentations
+~~~
+
+Append `--output $spec` to preserve the derived spec. Preflight all output paths
+and their parents with the checked execution procedure before writing, and
+audit the new outputs afterward. Use fresh paths in the private campaign.
+Neither command overwrites an existing result.
+
+~~~powershell
+python -B $runner freeze-reference --campaign-root $campaign --spec $spec --output $reference
+python -B $runner compare --reference $reference --control $control --candidate $candidate --output $comparison
+python -B $runner report --comparison $comparison --unjudged --output $diagnostic
+~~~
+
+The comparison accepts captures with the same spec SHA-256, the exact frozen
+case roster, the observed scope and each case's disposition. Keep actual
+actions, delivered source witnesses and metrics with their units. Use null for
+an unavailable measurement. Provisional routing and byte coverage can be
+reported with `--unjudged`. A report using `--judged $judged` requires the same
+spec digest and a verdict for every expected case and arm.
+
+The ordinary source adapter exposes bounded list, literal and range reads
+over one authenticated export. Its matching algorithm reports scan scope and
+distinguishes an incomplete scan from a complete scan with clipped output.
+The presentation module verifies the original archived delivery against the
+successful actor's recorded dispatch. It can reorder the same passages using
+the ordinary reply's part citations. The controller supplies one approved arm
+to the isolated Codex actor and retains the observed calls and replies. It
+must preflight the executable, scope and fresh owned directories, then audit
+child and cache outputs before consuming the receipts. The exact tool offer
+requested by the driver is recorded. Historical trace annotations and
+independent reference obligations stay with the evaluator.
+
+The offline preflight makes no hosted calls. A fresh native capture and the
+matched hosted comparison require their own verified runtime and session
+setup. Product qualification remains subject to the Windows review criteria.
+
+For a full ordinary-tools export check, add
+`--verify-exports-with-git (Get-Command git).Source` to the preflight. This
+compares every exported file to the archived Git stream and checks the
+original archive digest and path roster. A missing retained tar can be
+regenerated in memory from the receipt's checkout and pinned commit.

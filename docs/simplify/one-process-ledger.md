@@ -21360,3 +21360,43 @@ has to carry the rename, because the two links depend on it.
 The [combined strategy](../arbiter/retrieval-strategy-combined.md) pairs the two supplied ordinary-tool investigations for each development task. A read-only document check verified all 20 prompts against the frozen scenario hashes and text, matched all 40 source walkthroughs, and checked 101 OpenAI step mappings, 109 Claude turn mappings and 20 task-specific acceptance rows. The implementation and testing runbook is proposed work. Windows execution remains paused at the 2/20 complete-evidence disposition. Documentation was edited under `TYAI\tdotn`, SID `S-1-5-21-3678370870-3858642417-826968105-1002`, with human owner checks. The next action upon resumption is to freeze the development reference and test its comparator.
 
 The user clarified the product objective and requested one commit and push for all pending files. The completion plan and [implementation instructions](../arbiter/retrieval-strategy-combined.md#implementation) now require a general retrieval policy and describe how to test it on an independently authored task in an unfamiliar collection. The documentation check verified all 20 prompts, 40 original walkthroughs and local links. The Windows evaluation remains paused.
+
+
+### 26 November 2026 — Gather Context development comparator
+
+The user directed implementation to begin and authorized parallel agent work.
+The initial milestone adds evaluator-only trace normalization, a reference
+freeze, exact-witness comparison, bounded ordinary reads, and the isolated
+Codex actor and archived presentation adapters. The primary reviewed the
+combined source. OpenAI supplied all new model-assisted work.
+
+The Windows checked shell confirmed effective user and default owner
+`TYAI\tdotn`, SID `S-1-5-21-3678370870-3858642417-826968105-1002`,
+matching the interactive Explorer. The maintained source outputs passed
+parent and resulting-owner checks. The offline preflight authenticated both
+archived publications, both author paths for all 20 development scenarios,
+the 113 reference obligations and the archived actor dispatches. It generated
+20 changed presentations in memory with exact passage membership and equal
+serialized text bytes. No new actor score or native capture was observed.
+
+Reproduce in the checked Windows shell with the campaign
+`artifacts/v190/final-plan/exec-20261116T052942Z/answer-eval-r1`:
+
+~~~powershell
+python -B scripts/arbiter-answer-eval/gather_context_replay.py prepare-spec --campaign-root $campaign --disposition-sha256 4e0e6eedd013e5db5972804e37a20195ba141f9a46d6fbd6f184a77cc23fd0ec --verify-presentations
+python -B -m unittest discover -s scripts/arbiter-answer-eval -p 'test_gather_context*.py'
+~~~
+
+The 33 focused tests passed. The next executable work is to bind the
+ordinary and archived actors to a checked private launch and compare their
+fresh sessions. For native control and candidate runs, freeze the matched
+images, no-model activation receipts and capture budget before admitting
+the two publications. Preserve the prior 2/20 disposition. No Cargo,
+hosted model session, kernel change or product qualification ran in this
+slice.
+
+The optional full export preflight streamed both recorded Git archives
+without writing a copy. It authenticated all 8,250 Bookbuilder and 1,038
+Munarium files and found no extra exported paths. The source trees and Git
+archives retain their original identities. Repository checks and whitespace
+checks passed before this entry was amended with the export results.
