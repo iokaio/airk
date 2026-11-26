@@ -889,3 +889,15 @@ service image and frozen publications. Compare labeled coverage per
 repository, keeping Search and indexed reads separate. Use `--target` to
 reduce a loss to an exact repository, scenario and Search call ordinal
 under an intermediate profile.
+
+### Matched native embedding query routes
+
+Use embedding_route_search_ab.py only on a private, idle, settled
+Windows CUDA fixture. Pass the pinned development cohort, the closed
+reference handle, and the reopened Ready handle. Name one frozen
+repository/slot with --case. The script requires a live CUDA route at
+admission, observes a transition to CPU and back to CUDA around the same
+vector-only request, then restores the original resource configuration.
+It checks the full admitted citation order and publication. The result
+does not supply independent vector coordinates or per-row writer-route
+provenance.

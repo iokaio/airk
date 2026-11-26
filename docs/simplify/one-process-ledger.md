@@ -20287,3 +20287,52 @@ after the scorer exited. The checked cleanup recovered 1,912,298,288
 bytes and left 1,089,267,740,672 bytes free on D:. Unique binaries and
 measurement receipts were retained. Cleanup receipt SHA-256
 `5cb94dfc504ed93ef38399a343512c7f8082f018a0e0af492fcdb30d9ec88557`.
+
+### 25 November 2026 — Held-out retrieval probes frozen and route preflight bounded
+
+Two independent Codex agents authored the probe sets from the pinned
+source exports without development queries or tuning results. Each set
+contains 30 probes with ten direct lookups, ten paraphrases, four ambiguous
+lookups and six no-match controls. Positive expectations have independently
+checked source ranges and file hashes. No-match named targets were checked
+against export paths and text. The producing agents verified 28 Bookbuilder
+and 29 Munarium source ranges. The freeze checked author ownership, counts,
+unique IDs, source revisions and publication tokens. The archived tar was
+unavailable to the authors, who used the authenticated extracted exports.
+
+Private input SHA-256s are
+49f896a0426b6d7ea2fe4f0a12fe04f0c67872068a3af252bc1b7ce11f24348b
+for Bookbuilder and
+78bb32218d899ebfa39a26569c114af21ff42adc15dea888099643c44c5cee23
+for Munarium. The freeze manifest SHA-256 is
+576b3032bcfe50fe0a34621cc5f077d23ac7a1f39451dc69fda55888545deeea.
+No held-out query was issued and no representation pilot has used these
+inputs.
+
+The earlier CUDA-observed writer fixture retains both source and matrix
+pins. Its complete matrices differ from the current trial publications.
+Exact equality by embedding key was 43,931/156,255 Bookbuilder rows and
+1,816/40,536 Munarium rows. This does not transfer writer-route provenance.
+
+The immediate historical predecessor retained both optional stages
+enabled, so the harness refused before launching a service. The original
+writer's close receipt had both stages disabled. The native selector
+refused that receipt as a non-immediate predecessor. One native test
+failed before startup with 474 tests filtered. Its owned Job had zero
+survivors. Service and owned receipt SHA-256s are
+2c31fafb8371d2ea4ebae869b3880d83007cd10346fc97be219b52e1a4d769d01
+and 1ce94c840cf16041260fc86b2d8f9d27591993c7449cd84ef8a35de0f7c5dc3a.
+
+A separate preflight on the current settled Bookbuilder publication
+reached Ready and confirmed the saved embedding GPU permission. The
+preflight Search did not produce an observed CUDA embedding route,
+so the tool stopped before changing resource settings or collecting
+either measured arm. The check took 3.075 s. The fixture closed cleanly,
+with an empty Job. Owned and reuse receipt SHA-256s are
+fa2af12224a9cf9433f0dbd03acae00ef8c22201ac45695b01353512a5313651
+and a9880e3a9ceb3be71a5883482325079d7aa833c7b3ddd8b4b4fce4217c9e0c4f.
+
+The exact CPU-query versus CUDA-built vector comparison remains
+unavailable in these lifetimes. The independent query-time pilot may
+continue on the settled pair with the held-out cases frozen until a
+development finalist qualifies.
