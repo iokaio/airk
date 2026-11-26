@@ -542,7 +542,7 @@ fn search_with_switch(
         }
     }
     let mut ranked: Vec<_> = merged.into_iter().collect();
-    if legacy {
+    if legacy || (matches!(mode, CurrentSearchMode::Hybrid) && profile.uses_baseline_path_prior()) {
         for (_, (score, candidate)) in &mut ranked {
             *score *= v2::prior(candidate.path());
         }

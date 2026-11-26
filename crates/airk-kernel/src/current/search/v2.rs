@@ -30,6 +30,8 @@ pub(crate) enum SearchProfile {
     #[cfg(any(test, feature = "test-support"))]
     Baseline,
     #[cfg(any(test, feature = "test-support"))]
+    BaselinePathPrior,
+    #[cfg(any(test, feature = "test-support"))]
     Keywords,
     #[cfg(any(test, feature = "test-support"))]
     SemanticSubqueries,
@@ -58,7 +60,7 @@ impl SearchProfile {
     pub(crate) fn lexical_branches(self) -> (bool, bool) {
         match self {
             #[cfg(any(test, feature = "test-support"))]
-            Self::Baseline => (false, false),
+            Self::Baseline | Self::BaselinePathPrior => (false, false),
             #[cfg(any(test, feature = "test-support"))]
             Self::Keywords => (true, false),
             Self::StructuralDefinitions => (true, false),
@@ -74,6 +76,17 @@ impl SearchProfile {
             #[cfg(any(test, feature = "test-support"))]
             Self::RankedTerms => (true, true),
             Self::LegacyV2 => (true, true),
+        }
+    }
+
+    pub(crate) fn uses_baseline_path_prior(self) -> bool {
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            self == Self::BaselinePathPrior
+        }
+        #[cfg(not(any(test, feature = "test-support")))]
+        {
+            false
         }
     }
 
@@ -162,6 +175,7 @@ fn parse(value: Result<String, std::env::VarError>) -> Option<SearchProfile> {
         Err(std::env::VarError::NotPresent) => Some(SearchProfile::Baseline),
         Ok(value) => match value.as_str() {
             "none" => Some(SearchProfile::Baseline),
+            "baseline_path_prior" => Some(SearchProfile::BaselinePathPrior),
             "ranked_keywords" => Some(SearchProfile::Keywords),
             "semantic_subqueries" => Some(SearchProfile::SemanticSubqueries),
             "structural_definitions" => Some(SearchProfile::StructuralDefinitions),
@@ -508,6 +522,10 @@ mod tests {
             Some(SearchProfile::Baseline)
         );
         assert_eq!(parse(Ok("none".into())), Some(SearchProfile::Baseline));
+        assert_eq!(
+            parse(Ok("baseline_path_prior".into())),
+            Some(SearchProfile::BaselinePathPrior)
+        );
         assert_eq!(parse(Ok("search_v2".into())), Some(SearchProfile::LegacyV2));
         assert_eq!(
             parse(Ok("ranked_keywords".into())),

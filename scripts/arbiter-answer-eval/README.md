@@ -901,3 +901,20 @@ vector-only request, then restores the original resource configuration.
 It checks the full admitted citation order and publication. The result
 does not supply independent vector coordinates or per-row writer-route
 provenance.
+
+### Query-time path prior
+
+Run path_prior_pilot.py collect on the same settled pair and test image
+under none and baseline_path_prior, with optional model stages off in
+both. Supply the pinned cohort, private held-out freeze manifest, closed
+reference and live handle. The collector checks the explicit CPU route,
+replays each ordinary request three times for p95 latency, and issues one
+separate top-40 request under the same scope. The held-out cases are never
+queried by this development collector.
+
+Use path_prior_pilot.py compare on the two pinned results. Require a net
+gain of at least six top-40 essentials, preservation of every original
+top-ten essential, and query p95 within 1.10x for each repository. The
+pilot reuses the same writer and publications, so it runs no builds of
+the corpus and produces no new index bytes. Do not open held-out probes
+without a qualifying development finalist.

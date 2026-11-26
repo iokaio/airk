@@ -115,11 +115,19 @@ Focus receives the original query and the chosen excerpts.
 
 ## Private evaluation switch `search_v2` (22 November 2026)
 
-The historical Search v2 profile is selectable only in test-support builds. It is read once per process from
-`AIRK_ARBITER_EVALUATION_SEARCH` (`search_v2`, or `none`/unset for off; any
-other value fails every search) or bound by `bind_evaluation_search`, and a
-later binding must agree. When the variable turns the switch on, the process
-writes `AIRK_EVALUATION_SEARCH bound=search_v2` once to stderr.
+Test-support builds read `AIRK_ARBITER_EVALUATION_SEARCH` once per process.
+`search_v2` selects the historical profile, `none` or an unset variable selects
+the original baseline, and an unsupported value fails every search.
+`bind_evaluation_search` also accepts the historical and baseline choices, and
+a later binding must agree. Selecting `search_v2` through the variable writes
+`AIRK_EVALUATION_SEARCH bound=search_v2` once to stderr.
+
+The private index-research profile `baseline_path_prior` uses the same branches,
+fusion weights, subquery policy, budgets, result assembly, readiness and
+publication handling as explicit `none`. For effective Hybrid search it
+multiplies each merged score by the existing file-kind prior before the same
+total sort. Lexical and Vector execution follow the original baseline,
+including when Default falls back to Lexical.
 
 When the historical profile is selected and the hybrid query is prose:
 

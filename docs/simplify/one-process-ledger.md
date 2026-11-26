@@ -20336,3 +20336,24 @@ The exact CPU-query versus CUDA-built vector comparison remains
 unavailable in these lifetimes. The independent query-time pilot may
 continue on the settled pair with the held-out cases frozen until a
 development finalist qualifies.
+
+### 25 November 2026 — Query-time path prior prepared
+
+The first representation pilot reuses the existing file-kind prior on
+the original Hybrid Search profile. It changes one score multiplier
+before the original sort. It changes no branch, stored representation,
+budget or response packing. The held-out probe bytes remain unused.
+A candidate needs six net top-40 gains, all original top-ten essentials
+in their respective cases, and at most 1.10x query p95 in each repository.
+This query-only trial reuses the exact writer, build products and
+index bytes. The control and treatment receive identical queries with
+explicit CPU embedding and both optional model stages disabled.
+
+Production and test-support Kernel Clippy passed on the Windows warm
+offline target. Two selected Nextest checks passed with 479 skipped.
+Two focused Python tests passed, including loss and cost refusal and
+mismatched-image rejection. The first Python run identified a scoping
+error in the comparison expression. That expression was replaced with
+explicit per-case gain and loss accounting before the passing run.
+The Cargo execution receipt SHA-256 is 1546921b5314de923bdca1a0d1bfa0013cda5bb33bb7b52ab16173eba612664a. The next action is to
+build the reviewed test image and run the original and path-prior arms.
