@@ -285,17 +285,31 @@ pub(crate) fn fixture() -> Result<Fixture> {
     fixture_with(owner.clone(), owner)
 }
 
+mod transfer;
+
 pub(crate) fn fixture_with<T: NativeController + 'static>(
     controller: Arc<T>,
     owner: Arc<Owner>,
 ) -> Result<Fixture> {
+    fixture_with_sources(
+        controller,
+        owner,
+        &[("public/guard.md", "# guard\nThe restart guard replays nothing.\n")],
+    )
+}
+
+fn fixture_with_sources<T: NativeController + 'static>(
+    controller: Arc<T>,
+    owner: Arc<Owner>,
+    files: &[(&str, &str)],
+) -> Result<Fixture> {
     let temporary = tempfile::Builder::new().tempdir_in(std::env::temp_dir().canonicalize()?)?;
     let source = temporary.path().join("source");
-    std::fs::create_dir_all(source.join("public"))?;
-    std::fs::write(
-        source.join("public/guard.md"),
-        "# guard\nThe restart guard replays nothing.\n",
-    )?;
+    for (path, content) in files {
+        let output = source.join(path);
+        std::fs::create_dir_all(output.parent().context("fixture source parent")?)?;
+        std::fs::write(output, content)?;
+    }
     let kernel = crate::Kernel::open(&source, Some(temporary.path().join("data")))?;
     kernel.configure_vectors(false)?;
     kernel.index()?;

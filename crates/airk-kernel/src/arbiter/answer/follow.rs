@@ -192,7 +192,11 @@ fn call_literals(text: &str) -> Vec<CallLiteral<'_>> {
 }
 
 fn source_read(record: &Record) -> bool {
-    !record.failure && matches!(record.operation, v3::LoopRead::ReadFile | v3::LoopRead::Context)
+    !record.failure
+        && matches!(
+            record.operation,
+            v3::LoopRead::ReadFile | v3::LoopRead::Context
+        )
 }
 
 /// This exact call shape is used exclusively for join discovery. Keep its
@@ -213,7 +217,10 @@ pub(super) fn only_join_discovery(gather: &Gathering, part: u8, need: u8, round:
 
 fn usable_join_span(hit: &Hit) -> bool {
     !hit.truncated
-        && matches!(hit.citation.location, airk_core::DocumentLocation::Lines { .. })
+        && matches!(
+            hit.citation.location,
+            airk_core::DocumentLocation::Lines { .. }
+        )
         && !software::is_document_path(&hit.citation.path)
         && crate::workbench::safe_path(&hit.citation.path)
         && airk_core::index_catalog::relative_path(&hit.citation.path, false).is_ok()
@@ -262,7 +269,10 @@ fn confirm_discovery(
         .flat_map(super::coverage::record_hits)
         .filter(|(_, hit)| usable_join_span(hit))
     {
-        for literal in call_literals(&origin.text).into_iter().filter(|literal| literal.text == term) {
+        for literal in call_literals(&origin.text)
+            .into_iter()
+            .filter(|literal| literal.text == term)
+        {
             if let Some((_, target)) = targets
                 .iter()
                 .find(|(_, target)| contrasting_call(&origin, &literal, target))
@@ -277,10 +287,7 @@ fn confirm_discovery(
 fn join_actions(gather: &Gathering, part: u8, need: &Need, spans: &[Span]) -> Vec<JoinAction> {
     if !matches!(
         need.kind,
-        NeedKind::Implementation
-            | NeedKind::Interfaces
-            | NeedKind::Callers
-            | NeedKind::Errors
+        NeedKind::Implementation | NeedKind::Interfaces | NeedKind::Callers | NeedKind::Errors
     ) {
         return Vec::new();
     }
@@ -300,21 +307,39 @@ fn join_actions(gather: &Gathering, part: u8, need: &Need, spans: &[Span]) -> Ve
             .into_iter()
             .collect();
     }
+    let Some(round) = spans.first().map(|span| span.round) else {
+        return Vec::new();
+    };
+    // Coverage can retain a Search row ahead of a direct read of the same
+    // range. Match its address to the actual scoped source read and use
+    // that read's text without changing the selected Coverage spans.
+    let origins: Vec<_> = gather
+        .records
+        .iter()
+        .filter(|record| source_read(record) && record.used_by(part, Some(need.id), round))
+        .flat_map(super::coverage::record_hits)
+        .map(|(_, hit)| hit)
+        .filter(usable_join_span)
+        .collect();
     let mut seen = BTreeSet::new();
     let mut actions = Vec::new();
-    for source in spans.iter().filter(|span| {
-        usable_join_span(&span.hit)
-            && gather.records.get(span.record).is_some_and(|record| {
-                source_read(record) && record.used_by(part, Some(need.id), span.round)
-            })
+    for source in spans.iter().filter_map(|span| {
+        let selected = &span.hit.citation;
+        origins.iter().find(|origin| {
+            let citation = &origin.citation;
+            citation.path == selected.path
+                && citation.start_line == selected.start_line
+                && citation.end_line == selected.end_line
+                && citation.content_hash == selected.content_hash
+        })
     }) {
-        for literal in call_literals(&source.hit.text) {
+        for literal in call_literals(&source.text) {
             if !seen.insert(literal.text) {
                 continue;
             }
             let target = spans
                 .iter()
-                .find(|target| contrasting_call(&source.hit, &literal, &target.hit));
+                .find(|target| contrasting_call(source, &literal, &target.hit));
             actions.push(match target {
                 Some(target) => JoinAction::Read(target.hit.citation.clone()),
                 None => JoinAction::Search(literal.text.to_owned()),
@@ -424,7 +449,10 @@ pub(crate) fn candidates(
                            "end_line":citation.end_line,"known_hash":citation.content_hash,
                            "max_bytes":software::Shape::PRODUCT.read_bytes}),
                     (FollowUp::Excerpt, Step::Leaf),
-                    &format!("{}:{}-{}", citation.path, citation.start_line, citation.end_line),
+                    &format!(
+                        "{}:{}-{}",
+                        citation.path, citation.start_line, citation.end_line
+                    ),
                     hop,
                 )?;
             }

@@ -250,7 +250,12 @@ fn source_call_joins_a_distinct_cited_hash_bound_range_after_rename_and_move() -
             &mut gather,
             &scope,
             source,
-            vec![hit(origin, 5, 15, &format!("relay.emit('{literal}', payload);"))],
+            vec![hit(
+                origin,
+                5,
+                15,
+                &format!("relay.emit('{literal}', payload);"),
+            )],
         )?;
         let search = gather.dispatch(
             ("search", v3::LoopRead::Search),
@@ -261,7 +266,12 @@ fn source_call_joins_a_distinct_cited_hash_bound_range_after_rename_and_move() -
             Step::Search,
             "locate the receiver",
         )?;
-        let receiver = hit(target, 32, 42, &format!("routes.bind(\"{literal}\", apply);"));
+        let receiver = hit(
+            target,
+            32,
+            42,
+            &format!("routes.bind(\"{literal}\", apply);"),
+        );
         let hash = receiver["citation"]["content_hash"].clone();
         keep(&mut gather, &scope, search, vec![receiver])?;
         let spans = super::super::coverage::spans(&gather, 1, 2, 1);
@@ -331,9 +341,24 @@ fn tokenized_join_search_is_navigation_and_only_exact_contrasting_call_advances(
         &scope,
         read,
         vec![
-            hit("other/near.ts", 20, 30, "schema.route('pipe.open-lane-extra', parse);"),
-            hit("other/case.ts", 20, 30, "schema.route('Pipe.open-lane', parse);"),
-            hit("other/call.ts", 20, 30, "client.send('pipe.open-lane', payload);"),
+            hit(
+                "other/near.ts",
+                20,
+                30,
+                "schema.route('pipe.open-lane-extra', parse);",
+            ),
+            hit(
+                "other/case.ts",
+                20,
+                30,
+                "schema.route('Pipe.open-lane', parse);",
+            ),
+            hit(
+                "other/call.ts",
+                20,
+                30,
+                "client.send('pipe.open-lane', payload);",
+            ),
             receiver,
         ],
     )?;
@@ -359,7 +384,60 @@ fn tokenized_join_search_is_navigation_and_only_exact_contrasting_call_advances(
     );
     let tried = BTreeSet::from([exact[0].key]);
     let remaining = candidates(&gather, 1, &task, &spans, &BTreeSet::new(), &tried)?;
-    assert!(!remaining.iter().any(|candidate| candidate.tool == "read_file"));
+    assert!(
+        !remaining
+            .iter()
+            .any(|candidate| candidate.tool == "read_file")
+    );
+    Ok(())
+}
+
+#[test]
+fn a_deduplicated_source_read_can_ground_its_own_follow_up() -> Result<()> {
+    let scope = scope();
+    let mut gather = Gathering::new(v3::BudgetV3::default(), scope.clone())?;
+    let path = "src/panel.ts";
+    let direct_hit = hit(path, 5, 15, "client.fire('panel.commit-item', input);");
+    let mut snippet = direct_hit.clone();
+    snippet["text"] = json!("a short search excerpt");
+    for need in [2, 3] {
+        let search = gather.dispatch(
+            ("search", v3::LoopRead::Search),
+            json!({"query":format!("locate the receiver {need}")}),
+            (1, Some(need), 1),
+            Cause::NeedSearch,
+            FollowUp::Keyword,
+            Step::Search,
+            "locate the receiver",
+        )?;
+        keep(&mut gather, &scope, search, vec![snippet.clone()])?;
+    }
+    let source = read_source(&mut gather, path)?;
+    keep(&mut gather, &scope, source, vec![direct_hit])?;
+
+    for need_id in [2, 3] {
+        let task = Need {
+            id: need_id,
+            ..need("locate the receiver")
+        };
+        let visible = super::super::coverage::spans(&gather, 1, need_id, 1);
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].hit.text, "a short search excerpt");
+        let found = candidates(
+            &gather,
+            1,
+            &task,
+            &visible,
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+        )?;
+        assert_eq!(
+            found
+                .iter()
+                .any(|candidate| candidate.term == "panel.commit-item"),
+            need_id == 2
+        );
+    }
     Ok(())
 }
 
