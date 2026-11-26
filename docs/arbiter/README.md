@@ -14,6 +14,10 @@ The development index census, source checks and follow-up Search replay
 are available separately for [Bookbuilder](windows-index-research-bookbuilder.md)
 and [Munarium](windows-index-research-munarium.md). The
 [completion plan](completion-plan.md) records qualification and review gates.
+For the Windows review, [Claude's retrieval analysis](retrieval-strategy-anthropic.md)
+traces the 20 development tasks with ordinary source tools, maps each step to
+today's AIRK reads and proposes how to close the gaps. It is design input,
+not evaluation evidence.
 
 ## Device and precision controls
 

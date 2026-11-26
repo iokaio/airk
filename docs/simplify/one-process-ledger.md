@@ -21290,7 +21290,7 @@ remain gated on the user's review of this result.
 ### 26 November 2026 — Retrieval strategy for the Windows review
 
 The user paused the completion plan and requested a separate retrieval strategy.
-[Gather Context strategy](../arbiter/retrieval-strategy.md) records all 20 frozen
+[Gather Context strategy](../arbiter/retrieval-strategy-openai.md) records all 20 frozen
 development instructions, 100 read-only source-inspection steps across the
 pinned Bookbuilder and Munarium exports, and one public vendor-documentation
 lookup. Each walkthrough records the expected observation, what the tool found
@@ -21308,6 +21308,55 @@ public API documentation. No evaluation, product build or implementation
 change formed part of this review. The next decision is the user's review
 of the proposed diagnostics and gathering design.
 
+### 26 November 2026 — Claude's direct-tools trace and retrieval gap analysis
+
+At the user's request Claude wrote a second, independent analysis for the
+Windows review.
+[Retrieval analysis by Claude](../arbiter/retrieval-strategy-anthropic.md)
+quotes the 20 frozen development instructions and records, for each, the
+steps Claude took with its own harness tools and no AIRK read: 109 turns
+and 312 calls (154 Grep, 141 Read, 12 Glob and 5 read-only Git listings) on
+the Munarium `9948345d` and Bookbuilder `238b22a7` checkouts. Each step
+records the call, the expected result and what came back. A per-step map
+sets the 109 turns against today's AIRK reads: 47 available as they stand,
+51 in part and 11 not at all, with no task's first turn fully available.
+The document names 12 gaps, a strategy for each and a proposed gathering
+process. The completion plan gained a status paragraph, open decisions
+item 14 and one link in change set 1. The Arbiter README links the
+document. No gate, limit, decision or approved experiment changed.
+
+The traces are unjudged and were not scored against the reference notes.
+Only the `instruction` field of each private scenario file was read. The
+notes and the sealed set stayed closed. Twelve read-only AIRK calls probed
+operation behavior on the installed 1.8.206 service, whose Bookbuilder index
+covers the live folder and is older than the evaluation candidate. No
+Munarium index is installed, so the Munarium fits are unprobed. Search and
+Relationships refused the named scope on that connection. Nothing in the
+strategy was built or replayed. The analysis is design input written by an
+Anthropic model. It is not evaluation evidence. OpenAI models remain
+required for model-assisted implementation, testing and judging.
+
+The shell and the direct edit tool were each verified as the interactive
+Windows user and default owner TYAI\tdotn, SID
+S-1-5-21-3678370870-3858642417-826968105-1002. The execution guard checked
+each output parent and audited the four written documents. Scripts
+recounted the traces' turn and call counts and the map's fit and gap
+columns against the quoted totals, and matched the 20 quoted instructions
+to the frozen scenario files. Relative links and section anchors were
+checked.
+
+The earlier strategy document had been renamed in the working tree to
+`retrieval-strategy-openai.md`, byte-identical to the committed
+`retrieval-strategy.md`. The repository check failed on the two links that
+still named the old file: the plan's opening paragraph and the preceding
+ledger entry. Both now point at the renamed file. The rename itself was
+left as found. The repository check and the whitespace check then passed.
+No build, index change, replay, agent session or judged session ran. The
+work is uncommitted and awaits the user's review. A commit of these edits
+has to carry the rename, because the two links depend on it.
+
 ### 26 November 2026 · Gather Context strategy for Windows review
 
 The [combined strategy](../arbiter/retrieval-strategy-combined.md) pairs the two supplied ordinary-tool investigations for each development task. A read-only document check verified all 20 prompts against the frozen scenario hashes and text, matched all 40 source walkthroughs, and checked 101 OpenAI step mappings, 109 Claude turn mappings and 20 task-specific acceptance rows. The implementation and testing runbook is proposed work. Windows execution remains paused at the 2/20 complete-evidence disposition. Documentation was edited under `TYAI\tdotn`, SID `S-1-5-21-3678370870-3858642417-826968105-1002`, with human owner checks. The next action upon resumption is to freeze the development reference and test its comparator.
+
+The user clarified the product objective and requested one commit and push for all pending files. The completion plan and [implementation instructions](../arbiter/retrieval-strategy-combined.md#implementation) now require a general retrieval policy and describe how to test it on an independently authored task in an unfamiliar collection. The documentation check verified all 20 prompts, 40 original walkthroughs and local links. The Windows evaluation remains paused.

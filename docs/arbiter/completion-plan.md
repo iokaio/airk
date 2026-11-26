@@ -1,8 +1,19 @@
 # Answer loop and FP16 completion plan
 
-The [combined Gather Context strategy and implementation runbook](retrieval-strategy-combined.md#implementation) is ready for Windows review. It preserves both agents’ investigations for all 20 development tasks and specifies how GPT‑6.2 Sol should implement and test the resulting retrieval decisions.
+The [combined Gather Context strategy and implementation runbook](retrieval-strategy-combined.md#implementation) is ready for Windows review. The product goal is to gather useful, cited context for whatever task an agent brings to `gather_context`, including unfamiliar tasks in other repositories. Use the 20 investigations as worked examples and regressions. Test whether the same code chooses useful reads on independently written tasks.
 
-**Paused at the Windows results review, 26 November 2026.** Sol finished 2 of 20 tasks correctly after receiving all 113 required source spans. The next decision is how Gather Context should help an agent use the evidence it retrieves. The [retrieval strategy](retrieval-strategy.md) traces all 20 tasks with ordinary source tools, maps the steps to AIRK and lays out the design for review. The baseline and change sets await that review.
+**Paused at the Windows results review, 26 November 2026.** Sol finished 2 of 20 tasks correctly after receiving all 113 required source spans. The next decision is how Gather Context should help an agent use the evidence it retrieves. The [retrieval strategy](retrieval-strategy-openai.md) traces all 20 tasks with ordinary source tools, maps the steps to AIRK and lays out the design for review. The baseline and change sets await that review.
+
+**A second trace for the same review, 26 November 2026.** At the user's
+request Claude gathered the context for the same 20 tasks with its own
+harness tools and no AIRK read. It took 109 turns and 312 calls, a mean of
+5.5 turns per task. The run is unjudged and was not scored against the
+reference notes. Today's AIRK reads cover 47 of those turns as they stand,
+51 in part and 11 not at all. No task's first turn is fully covered. Those
+turns relied on exhaustive counts, loose or non-identifier literals and path
+patterns. The analysis is design input for the review. It is not evaluation
+evidence and changes no gate, limit or approved experiment.
+[Retrieval analysis by Claude](retrieval-strategy-anthropic.md) · [Open proposals](#decisions-for-the-user-at-this-review)
 
 **Windows and CUDA execution approved on 25 November 2026.** This plan
 sequences the remaining work on feat/arbiter-final. The authorized scope
@@ -219,6 +230,28 @@ Dated entries record the user's choices. The remaining proposals are open.
     repair can improve the triggering reply within twice the
     ordinary time allowance and all applicable hard deadlines.
     [Repair rules and acceptance](#autonomous-index-repair)
+14. **Proposals from Claude's retrieval analysis (open, raised 26 November
+    2026).** None is approved or scheduled. Decision 6 already approves the
+    literal scan itself. These describe its contract and five further
+    changes.
+    - *Scan contract.* Return counts per file, matching lines with context,
+      and a receipt of the files and bytes examined with a completion flag.
+      Accept any literal string with ignore-case, whole-word and word-prefix
+      options.
+    - *Patterns.* Add a bounded pattern subset to the scan only if replays
+      show misses that the literal options leave.
+    - *Inventory.* Match indexed files by path pattern and return totals
+      per folder.
+    - *Census before ranking.* Start each need that has a literal anchor
+      with an exact count scan. Decide whether that pass counts against the
+      three rounds.
+    - *Instruction files.* Read the repository's instruction files at the
+      start of a request, within a small byte allowance.
+    - *Reads.* Clamp a range that runs past the end of a file, read the
+      enclosing definition or section, and stop at a line boundary with a
+      continuation.
+
+    [Gaps](retrieval-strategy-anthropic.md#23-gaps) · [Strategy](retrieval-strategy-anthropic.md#3-strategy-to-fill-the-gaps) · [Proposed process](retrieval-strategy-anthropic.md#4-how-answer-could-work)
 
 ## Milestones
 
@@ -738,7 +771,7 @@ Report the two experiments separately.
    and repository, together with external reads still needed. Carry the
    best-supported combination into the judged arms. Use the existing
    delivery protocol throughout the Windows series.
-   [Retrieval rounds](#retrieval-rounds-inside-one-answer) · [Evidence budgets](#read-and-delivery-budgets)
+   [Retrieval rounds](#retrieval-rounds-inside-one-answer) · [Evidence budgets](#read-and-delivery-budgets) · [Direct-tool steps mapped to today's reads](retrieval-strategy-anthropic.md#24-the-map)
 3. **Change set 2 — let the models choose consequential work.** Hold gathering
    and allocation fixed. Compare deterministic choices with Arbiter choices
    over the same eligible actions, with Focus held fixed. Separately compare
