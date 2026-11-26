@@ -18,6 +18,7 @@ import grade
 import judge
 import run_session
 from gather_context_diagnostic import ARMS
+from gather_context_call_limit import LEGACY_TOOL_CALL_LIMIT, reply_artifact, validate_tool_call_limit
 from gather_context_replay import load_pinned, require, write_new
 from prepare_complete_evidence import PreparationError
 
@@ -124,14 +125,31 @@ def finish_cohort(trials: list[Trial], observations: list[Observation], *, audit
     return [grade.grade_one(trial.measured, verdict, "complete") for trial, verdict, _ in eligibility]
 
 
-def read_actor(directory: Path, source_spec_sha: str, scenario: dict) -> tuple[dict, dict, dict]:
+def read_actor(directory: Path, source_spec_sha: str, scenario: dict, *, tool_call_limit: int = LEGACY_TOOL_CALL_LIMIT,
+               base_instruction_sha: str | None = None) -> tuple[dict, dict, dict]:
     raw = (directory / "session.json").read_bytes()
     record = json.loads(raw)
     require(record["status"] == "complete" and record["actor"]["freeze_sha256"] == source_spec_sha,
             "actor did not settle under the frozen diagnostics spec")
+    extended = tool_call_limit != LEGACY_TOOL_CALL_LIMIT
+    if extended:
+        require(record["max_tool_calls"] == tool_call_limit and type(record["tool_calls"]) is int
+                and 0 <= record["tool_calls"] <= tool_call_limit, "actor call budget differs from the frozen spec")
+        reserved = {reply_artifact(i, tool_call_limit) for i in range(LEGACY_TOOL_CALL_LIMIT + 1,
+                                                                    record["tool_calls"] + 1)}
+        require(base_instruction_sha is not None
+                and record["files"]["base-instructions.txt"] == base_instruction_sha,
+                "actor prompt differs from the frozen extended call budget")
     for name, digest in record["files"].items():
-        require(Path(name).name == name and common.sha256_file(directory / name) == digest,
-                "actor artifact changed after settlement")
+        artifact = directory / name
+        if extended:
+            require((Path(name).name == name and ":" not in name and not name.endswith((".", " ")))
+                    or name in reserved, "actor artifact path is outside the frozen layout")
+            require(artifact.resolve(strict=True) == artifact and artifact.is_file() and artifact.stat().st_nlink == 1,
+                    "actor artifact path is aliased or unavailable")
+        else:
+            require(Path(name).name == name, "actor artifact changed after settlement")
+        require(common.sha256_file(artifact) == digest, "actor artifact changed after settlement")
     instruction = (directory / "instruction.txt").read_bytes().decode("utf-8")
     require(instruction == scenario["instruction"], "diagnostic actor instruction differs")
     rows = common.read_jsonl(directory / "turns.jsonl")
@@ -142,6 +160,9 @@ def read_actor(directory: Path, source_spec_sha: str, scenario: dict) -> tuple[d
     display_calls = []
     first = {"present": False, "text": "", "bytes": 0, "truncated_for_packet": False}
     for row in rows:
+        if extended:
+            require(row["reply_file"] == reply_artifact(row["ordinal"], tool_call_limit),
+                    "actor reply path differs from its frozen ordinal")
         digest = record["files"][row["reply_file"]]
         require(row["reply_sha256"] == digest, "actor reply pin differs from its manifest")
         envelope = common.read_json(directory / row["reply_file"])
@@ -197,6 +218,7 @@ def score(args) -> dict:
     freeze = load_pinned(campaign, {"path": relative, "sha256": frozen["sha256"]}, "scenario freeze")
     require(set(actor_spec["arms"]) <= set(ARMS) and all(case.split("-", 1)[0] in common.REPOS
             and case.split("-", 1)[1] in common.SLOTS for case in actor_spec["cases"]), "invalid diagnostic roster")
+    tool_call_limit = validate_tool_call_limit(actor_spec["tool_call_limit"])
     jobs = [(case, arm) for case in actor_spec["cases"] for arm in actor_spec["arms"]]
     packets = []
     statuses = {}
@@ -226,7 +248,10 @@ def score(args) -> dict:
                                 "adjudication": {"grade": 0, "correct_finish": False,
                                                  "source": status["status"], "reason": "actor did not finish"}})
                 continue
-        packet, measured, record = read_actor(directory, actor_sha, scenario)
+        packet, measured, record = read_actor(
+            directory, actor_sha, scenario, tool_call_limit=tool_call_limit,
+            base_instruction_sha=actor_spec.get("base_instruction_sha256", {}).get(arm),
+        )
         packets.append((case, arm, scenario, packet, measured, record))
 
     config = actor_spec["historical_config"]

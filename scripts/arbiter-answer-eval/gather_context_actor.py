@@ -14,6 +14,8 @@ import codex_isolation_probe as codex_driver
 import common
 import gather_context_sources as sources
 import run_session
+from gather_context_call_limit import (LEGACY_TOOL_CALL_LIMIT, reply_artifact, set_prompt_tool_call_limit,
+                                       validate_tool_call_limit)
 
 
 MODEL = "gpt-6.2-sol"
@@ -33,7 +35,7 @@ ARCHIVE_TOOLS = [
 WORKSPACE_CHILDREN = ("work", "codex-logs", "codex-state", "codex-tmp")
 
 
-def _instructions(arm: str) -> str:
+def _instructions(arm: str, tool_call_limit: int = LEGACY_TOOL_CALL_LIMIT) -> str:
     original = ("Your first tool call must be {primary} with the task text, exactly as it was given to you, "
                 "as its \"{field}\" argument. After that, choose your own follow-up calls.")
     if arm == "ordinary":
@@ -41,7 +43,8 @@ def _instructions(arm: str) -> str:
     else:
         replacement = original.format(primary=ARCHIVE_TOOL, field="task")
     common.require(original in run_session.SYSTEM_PROMPT, "Shared actor brief prompt changed")
-    return run_session.SYSTEM_PROMPT.replace(original, replacement)
+    prompt = run_session.SYSTEM_PROMPT.replace(original, replacement)
+    return set_prompt_tool_call_limit(prompt, tool_call_limit)
 
 
 def _content_items(reply: dict) -> list[dict]:
@@ -76,12 +79,14 @@ class ActorDispatch:
     source_root: Path | None = None
     archived_reply: dict | None = None
     archived_reply_sha256: str | None = None
+    tool_call_limit: int = LEGACY_TOOL_CALL_LIMIT
     rows: list[dict] = field(default_factory=list, init=False)
     replies: list[bytes] = field(default_factory=list, init=False)
     evidence_bytes: int = field(default=0, init=False)
     _archived_raw: bytes = field(default=b"", init=False, repr=False)
 
     def __post_init__(self):
+        validate_tool_call_limit(self.tool_call_limit)
         common.require(self.arm in ("ordinary", "archived") and isinstance(self.instruction, str)
                        and bool(self.instruction), "Invalid Gather Context actor arm or task")
         common.require(type(self.reply_byte_limit) is int and self.reply_byte_limit > 0,
@@ -110,7 +115,7 @@ class ActorDispatch:
     def __call__(self, tool: str, arguments: dict) -> dict:
         ordinal = len(self.rows) + 1
         began = self.clock()
-        if ordinal > common.TURN_CAP:
+        if ordinal > self.tool_call_limit:
             reply = _refusal("Tool call limit reached")
         elif began >= self.deadline:
             reply = _refusal("Actor deadline reached")
@@ -138,7 +143,7 @@ class ActorDispatch:
             "elapsed_ms": int((finished - began) * 1000), "reply_text_bytes": size,
             "evidence_text_bytes": size if success else 0, "reply_sha256": common.sha256_bytes(raw),
             "dispatch_sha256": _digest(items),
-            "reply_file": f"reply-{ordinal:03d}.json" if ordinal <= common.TURN_CAP else None,
+            "reply_file": reply_artifact(ordinal, self.tool_call_limit),
         })
         self.replies.append(raw)
         return reply
@@ -191,7 +196,7 @@ def _audit_actor(stream: bytes, observed: dict, dispatch: ActorDispatch) -> list
                 row["tool"], row["arguments"], row["success"], row["dispatch_sha256"]):
             problems.append("Actor tool dispatch or reply digest differs")
             break
-    if len(calls) > common.TURN_CAP:
+    if len(calls) > dispatch.tool_call_limit:
         problems.append("Actor exceeded the tool call cap")
     if observed.get("turn_status") == "completed":
         if not thread or not turn or terminals != [(thread, turn, "completed")]:
@@ -218,7 +223,8 @@ def _workspace(directory: Path) -> None:
 def run_actor(*, config: run_session.CodexRunConfig, instruction: str, directory: Path, timeout_s: float,
               arm: str, reply_byte_limit: int, audit_workspace, write_receipt, source_root: Path | None = None,
               archived_reply: dict | None = None, archived_reply_sha256: str | None = None,
-              runner=codex_driver.run_app_server, clock=time.monotonic) -> dict:
+              tool_call_limit: int = LEGACY_TOOL_CALL_LIMIT, runner=codex_driver.run_app_server,
+              clock=time.monotonic) -> dict:
     """Run one fresh diagnostic actor and persist only after the supplied custody audit.
 
     The controller must authenticate the input export or archive, create the four
@@ -234,12 +240,12 @@ def run_actor(*, config: run_session.CodexRunConfig, instruction: str, directory
                    "Actor requires audited workspace and receipt writers")
     provenance = run_session.codex_provenance(config)
     command = run_session.codex_command(config, directory)
-    base_instructions = _instructions(arm)
+    base_instructions = _instructions(arm, tool_call_limit)
     audit_workspace("before", directory, config.isolated_home)
     started = common.now_iso()
     began = clock()
     dispatch = ActorDispatch(arm, instruction, reply_byte_limit, began + timeout_s, clock,
-                             source_root, archived_reply, archived_reply_sha256)
+                             source_root, archived_reply, archived_reply_sha256, tool_call_limit)
     planned = codex_driver.dynamic_specs(dispatch.tools)
     startup_failure = False
     try:
@@ -281,7 +287,7 @@ def run_actor(*, config: run_session.CodexRunConfig, instruction: str, directory
     record = {
         "schema": SCHEMA, "arm": arm, "status": status, "exit_code": code, "problems": problems,
         "started": started, "elapsed_ms": elapsed_ms, "actor": provenance, "observed": observed,
-        "model": MODEL, "effort": EFFORT, "max_tool_calls": common.TURN_CAP, "timeout_s": timeout_s,
+        "model": MODEL, "effort": EFFORT, "max_tool_calls": tool_call_limit, "timeout_s": timeout_s,
         "reply_byte_limit": reply_byte_limit, "evidence_text_bytes": dispatch.evidence_bytes,
         "returned_control_text_bytes": sum(row["reply_text_bytes"] for row in dispatch.rows if not row["success"]),
         "tool_calls": len(dispatch.rows), "source_root": str(source_root) if source_root is not None else None,

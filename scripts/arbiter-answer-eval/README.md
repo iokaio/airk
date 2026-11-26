@@ -1131,9 +1131,15 @@ The fresh diagnostic actor uses GPT-6.2 Sol medium for ordinary source-tool
 reads, original archived evidence, and regrouped archived evidence. A
 private source snapshot and run specification bind the actor inputs. It
 runs one app-server writer at a time in the approved isolated home based on
-the observed cache race. The controller retains cap violations and timeouts
-in the case roster. Use `--case bookbuilder-C2` for the representative case,
-or omit the selector to cover all 20. The dedicated judging command
+the observed cache race. It defaults to 24 external tool calls. Use
+`--tool-call-limit 12` to reproduce the original limit. An over-limit
+attempt is refused and the controller retains the case and its refusal in
+the roster. The verified tool evidence byte budget and deadline apply at
+either call limit. Use `--case bookbuilder-C2` for a representative case.
+Omit the case selector and use `--arm ordinary --tool-call-limit 24` for an
+all-20 comparison against the recorded 12-call ordinary arm. Compare
+original and grouped delivery using the frozen 12-call archived arms.
+The dedicated judging command
 reopens the completed actor captures and runs two fresh masked Astra medium
 sessions per eligible result with the existing rubric. Set `--jobs 4` for guarded cohorts after the actor run settles.
 

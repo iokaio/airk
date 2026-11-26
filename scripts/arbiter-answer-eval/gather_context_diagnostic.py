@@ -8,7 +8,8 @@ import subprocess
 import sys
 
 import common
-from gather_context_actor import ARCHIVE_TOOLS, EFFORT, MODEL, run_actor
+from gather_context_actor import ARCHIVE_TOOLS, EFFORT, MODEL, _instructions, run_actor
+from gather_context_call_limit import DEFAULT_TOOL_CALL_LIMIT, TOOL_CALL_LIMITS, validate_tool_call_limit
 from gather_context_export import verify_export
 from gather_context_replay import (archived_presentation, campaign_pin, freeze_reference,
                                    load_pinned, prepare_spec, read_ceiling, require, source_root, write_new)
@@ -20,6 +21,7 @@ ARMS = ("ordinary", "original", "grouped")
 
 
 def diagnostic(args) -> dict:
+    tool_call_limit = validate_tool_call_limit(args.tool_call_limit)
     campaign = args.campaign_root.resolve(strict=True)
     run_root = args.run_root.resolve(strict=True)
     require(run_root == args.run_root and run_root.is_relative_to(campaign)
@@ -49,25 +51,35 @@ def diagnostic(args) -> dict:
             exports[repo] = verify_export(export, receipt, git=args.git)
     evidence_limit = historical["answer_defaults"]["budget"]["max_bytes"]
     timeout = historical["results"][0]["session_timeout"]
+    custody_name = "gather_context_custody.ps1"
+    controller_files = ("gather_context_diagnostic.py", "gather_context_actor.py", custody_name,
+                        "gather_context_replay.py", "gather_context_sources.py", "gather_context_presentation.py",
+                        "gather_context_export.py", "codex_isolation_probe.py", "run_session.py",
+                        "gather_context_call_limit.py")
+    if tool_call_limit == DEFAULT_TOOL_CALL_LIMIT:
+        custody_name = "gather_context_custody_24.ps1"
+        controller_files += (custody_name,)
+    prompt_digests = {
+        arm: common.sha256_bytes(_instructions("ordinary" if arm == "ordinary" else "archived",
+                                             tool_call_limit).encode("utf-8"))
+        for arm in arms
+    }
     diagnostics = {"schema": "airk.private.gather-context-diagnostic/1", "source_spec_sha256": spec_sha,
                    "run_root": str(run_root), "cases": selected, "arms": arms, "exports": exports,
                    "model": MODEL, "effort": EFFORT, "time_limit_seconds": timeout,
-                   "reply_evidence_bytes": evidence_limit, "tool_call_limit": common.TURN_CAP,
+                   "reply_evidence_bytes": evidence_limit, "tool_call_limit": tool_call_limit,
                    "ordinary_tool_offer": TOOLS, "archive_tool_offer": ARCHIVE_TOOLS,
                    "shared_prompt_sha256": common.sha256_bytes(SYSTEM_PROMPT.encode("utf-8")),
+                   "base_instruction_sha256": prompt_digests,
                    "workers": 1, "historical_config": config,
-                   "controller_files": {Path(name).name: common.sha256_file(Path(__file__).with_name(name))
-                                        for name in ("gather_context_diagnostic.py", "gather_context_actor.py",
-                                                     "gather_context_custody.ps1", "gather_context_replay.py",
-                                                     "gather_context_sources.py", "gather_context_presentation.py",
-                                                     "gather_context_export.py", "codex_isolation_probe.py",
-                                                     "run_session.py")}}
+                   "controller_files": {name: common.sha256_file(Path(__file__).with_name(name))
+                                        for name in controller_files}}
     frozen = common.canonical_json(diagnostics) + b"\n"
     frozen_sha = common.sha256_bytes(frozen)
     codex = CodexRunConfig(Path(config["executable"]), config["executable_sha256"],
                            Path(config["model_catalog"]), config["model_catalog_sha256"],
                            Path(config["isolated_home"]), frozen_sha)
-    checked_script = Path(__file__).with_name("gather_context_custody.ps1")
+    checked_script = Path(__file__).with_name(custody_name)
 
     def audit(action: str, directory: Path, home: Path) -> None:
         command = [str(args.pwsh), "-NoProfile", "-File", str(checked_script),
@@ -102,7 +114,7 @@ def diagnostic(args) -> dict:
             print(f"{began} {case_id} {arm} started", flush=True)
             result = run_actor(config=codex, instruction=scenario["instruction"], directory=directory,
                                timeout_s=timeout, arm="ordinary" if arm == "ordinary" else "archived",
-                               reply_byte_limit=evidence_limit,
+                               reply_byte_limit=evidence_limit, tool_call_limit=tool_call_limit,
                                audit_workspace=lambda phase, path, home: audit(phase.capitalize(), path, home),
                                write_receipt=write_new, **actor_inputs)
             audit("After", directory, codex.isolated_home)
@@ -136,6 +148,7 @@ def main() -> int:
     parser.add_argument("--git", required=True, type=Path)
     parser.add_argument("--case", action="append")
     parser.add_argument("--arm", choices=ARMS, action="append")
+    parser.add_argument("--tool-call-limit", type=int, choices=TOOL_CALL_LIMITS, default=DEFAULT_TOOL_CALL_LIMIT)
     try:
         result = diagnostic(parser.parse_args())
         print(f"Closed {len(result['outcomes'])} diagnostic actor sessions")
