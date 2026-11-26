@@ -21400,3 +21400,36 @@ without writing a copy. It authenticated all 8,250 Bookbuilder and 1,038
 Munarium files and found no extra exported paths. The source trees and Git
 archives retain their original identities. Repository checks and whitespace
 checks passed before this entry was amended with the export results.
+
+
+### 26 November 2026 — Gather Context known-address native slice
+
+Known repository-relative `path:line` and `path:start-end` inputs route one
+selected sub-need directly through canonical Read File in round one. They
+use at most 151 inclusive lines and 3,072 source bytes. The broad parent
+Search, plain-path routing, publication checks and scope refusals follow
+the established contract. The primary reviewed the implementation and
+added the scoped formatting correction.
+
+The first checked native attempt stopped before a Cargo process because the
+original cache receipt pinned an older lock. The successor proof rehashed
+all 845 original immutable inputs and checked the current 420 registry
+packages against their exact authenticated subset. No package or saved
+cache receipt was replaced. An intermediate preflight stopped before Cargo
+because the shell matched Nextest's multiline version output as an array.
+The corrected invocation authenticated 0.9.148 and passed the locked
+offline dependency resolution.
+
+Checked Windows `TYAI\tdotn`, same SID and owner as above, ran offline on the
+warm `answer-eval-r1/answer-loop/target-cuda` with incremental 1 and a 32 GiB
+reservation above the 200 GiB floor. The source was frozen by file hashes
+in the admission receipt. The exact commands and per-command log hashes
+are in `passes/gather-context-native-check-r3/execution.json`.
+Its SHA-256 is
+`91a71adc507715c394bff87187ec693652673b351fc9d7f430f7bc78040d138e`.
+Locked tree completed in 0.503 s, scoped Clippy in 91.038 s, the matching
+Nextest inventory in 122.425 s and the actual CI-profile run in 1.488 s.
+Nextest selected 20, passed 20 and skipped 468. Changed Rust formatting
+and scoped whitespace passed. Compiler descendants had exited and newly
+observed outputs passed the human-owner audit. The slice establishes
+native planner and retrieval behavior under the tested configuration.

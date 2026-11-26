@@ -4188,3 +4188,30 @@ arbiter `CONTRACT.md` ("Answer job kernel"), supervisor
   cookie and origin, `SetupOptions`/`SetupPhase` and the I1/I2/I3/I4
   fixtures changed under the plan's recorded decision; `SetupOptions.trust`
   stays as a read-only legacy field (see the gap above).
+
+
+### 72. Gather Context development comparison
+
+Record the Decision 6 comparison on the pinned Windows publications. Start
+with Focus and Arbiter disabled and prove that state from the live runtime.
+Use the same three rounds, 132 calls, 132 candidates, 262,144 retained bytes
+and 300,000 ms deadline as the recorded control. Keep the canonical reply
+ceiling and the existing per-read bounds. The control retains the existing
+reader roster and one follow-up per open need per later round. The reader
+comparison introduces the scoped retained-text literal scan and the approved
+existing facts and relationship readers through their owning paths. Compare
+one versus two follow-ups and fixed versus need-based excerpt sizes in
+separate runs. Count census work against round one and the same total
+budgets. Reports distinguish scanned bytes, retained bytes and delivered bytes.
+
+Recognize an explicit relative path and line or inclusive line range in the
+task as a known address. Use the canonical first-round Read File for that
+sub-need, under the existing per-read byte and span bounds. The broad read
+for the parent part remains required. Plain paths, identifiers and
+unanchored prose still use their existing starting reads. The request-local
+address does not change the public loop types, on-disk data or source
+authority. Scope and range refusals remain canonical.
+
+The Windows complete-evidence failure remains recorded. The offline and
+fresh diagnostic comparison measures retrieval and delivery separately from
+the paused judged baseline.

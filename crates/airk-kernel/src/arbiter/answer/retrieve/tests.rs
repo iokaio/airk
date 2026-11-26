@@ -425,3 +425,63 @@ fn part_search_expands_the_pool_within_its_own_byte_bound() -> Result<()> {
     assert_eq!(reads[0].arguments["max_bytes"], 6144);
     Ok(())
 }
+
+#[test]
+fn explicit_address_opens_one_bounded_canonical_read_in_round_one() -> Result<()> {
+    let scope = scope();
+    let mut gather = Gathering::new(v3::BudgetV3::default(), scope)?;
+    for (address, path, start, end) in [
+        ("old/worker.rs:4-9", "old/worker.rs", 4u64, 9u64),
+        ("new/worker.rs:27", "new/worker.rs", 27, 27),
+        ("worker.rs:50-1000", "worker.rs", 50, 200),
+        (
+            "worker.rs:4294967295",
+            "worker.rs",
+            4_294_967_295,
+            4_294_967_295,
+        ),
+    ] {
+        let task = format!("Read {address}");
+        let proposed = super::super::plan::propose(&task, &task);
+        let planned = super::super::plan::needs(&proposed, &[0]);
+        let reads = initial(&mut gather, 1, &planned[0])?;
+        assert_eq!(tools(&reads), ["read_file"]);
+        let read = &reads[0];
+        assert_eq!(read.operation, v3::LoopRead::ReadFile);
+        assert_eq!(read.arguments["path"], path);
+        assert_eq!(read.arguments["start_line"], start);
+        assert_eq!(read.arguments["end_line"], end);
+        assert_eq!(read.arguments["max_bytes"], 3072);
+        assert!(read.arguments.get("known_hash").is_none());
+        assert_eq!((read.part, read.need, read.round), (1, Some(1), 1));
+        assert_eq!(read.revision, gather.revision);
+        assert_eq!(read.step, Step::Leaf);
+    }
+    Ok(())
+}
+
+#[test]
+fn ordinary_paths_keep_search_and_address_reads_keep_stale_handling() -> Result<()> {
+    use super::super::gather::{GlobalStop, Observed};
+
+    let scope = scope();
+    let mut gather = Gathering::new(v3::BudgetV3::default(), scope.clone())?;
+    let plain_path = "src/worker.rs";
+    let plain = need(NeedKind::Implementation, Some(plain_path), plain_path);
+    assert_eq!(tools(&initial(&mut gather, 1, &plain)?), ["search"]);
+
+    let address = "src/worker.rs:7";
+    let direct = need(NeedKind::Implementation, Some(address), address);
+    let read = initial(&mut gather, 1, &direct)?.remove(0);
+    gather.offer(read);
+    let admitted = gather.take(1, 1);
+    let mut stale = reply(&scope, vec![]);
+    stale["publication"]["token"] = json!("expired-revision");
+    assert!(matches!(
+        gather.observe(admitted[0].seq, Ok(stale))?,
+        Observed::Stale
+    ));
+    assert_eq!(gather.stop, Some(GlobalStop::Stale));
+    assert!(gather.records.is_empty());
+    Ok(())
+}

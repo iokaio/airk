@@ -100,3 +100,87 @@ fn inherited_identifiers_come_last_and_are_marked() {
 fn an_apostrophe_does_not_hide_a_quoted_term() {
     assert_eq!(quoted("don't touch 'retry_refused'"), ["retry_refused"]);
 }
+
+#[test]
+fn explicit_addresses_preserve_the_task_path_and_lines_in_the_plan() {
+    let part = "Read (old/worker.rs:4-9) and compare `new/worker.rs:27`.";
+    let proposals = propose(part, part);
+    assert_eq!(
+        summary(&proposals)[..4],
+        [
+            (NeedKind::Implementation, "old/worker.rs:4-9".into()),
+            (NeedKind::Contract, "old contract rules".into()),
+            (NeedKind::Implementation, "new/worker.rs:27".into()),
+            (NeedKind::Contract, "new contract rules".into()),
+        ]
+    );
+    let chosen = needs(&proposals, &[0, 2]);
+    assert_eq!(chosen[0].subject.as_deref(), Some("old/worker.rs:4-9"));
+    assert_eq!(chosen[1].subject.as_deref(), Some("new/worker.rs:27"));
+    assert_eq!(
+        known_address(chosen[0].subject.as_deref().unwrap()),
+        Some(KnownAddress {
+            path: "old/worker.rs",
+            start: 4,
+            end: 9,
+        })
+    );
+}
+
+#[test]
+fn long_addresses_with_the_same_display_prefix_remain_distinct() {
+    let folder = "deep/".repeat(50);
+    let first = format!("{folder}worker.rs:30");
+    let second = format!("{folder}worker.rs:40");
+    let part = format!("Read {first} and {second}");
+    let proposals = propose(&part, &part);
+    let addresses: Vec<_> = proposals
+        .iter()
+        .filter(|proposal| proposal.kind == NeedKind::Implementation)
+        .filter_map(|proposal| proposal.subject.as_deref().and_then(known_address))
+        .map(|address| address.start)
+        .collect();
+    assert_eq!(addresses, [30, 40]);
+}
+
+#[test]
+fn invalid_or_unsafe_addresses_are_never_path_hints() {
+    for token in [
+        "/src/worker.rs:4",
+        "C:/src/worker.rs:4",
+        r"C:\src\worker.rs:4",
+        r"src\worker.rs:4",
+        "//host/src/worker.rs:4",
+        "https://fixture.invalid/src/worker.rs:4",
+        "file:///src/worker.rs:4",
+        "../src/worker.rs:4",
+        "src/../worker.rs:4",
+        "./src/worker.rs:4",
+        "src//worker.rs:4",
+        "src/worker.rs/:4",
+        "src/worker.rs:0",
+        "src/worker.rs:4-0",
+        "src/worker.rs:9-4",
+        "src/worker.rs:9-",
+        "src/worker.rs:+9",
+        "src/worker.rs:9-10-11",
+        "src/worker.rs:4294967296",
+        "src/worker.rs:5-18446744073709551616",
+        "src/worker.rs:９",
+    ] {
+        assert_eq!(known_address(token), None, "{token}");
+        assert!(path_hints(token).is_empty(), "{token}");
+    }
+}
+
+#[test]
+fn plain_paths_keep_the_original_path_hints() {
+    assert_eq!(
+        path_hints("Look at src/worker.rs, then README.md."),
+        [
+            ("src/worker.rs", "src/worker.rs"),
+            ("README.md", "README.md")
+        ]
+    );
+    assert_eq!(known_address("src/worker.rs"), None);
+}

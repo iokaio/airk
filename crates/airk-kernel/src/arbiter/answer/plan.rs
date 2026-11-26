@@ -89,24 +89,63 @@ fn bounded(text: &str) -> String {
     text[..end].trim_end().to_owned()
 }
 
-fn path_hints(text: &str) -> Vec<String> {
-    let mut found: Vec<String> = Vec::new();
-    for token in
+fn indexed_path_hint(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    (path.contains('/')
+        || EXTENSIONS
+            .iter()
+            .any(|extension| lower.ends_with(extension)))
+        && path.len() > 3
+        && crate::workbench::safe_path(path)
+        && path.chars().any(char::is_alphanumeric)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct KnownAddress<'a> {
+    pub(super) path: &'a str,
+    pub(super) start: usize,
+    pub(super) end: usize,
+}
+
+/// A task-supplied relative indexed address, with inclusive one-based lines.
+pub(super) fn known_address(token: &str) -> Option<KnownAddress<'_>> {
+    let (path, lines) = token.rsplit_once(':')?;
+    if !indexed_path_hint(path)
+        || path.contains(['\\', '?', '#'])
+        || path.split('/').any(str::is_empty)
+    {
+        return None;
+    }
+    let number = |value: &str| {
+        if value.bytes().all(|byte| byte.is_ascii_digit()) {
+            value.parse::<u32>().ok().map(|line| line as usize)
+        } else {
+            None
+        }
+    };
+    let (first, last) = lines.split_once('-').unwrap_or((lines, lines));
+    let (start, end) = (number(first)?, number(last)?);
+    (start > 0 && start <= end).then_some(KnownAddress { path, start, end })
+}
+
+fn path_hints(text: &str) -> Vec<(&str, &str)> {
+    let mut found = Vec::new();
+    for raw in
         text.split(|c: char| c.is_whitespace() || matches!(c, '`' | '"' | '\'' | ',' | '(' | ')'))
     {
-        let token = token.trim_end_matches(['.', ':', ';', '?', '!']);
-        let lower = token.to_ascii_lowercase();
-        let pathy = token.contains('/')
-            || EXTENSIONS
-                .iter()
-                .any(|extension| lower.ends_with(extension));
-        if pathy
-            && token.len() > 3
-            && crate::workbench::safe_path(token)
-            && token.chars().any(char::is_alphanumeric)
-            && !found.iter().any(|seen| seen == token)
-        {
-            found.push(token.to_owned());
+        let token = raw.trim_end_matches(['.', ';', '?', '!']);
+        let (hint, path) = match known_address(token) {
+            Some(address) => (token, address.path),
+            None => {
+                let path = raw.trim_end_matches(['.', ':', ';', '?', '!']);
+                if !indexed_path_hint(path) {
+                    continue;
+                }
+                (path, path)
+            }
+        };
+        if !found.contains(&(hint, path)) {
+            found.push((hint, path));
         }
     }
     found
@@ -156,9 +195,13 @@ pub(crate) fn propose(part: &str, request: &str) -> Vec<Proposal> {
     let push =
         |out: &mut Vec<Proposal>, kind, subject: Option<String>, query: String, inherited| {
             let query = bounded(&query);
+            let explicit = kind == NeedKind::Implementation
+                && subject.as_deref().and_then(known_address).is_some();
             if !query.is_empty()
                 && out.len() < MAX_PROPOSALS
-                && !out.iter().any(|old| old.kind == kind && old.query == query)
+                && !out.iter().any(|old| {
+                    old.kind == kind && old.query == query && (!explicit || old.subject == subject)
+                })
             {
                 out.push(Proposal {
                     kind,
@@ -180,12 +223,12 @@ pub(crate) fn propose(part: &str, request: &str) -> Vec<Proposal> {
     };
     let subject = identifiers.first().cloned();
     // 1. Path hints.
-    for path in path_hints(part) {
+    for (hint, path) in path_hints(part) {
         push(
             &mut out,
             NeedKind::Implementation,
-            Some(path.clone()),
-            path.clone(),
+            Some(hint.to_owned()),
+            hint.to_owned(),
             false,
         );
         if let Some((folder, _)) = path.rsplit_once('/') {
@@ -293,7 +336,10 @@ pub(crate) fn deterministic(proposals: &[Proposal], max_sub_needs: usize) -> Vec
 /// what kind of evidence the sub-need asks for.
 pub(crate) fn wording(kind: NeedKind, subject: Option<&str>, query: &str) -> String {
     match subject {
-        Some(subject) if subject != query => {
+        Some(subject)
+            if subject != query
+                && !(kind == NeedKind::Implementation && known_address(subject).is_some()) =>
+        {
             format!("need {}: {query} (subject {subject})", kind.name())
         }
         _ => format!("need {}: {query}", kind.name()),

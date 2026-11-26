@@ -789,3 +789,15 @@ the lows are closed in the commit after `7b65167a`:
   30 ms timed grace. It now waits on events only: the wave runner announces
   each wave's size (`wave::ON_WAVE`, test builds only) and reads are released
   latest first once the wave's in-flight reads are all inside the reader.
+
+
+### Gather Context development routing
+
+A planned sub-need explicitly addressed as a repository-relative path and
+one line or an inclusive line range uses the existing canonical Read File
+operation for its first read. It requires a safe path and positive ordered
+coordinates and stays within the existing excerpt byte and line bounds.
+The broad initial Search for that part still runs. Plain paths and other
+unaddressed needs retain their existing first-read behavior. The retained
+read is scoped and fenced through the same gather dispatch as any other
+read, including canonical refusal for unavailable or expired evidence.

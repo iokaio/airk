@@ -87,3 +87,13 @@ target and private product ownership audits. `audit-windows-device-reuse.ps1`
 checks the physical installation, state, source and data directories around
 the Windows device-policy journey. Its R4 native lifetime uses the original
 installed pair and registered index, with fresh request and shutdown receipts.
+
+
+The original archive custody can prove reuse after a lockfile update. Run
+`python -B scripts/arbiter/evaluation/confirm-windows-offline-cargo.py <original-cache-root>`
+in the checked Windows shell. It requires the current immutable dependency
+inputs to be an exact subset of the authenticated seed and rehashes every
+original seeded file in the existing D: cache. To retain a proof, supply
+`--output` at a fresh audited private path. Run locked offline Cargo
+resolution against the same cache and current lock before compiling. The
+original seed and execution receipt retain their original identities.

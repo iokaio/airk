@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Retrieve per sub-need: a search, then the structural reads software work
-//! needs (symbols, references, imports, outline, the governing CONTRACT.md or
-//! README, tests). These are change set 1's follow-ups, promoted from the
-//! evaluation layers into fixed product recipes. Every read is offered to the
-//! shared read owner, so a read two sub-needs or parts want runs once.
+//! Retrieve per sub-need: an explicit address or a search, followed by the
+//! structural reads software work needs (symbols, references, imports,
+//! outline, the governing CONTRACT.md or README, tests). These are change
+//! set 1's follow-ups, promoted from evaluation into fixed product recipes.
+//! Every read is offered to the shared read owner, so a shared read runs once.
 use super::gather::{Cause, Dispatch, Gathering, Record, Step};
 use super::*;
 use software::{FollowUp, Shape};
@@ -99,6 +99,8 @@ const SHAPE: Shape = Shape::PRODUCT;
 /// The broad first-round read for each question part.
 const PART_SEARCH_LIMIT: usize = 32;
 const SEARCH_HIT_BYTES: usize = 768;
+/// An inclusive excerpt ends at most 150 lines after its start.
+const EXCERPT_LINE_OFFSET: usize = 150;
 
 fn search_args(query: &str, limit: usize, full: bool) -> Value {
     let max_bytes = (limit * SEARCH_HIT_BYTES).clamp(4096, PART_SEARCH_LIMIT * SEARCH_HIT_BYTES);
@@ -121,6 +123,18 @@ pub(crate) fn part_search(gather: &mut Gathering, part: u8, text: &str) -> Resul
 /// The first reads of a sub-need in round one.
 pub(crate) fn initial(gather: &mut Gathering, part: u8, need: &Need) -> Result<Vec<Dispatch>> {
     let at = (part, Some(need.id), 1);
+    if need.kind == NeedKind::Implementation
+        && let Some(address) = need.subject.as_deref().and_then(super::plan::known_address)
+    {
+        return Ok(vec![excerpt(
+            gather,
+            at,
+            (address.path, address.start, address.end, None),
+            EXCERPT_LINE_OFFSET,
+            (FollowUp::Excerpt, Step::Leaf, Cause::Structural),
+            address.path,
+        )?]);
+    }
     let (limit, full, step) = match need.kind {
         NeedKind::Errors => (SHAPE.need_hits, true, Step::Literal),
         NeedKind::Implementation | NeedKind::Configuration | NeedKind::Overview => {
@@ -266,7 +280,7 @@ pub(crate) fn excerpt(
     (kind, step, cause): (FollowUp, Step, Cause),
     subject: &str,
 ) -> Result<Dispatch> {
-    let mut arguments = json!({"path":path,"start_line":start,"end_line":end.min(start + span),"max_bytes":SHAPE.read_bytes});
+    let mut arguments = json!({"path":path,"start_line":start,"end_line":end.min(start.saturating_add(span)),"max_bytes":SHAPE.read_bytes});
     if let Some(hash) = hash {
         arguments["known_hash"] = json!(hash);
     }
@@ -311,7 +325,7 @@ pub(crate) fn react(
                     gather,
                     at,
                     (path, *start, *end, hash.as_deref()),
-                    150,
+                    EXCERPT_LINE_OFFSET,
                     (FollowUp::Excerpt, Step::Excerpt, Cause::Structural),
                     &subject,
                 )?),
