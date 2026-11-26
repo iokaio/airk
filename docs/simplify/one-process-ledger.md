@@ -20213,3 +20213,77 @@ admission and audited 114 changed outputs. Execution receipt
 Repository checks and collector command parsing passed. This is diagnostic
 implementation evidence. The next action is to build the test images,
 capture the exact live cohort and run the strict CUDA comparison.
+
+### 25 November 2026 — Wider Focus measured on Windows CUDA
+
+Built the strict CUDA scorer, test-support service and CLI from
+`53ccc54e`. The warm incremental Windows builds took 88.20 s, 79.49 s
+and 1.75 s and audited 1,428 changed outputs. Exact Cargo commands and
+target are in `windows-completion-focus-image-r1/execution.json`,
+SHA-256 `b5954350b45d3b3ca7914e010694ef0261ab5db12a6b5257bf4c57a08e253023`.
+The scorer and service hashes are
+`317f544cdf626d8751efb99e58ee5447c3c2b3dee656dcfebdfefc5dfa25a4e5`
+and `7f3cd1d6eada41d7ca2a107bfeff95fb857df706dcde61bd71f2b85a8a679c5f`.
+
+The first capture replay returned 20 Search replies. Rust test output
+capture suppressed the private trace. It closed with no surviving
+processes and supplied no scoring inputs. The fixture launcher now
+disables test output capture for this explicit diagnostic. A subsequent
+execution interruption left its successor without a close receipt or an
+active writer. The final run reused the last authenticated closed
+predecessor and produced its own authenticated Ready and Closed records.
+
+The final 45.030 s collector matched 20 frozen requests, 800 ordered
+windows, all selected citations and zero unmatched trace events. All 800
+window hashes equaled the corresponding full native hit hashes. Both
+optional stages stayed off during capture. The native fixture preserved
+41 Index and Vectors jobs and launched zero new ones. Its Job closed
+without descendants. Exact trace SHA-256
+`616d1f26412cafa9f76f35c592bee775d9b63af4fc64a5dc4e32ba45571d465`.
+Bound scorer input SHA-256
+`d0322cd0504d5f5d24bc4740c3837ad8fc9dd2f477081519d0b7d4288017f734`.
+
+The private `l5c_focus_shortlist` selector ran 1,120 synchronized scores
+on strict CUDA using the retained Focus 1024 W8 manifest. One selected
+test passed, six were filtered, and device work settled in 147.15 s
+including startup and observation. The 320 shared pairs had identical
+compiled input digests and logits. The widths were scored serially on
+the same resident scorer with width 16 first.
+
+| Repository | Unranked top ten | Width 16 | Width 40 | Width 40 gains / losses | Mean score time, 16 / 40 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Bookbuilder | 3/61 | 4/61 | 4/61 | 1 / 1 | 1.97 / 4.91 s |
+| Munarium | 15/52 | 15/52 | 17/52 | 3 / 1 | 1.96 / 4.86 s |
+| Combined | 18/113 | 19/113 | 21/113 | 4 / 2 | 1.97 / 4.89 s |
+
+Both widths observed a peak of 3,274,178,560 adapter-used bytes, including
+other device usage. The Windows sampler on the original child handle
+observed a peak of 1,872,756,736 local and 79,691,776 nonlocal bytes for
+the scorer across the entire run. Those sampled peaks do not attribute
+a separate process peak to each width. Score, coverage and sampler
+receipt SHA-256s are
+`c49478dfda24dafbdb381cfa0cd3d203072ab3c5a17f7fa5aaa56213ef8007f8`,
+`ef90165fed0c28f5105e1c706091c6cf537dfd17b17177a5a01bcc873ac07b95`
+and `560ed2e328df94489824892a383c237bc3191dbf56096fc3199efd5a1256471d`.
+
+This is a bound diagnostic of shortlist ranking before response packing.
+The wider trial gains two essentials overall, exchanges two earlier
+essentials and uses 2.48 times the measured scoring time. It does not
+establish a general product width change. Keep the current service
+admission limit.
+
+Independent source work reproduced the non-UTF-8 fallback exclusion
+predicate on 124 Bookbuilder and 14 Munarium omissions. One Bookbuilder
+TXT matched a Git ignore rule and the last Munarium omission matched a
+hard-name exclusion. Seven Bookbuilder paths remain unexplained. Three
+are valid JSON and four have PDF headers and fit the known source size
+limit. These are independently checked predicates, with no historical
+per-file skip event available. The earlier CUDA-observed base matrices
+differ from the current comparison pair, so their writer-route evidence
+does not transfer to the current publications.
+
+The isolated staged image's duplicate providers and CLI were reclaimed
+after the scorer exited. The checked cleanup recovered 1,912,298,288
+bytes and left 1,089,267,740,672 bytes free on D:. Unique binaries and
+measurement receipts were retained. Cleanup receipt SHA-256
+`5cb94dfc504ed93ef38399a343512c7f8082f018a0e0af492fcdb30d9ec88557`.

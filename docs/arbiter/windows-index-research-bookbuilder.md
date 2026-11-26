@@ -45,7 +45,15 @@ vector data, stable chunk evidence and canonical FTS postings matched the
 original. The publication tokens remain distinct.
 [Recorded follow-up replay](../simplify/one-process-ledger.md#25-november-2026--recorded-follow-up-search-and-reads-on-windows-cuda) · [Munarium results](windows-index-research-munarium.md)
 
-These results leave extraction anchors on the selected export, the
-independent CPU-query versus CUDA-vector check, wider Focus and held-out
-selection open. No candidate representation or full rebuild has been
-selected. The Windows OpenAI baseline and improvement rounds are pending.
+Wider Focus scored the same captured 40-candidate shortlists on strict
+Windows CUDA. The first ten unranked candidates covered 3/61 essentials.
+Scoring 16 or 40 raised that to 4/61. The wider run gained one note and
+lost another relative to width 16. Mean scoring time was 1.97 s at width
+16 and 4.91 s at width 40. The result covers shortlist ranking before
+response packing.
+[Matched CUDA scoring](../simplify/one-process-ledger.md#25-november-2026--wider-focus-measured-on-windows-cuda)
+
+Extraction anchors on the selected export, the independent CPU-query
+versus CUDA-vector check and held-out selection remain open. No candidate
+representation or full rebuild has been selected. The Windows OpenAI
+baseline and improvement rounds are pending.

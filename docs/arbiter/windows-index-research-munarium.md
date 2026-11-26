@@ -40,7 +40,15 @@ and canonical FTS postings matched the original. The publication tokens
 remain distinct.
 [Recorded follow-up replay and reduced cases](../simplify/one-process-ledger.md#25-november-2026--recorded-follow-up-search-and-reads-on-windows-cuda) · [Bookbuilder results](windows-index-research-bookbuilder.md)
 
-These results leave extraction anchors on the selected export, the
-independent CPU-query versus CUDA-vector check, wider Focus and held-out
-selection open. No candidate representation or full rebuild has been
-selected. The Windows OpenAI baseline and improvement rounds are pending.
+Wider Focus scored the same captured 40-candidate shortlists on strict
+Windows CUDA. The first ten unranked candidates and width 16 each
+covered 15/52 essentials. Width 40 covered 17/52, gaining three notes and
+losing one relative to width 16. Mean scoring time was 1.96 s at width 16
+and 4.86 s at width 40. The result covers shortlist ranking before
+response packing.
+[Matched CUDA scoring](../simplify/one-process-ledger.md#25-november-2026--wider-focus-measured-on-windows-cuda)
+
+Extraction anchors on the selected export, the independent CPU-query
+versus CUDA-vector check and held-out selection remain open. No candidate
+representation or full rebuild has been selected. The Windows OpenAI
+baseline and improvement rounds are pending.

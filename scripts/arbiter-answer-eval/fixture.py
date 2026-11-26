@@ -1526,7 +1526,7 @@ def worker(args):
                                                   "sha256": sha256(life / "restart-exception.json")}
     write_json(handle_path, handle, replace=True)
     command = [images["service"]["path"], "--ignored", "--exact", SELECTORS[args.selector], "--test-threads", "1"]
-    if "AIRK_PRIVATE_VECTOR_CENSUS_PATHS" in overrides:
+    if "AIRK_PRIVATE_VECTOR_CENSUS_PATHS" in overrides or overrides.get("AIRK_PRIVATE_FOCUS_SHORTLIST") == "1":
         command.append("--no-capture")
     ready = None
     reason = None
