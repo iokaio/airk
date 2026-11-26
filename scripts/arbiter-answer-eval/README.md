@@ -1061,7 +1061,7 @@ The Gather Context tools freeze an evaluator-only reference from the Windows
 complete-evidence disposition, the two versioned walkthroughs and the scenario
 freeze. They reopen the archived source ranges and check their exact bytes.
 Author step counts keep each author's recorded units. The reference retains the
-original trace text and marks its coverage limits. Annotated alternative
+original trace text and marks its coverage limits. A source-authenticated wider excerpt covers a required range it contains. Annotated alternative
 locations require independent source review.
 
 Use the checked Windows shell from the repository root. With the archived
@@ -1135,7 +1135,7 @@ the observed cache race. The controller retains cap violations and timeouts
 in the case roster. Use `--case bookbuilder-C2` for the representative case,
 or omit the selector to cover all 20. The dedicated judging command
 reopens the completed actor captures and runs two fresh masked Astra medium
-sessions per eligible result with the existing rubric.
+sessions per eligible result with the existing rubric. Set `--jobs 4` for guarded cohorts after the actor run settles.
 
 ~~~powershell
 $pwshExe = (Get-Command pwsh).Source

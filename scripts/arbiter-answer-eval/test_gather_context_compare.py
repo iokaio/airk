@@ -52,14 +52,17 @@ class CompareTests(unittest.TestCase):
         self.assertEqual(row["first_observed_divergence"]["kind"], "delivered_witness_difference")
         self.assertIsNone(row["first_observed_divergence"]["position"])
 
-    def test_broader_range_and_alternate_path_stay_unverified(self):
+    def test_wider_same_source_range_covers_the_witness(self):
         reference, control, candidate = fixtures()
         passages = candidate["cases"][0]["delivered_passages"]
         passages[0]["end_line"] = 5
         passages.append({**passages[0], "path": "docs/alternate.md", "end_line": 4})
         row = compare(reference, control, candidate)["cases"][0]
         self.assertEqual(row["arms"]["candidate"]["verified_exact_witnesses"], [])
-        self.assertEqual(row["arms"]["candidate"]["unverified_obligations"], ["need-1"])
+        self.assertEqual(row["arms"]["candidate"]["verified_range_witnesses"], ["need-1"])
+        passages[0]["source_sha256"] = "e" * 64
+        wrong_source = compare(reference, control, candidate)["cases"][0]
+        self.assertEqual(wrong_source["arms"]["candidate"]["unverified_obligations"], ["need-1"])
 
     def test_refuses_changed_identity_missing_cases_and_duplicate_cases(self):
         for update, message in [

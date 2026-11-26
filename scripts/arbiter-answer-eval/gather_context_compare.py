@@ -59,6 +59,13 @@ def _costs(row: dict, label: str) -> dict:
     return costs
 
 
+def _contains_witness(delivered: tuple, expected: tuple) -> bool:
+    path, start, end, source, _ = delivered
+    reference_path, first, last, reference_source, _ = expected
+    return (delivered == expected or
+            (path == reference_path and source == reference_source
+             and start <= first <= last <= end and (start < first or last < end)))
+
 def _arm_result(case: dict, row: dict, arm: str, expected: dict) -> dict:
     label = f"{arm}/{case['id']}"
     _require(all(row.get(key) == case[key] for key in ("repo", "publication", "index_id")),
@@ -75,10 +82,13 @@ def _arm_result(case: dict, row: dict, arm: str, expected: dict) -> dict:
 
     witnesses = {_witness(passage, f"{label} delivered passage") for passage in delivered}
     covered = [note_id for note_id, witness in expected.items() if witness in witnesses]
-    missing = [note_id for note_id in expected if note_id not in covered]
+    ranges = [note_id for note_id, witness in expected.items()
+              if any(_contains_witness(delivered, witness) for delivered in witnesses)]
+    missing = [note_id for note_id in expected if note_id not in ranges]
     return {
         "disposition": disposition,
         "verified_exact_witnesses": covered,
+        "verified_range_witnesses": ranges,
         "unverified_obligations": missing,
         "delivered_passages": delivered,
         "actions": actions,
@@ -96,7 +106,7 @@ def _divergence(control: dict, candidate: dict) -> dict | None:
                     "control": {field: before[field] for field in changed},
                     "candidate": {field: after[field] for field in changed}}
 
-    before, after = (arm["verified_exact_witnesses"] for arm in (control, candidate))
+    before, after = (arm["verified_range_witnesses"] for arm in (control, candidate))
     if before != after:
         return {"kind": "delivered_witness_difference", "position": None,
                 "control": before, "candidate": after}
@@ -165,7 +175,7 @@ def compare(reference: dict, control: dict, candidate: dict) -> dict:
             "first_observed_divergence": _divergence(arm_rows["control"], arm_rows["candidate"]),
         })
     return {"schema": COMPARISON_SCHEMA, "spec_sha256": spec_sha,
-            "coverage_basis": "exact_delivered_source_witness", "cases": rows}
+            "coverage_basis": "authenticated_delivered_source_range", "cases": rows}
 
 
 def validate_judgments(comparison: dict, judged: dict) -> dict[tuple[str, str], dict]:
@@ -205,7 +215,7 @@ def report(comparison: dict, *, judged: dict | None = None) -> str:
         ("Independent judgments are present for both arms."
          if outcomes is not None else "Unjudged diagnostic. Correct finishes and product readiness are unassessed."),
         "",
-        "Coverage counts exact source witnesses delivered to the caller. Alternate or broader ranges require source review.",
+        "Coverage requires authenticated delivered bytes that contain the frozen source range. Alternative locations require source review.",
         "Native measurements keep their capture field names and units. Hosted external turns appear only in judgments.",
         "",
         "| Case | OpenAI steps | Anthropic turns | Control witnesses | Candidate witnesses | First observed difference |",
@@ -217,7 +227,8 @@ def report(comparison: dict, *, judged: dict | None = None) -> str:
         cells = [case_id, paths["openai"]["step_count"], paths["anthropic"]["step_count"]]
         for arm in ARMS:
             row = arms[arm]
-            cells.append(f'{len(row["verified_exact_witnesses"])}/{total} ({row["disposition"]})')
+            witnesses = row.get("verified_range_witnesses", row["verified_exact_witnesses"])
+            cells.append(f'{len(witnesses)}/{total} ({row["disposition"]})')
         difference = case["first_observed_divergence"]
         cells.append(difference["kind"].replace("_", " ") if difference else "Unavailable")
         lines.append("| " + " | ".join(_cell(cell) for cell in cells) + " |")
@@ -234,7 +245,7 @@ def report(comparison: dict, *, judged: dict | None = None) -> str:
         for arm in ARMS:
             unresolved = case["arms"][arm]["unverified_obligations"]
             if unresolved:
-                lines.append(f"- {arm.capitalize()} obligations without an exact delivered witness. "
+                lines.append(f"- {arm.capitalize()} obligations without an authenticated delivered range. "
                              f"{_cell(', '.join(unresolved))}.")
         for name, cost in case["cost_comparison"].items():
             before, after = (cost[arm] if cost[arm] is not None else "unavailable" for arm in ARMS)

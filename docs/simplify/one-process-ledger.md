@@ -21510,3 +21510,47 @@ passing full-workspace gate or native candidate replay is claimed here.
 Next stage the matched candidate service/client pair on Windows from the
 reviewed source, reopen the same two publications with both models off,
 and compare all 20 cases against the frozen native control.
+
+
+### 26 November 2026 — Matched Windows M2 reader replay and diagnostic cap direction
+
+The signed M2 candidate `c4738a11` linked against the exact retained CUDA
+archive and approved bundled FP16 inputs from the control. The build staged
+service SHA-256
+`7efa52139f448f8d146b759217e6b42aea179740346531c986023d65a52847b7`
+and paired CLI
+`5f758284cfb32d99794376b76468201a64e31c36c89b2428625bcf52e69a1402`.
+Both builds used the original target with incremental 1. The service and
+CLI commands took 74.804 and 64.883 s, respectively. Execution SHA-256
+`184f99e1a5eb1d07eca38591b08d0d44a7e2e0ecc28b584b78e882ba06a6e193`.
+The first two build attempts stopped on the previously provisioned bundled
+model path and the static ORT link input. Both input files were rehashed
+before the successful diagnostic relink. A fresh producer-chain
+verification independently refused a changed historical helper; the
+diagnostic uses the byte-identical retained archive at its existing
+evaluation identity. This is a private native evaluation image.
+
+All 20 M2 requests on the two frozen publications completed with both
+stages observed off at start and end. The owned candidate lifetime closed
+naturally. The candidate capture SHA-256 is
+`39259454496bcfedeb844e6dd2cb36d4a409277eb78550c52bfbbf0c91e74661`.
+The separate enclosing-range comparison
+`passes/gather-context-native-candidate-m2-r1/range-comparison.json` has
+SHA-256 `da12f3c94e021c003fb8254ef9de9a83ccec8458c505c861ba42fa0c4b926849`.
+It uses source-authenticated whole excerpt bytes with the same path and
+source hash to credit a genuine covering range. Each arm covers the same
+two frozen essential ranges, one per repository. Other locations still
+require independent review. Verified native text passages moved from 387
+to 320, and reported internal calls moved from 236 to 261. Median
+transport elapsed time moved from 8,182 ms to 14,510 ms in Bookbuilder and
+from 1,980 ms to 4,621 ms in Munarium. These are descriptive measurements
+from the matched unjudged development capture. The expanded reader roster
+alone did not earn promotion.
+
+The user selected a 24-call limit for the next hosted diagnostic. Preserve
+the active 12-call actor series and all original receipts as the control.
+Compare fresh ordinary source-tool sessions at 24 against the same frozen
+20 instructions, budgets and source exports. Keep the native 132-call,
+three-round comparison unchanged. The actor cap and the native
+per-request limit are independent. The separately approved judged product
+baseline remains paused at the Windows review.
