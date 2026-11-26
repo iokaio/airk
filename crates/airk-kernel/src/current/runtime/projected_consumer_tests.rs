@@ -781,6 +781,69 @@ fn automatic_verify_restores_missing_plain_fts_before_canonical_search() -> Resu
         (hit.citation.path.as_str(), hit.text.as_str()),
         (CONTROL, CONTROL_TEXT)
     );
+    let request_time = idle_time.checked_add(1).context("repair request clock overflow")?;
+    assert!(registry.due_automatic_audits(request_time, 8)?.is_empty());
+    let selected = kernel
+        .refresh_service_snapshot()?
+        .with_lexical_nomination_checkpoint(|| Ok(()));
+    let exact = |text: &str| {
+        selected.search_response_with_filters(
+            &SearchQuery {
+                text: text.into(),
+                path_prefix: Some(TARGET.into()),
+                limit: 2,
+                max_bytes: 4096,
+            },
+            crate::current::CurrentSearchMode::Lexical,
+            None,
+            &airk_core::SearchFilters::default(),
+        )
+    };
+    assert!(exact("unmatchedneedle")?.hits.is_empty());
+    assert!(kernel.lexical_audit.lock().unwrap().pending_search_arm().is_none());
+
+    let damaged = Connection::open_with_flags(&database, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+    assert_eq!(damaged.execute("DELETE FROM fts WHERE rowid=?1", [target])?, 1);
+    assert_eq!(fts_rows(&damaged)?, (0, 1));
+    drop(damaged);
+    for _ in 0..2 {
+        let reply = exact("repairneedle")?;
+        assert_eq!(reply.generation, idle_token.sequence);
+        assert!(!reply.truncated && reply.hits.is_empty());
+    }
+    assert!(registry.due_automatic_audits(request_time, 8)?.is_empty());
+    kernel.arm_pending_lexical_audit_at(&mut registry, &lease, Some(request_time))?;
+    let due = registry.due_automatic_audits(request_time, 8)?;
+    let [(request_project, request_revision)] = due.as_slice() else {
+        anyhow::bail!("expected one due retrieval-nominated Verify: {due:?}");
+    };
+    assert_eq!(*request_project, registration.binding);
+    let requested = registry.enqueue_automatic_audit(
+        *request_project,
+        *request_revision,
+        namespace,
+        Incarnation::from_bytes([215; 16]),
+        request_time,
+    )?;
+    registry.claim_job_id(&lease, requested.id)?.context("nominated Verify was not claimed")?;
+    let turn = kernel.verify_service_turn_inner(
+        &registry, &lease, &bound, requested.id, 64 << 20, None, Some(request_time),
+    )?;
+    let recovered = turn.query_completed.as_ref().context("nominated Verify did not complete")?;
+    registry.complete_automatic_audit(&lease, recovered, request_time)?;
+    let token = store.plain_read()?.token();
+    assert_eq!(token.sequence, idle_token.sequence + 1);
+    assert_eq!(token.digest, recovered.revision().revision);
+    let reply = exact("repairneedle")?;
+    assert_eq!(reply.generation, token.sequence);
+    let [hit] = reply.hits.as_slice() else {
+        anyhow::bail!("expected one exact Search hit after nominated repair");
+    };
+    assert_eq!((hit.citation.path.as_str(), hit.text.as_str()), (TARGET, TARGET_TEXT));
+    assert_eq!((hit.citation.start_line, hit.citation.end_line), (1, 1));
+    assert!(kernel.lexical_audit.lock().unwrap().pending_search_arm().is_none());
+
+
     assert!(registry.recorded_integrity_damage(&lease)?.is_empty());
     kernel.settle_native_owner_after_owned_drain(&mut registry)?;
     Ok(())

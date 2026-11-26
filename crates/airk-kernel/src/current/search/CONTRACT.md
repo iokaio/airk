@@ -4,6 +4,19 @@ Owner: Kernel (`current/search.rs`, `search/v2.rs`). Store owns the lexical
 readers it calls. No wire field, persisted format, chunking or stored vector
 is changed by either entry below.
 
+## Deferred nomination from an exact lexical miss
+
+An ordinary external Search can nominate a small exact-file lexical miss
+when its existing read context permits the cooperative check. The inquiry
+uses the same selected publication. It requires explicit lexical mode,
+default filters, an empty complete reply and a bounded singleton file
+match for the literal path prefix. The check rejects ambiguous paths and
+confirms that one bounded FTS row identity is absent. The caller keeps its
+ordinary reply. Only fixed-size publication, policy and artifact
+identities reach the in-memory queue. The existing Verify owner
+independently authenticates the retained text and controls before
+publishing. This path does not replay or extend the original read.
+
 ## Plain-store vector search (24 November 2026)
 
 The vector branch ranks the selected pipeline's committed rows by exact

@@ -55,6 +55,13 @@ automatic cohort can then update its existing retained intent to that exact
 successor, so the repair publication does not by itself re-arm the same
 audit. A foreign intent stays owned by its existing publisher.
 
+An in-memory Search nomination can advance the existing same-head intent
+when that intent is active and eligible. The worker uses its real project
+lease at its existing idle wait boundary. The intent keeps its bounded
+payload. Stop, pause, blocked and in-flight states keep their existing
+meaning. Before a repair, Verify reselects and independently proves the
+same artifact, source, row identity and scope under the current authority.
+
 Ordinary physical Verify retains its recovery and cancellation path. The
 probe does not clear sticky damage or change an approved maintenance plan.
 Its work window uses cooperative checks around acquisition and SQLite

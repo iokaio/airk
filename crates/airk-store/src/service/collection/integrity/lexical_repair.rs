@@ -2,13 +2,19 @@
 //! Bounded lexical checks for the existing automatic Verify cohort.
 use super::IntegrityOwner;
 use crate::{
-    current::{CurrentRead, CurrentToken, postings::Lookup},
+    current::{
+        CurrentRead, CurrentToken, lexical, lexical_repair::MAX_CHUNKS, map::MapDomain,
+        postings::Lookup,
+    },
     service::registry::AutomaticAuditContext,
 };
-use airk_core::SearchQuery;
+use airk_core::{
+    SearchQuery,
+    identity::{ArtifactId, Sha256Digest},
+};
 use anyhow::{Context, Result, ensure};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, VecDeque},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -17,15 +23,159 @@ const FILES_PER_TURN: usize = 2;
 const MAX_RECENT_PATHS: usize = 32;
 const TURN_WINDOW: Duration = Duration::from_millis(250);
 
+/// Coalesced wake result for the existing automatic Verify cohort.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LexicalAuditArm {
+    Armed,
+    Deferred,
+    Stale,
+}
+
+/// Request-derived identity only. Independent Verify must authenticate the
+/// retained chunk and controls before using it as evidence of a defect.
+pub struct LexicalSearchNomination {
+    head: CurrentToken,
+    artifact: ArtifactId,
+    source_hash: Sha256Digest,
+    payload_digest: Sha256Digest,
+    ordinal: u32,
+    stable_id: Sha256Digest,
+    policy: Option<Sha256Digest>,
+}
+
+impl LexicalSearchNomination {
+    fn resolve(&self, read: &CurrentRead) -> Result<Option<String>> {
+        read.require_token(&self.head)?;
+        if read.source_policy_digest()? != self.policy {
+            return Ok(None);
+        }
+        let Some(path) = read.map_get(MapDomain::ArtifactHandle, self.artifact.as_bytes())? else {
+            return Ok(None);
+        };
+        let path = String::from_utf8(path)?;
+        Ok(read.accepts_path(&path).then_some(path))
+    }
+}
+
 /// Cursor stays with this live worker. A replacement starts its own sweep.
 #[derive(Default)]
 pub struct LexicalAuditCursor {
     head: Option<CurrentToken>,
     after: Option<String>,
     recent: BTreeSet<String>,
+    search_head: Option<CurrentToken>,
+    search: VecDeque<LexicalSearchNomination>,
+    seen_search: BTreeSet<ArtifactId>,
+    search_arm_pending: bool,
 }
 
 impl LexicalAuditCursor {
+    /// Called by canonical Search only after it has a complete lexical miss
+    /// with default filters. This does not store or inspect query text.
+    pub fn prove_exact_search_miss(
+        read: &CurrentRead,
+        query: &SearchQuery,
+        mut checkpoint: impl FnMut() -> Result<()>,
+    ) -> Result<Option<LexicalSearchNomination>> {
+        let Some(path) = query.path_prefix.as_deref().filter(|path| !path.is_empty()) else {
+            return Ok(None);
+        };
+        checkpoint()?;
+        if !read.accepts_path(path) {
+            return Ok(None);
+        }
+        let head = read.token()?;
+        let policy = read.source_policy_digest()?;
+        let Some(identity) =
+            read.with_index(|index| index.exact_fts_miss_identity(path, MAX_CHUNKS))?
+        else {
+            return Ok(None);
+        };
+        checkpoint()?;
+        read.require_token(&head)?;
+        read.require_path(path)?;
+        ensure!(
+            lexical::stable_id(path, u64::from(identity.ordinal))? == identity.stable_id,
+            "lexical search nomination identity differs"
+        );
+        Ok(Some(LexicalSearchNomination {
+            head,
+            artifact: identity.artifact,
+            source_hash: identity.source_hash,
+            payload_digest: identity.payload_digest,
+            ordinal: identity.ordinal,
+            stable_id: identity.stable_id,
+            policy,
+        }))
+    }
+
+    pub fn note_search_miss(&mut self, nomination: LexicalSearchNomination) -> bool {
+        if self.head.is_some_and(|head| {
+            head.incarnation != nomination.head.incarnation
+                || head.sequence > nomination.head.sequence
+        }) || self.search_head.is_some_and(|head| {
+            head.incarnation == nomination.head.incarnation
+                && head.sequence > nomination.head.sequence
+        }) {
+            return false;
+        }
+        self.rebind_search(nomination.head);
+        if self.seen_search.len() >= MAX_RECENT_PATHS
+            || !self.seen_search.insert(nomination.artifact)
+        {
+            return false;
+        }
+        self.search.push_back(nomination);
+        self.search_arm_pending = true;
+        true
+    }
+
+    pub fn pending_search_arm(&self) -> Option<CurrentToken> {
+        if self.search_arm_pending && !self.search.is_empty() {
+            self.search_head
+        } else {
+            None
+        }
+    }
+
+    pub fn settle_search_arm(&mut self, head: CurrentToken, disposition: LexicalAuditArm) {
+        if self.search_head != Some(head) {
+            return;
+        }
+        match disposition {
+            LexicalAuditArm::Armed => self.search_arm_pending = false,
+            LexicalAuditArm::Deferred => {}
+            LexicalAuditArm::Stale => {
+                self.search.clear();
+                self.search_arm_pending = false;
+            }
+        }
+    }
+
+    fn rebind_search(&mut self, head: CurrentToken) {
+        if self.search_head != Some(head)
+            && self.search_head.is_none_or(|old| {
+                old.incarnation != head.incarnation || old.sequence <= head.sequence
+            })
+        {
+            self.search_head = Some(head);
+            self.search.clear();
+            self.seen_search.clear();
+            self.search_arm_pending = false;
+        }
+    }
+
+    fn take_search(&mut self, head: CurrentToken) -> Option<LexicalSearchNomination> {
+        if self.search_head != Some(head) {
+            return None;
+        }
+        let nomination = self.search.pop_front();
+        if nomination.is_some() {
+            self.search_arm_pending = !self.search.is_empty();
+        }
+        nomination
+    }
+
     pub fn note_publication<'a>(
         &mut self,
         head: CurrentToken,
@@ -57,6 +207,7 @@ impl LexicalAuditCursor {
             self.recent.clear();
         }
         self.head = Some(head);
+        self.rebind_search(head);
     }
 }
 
@@ -107,8 +258,16 @@ impl IntegrityOwner<'_> {
             }
             let settings = super::super::inspect_settings_digest(&selection.store, &scope.root)?;
             cursor.rebind(head);
+            let nomination = cursor.take_search(head);
+            let nominated_path = match &nomination {
+                Some(nomination) => nomination.resolve(&read)?,
+                None => None,
+            };
+            let nominated = nominated_path.is_some();
             let recent = !cursor.recent.is_empty();
-            let (paths, next_after) = if recent {
+            let (paths, next_after) = if let Some(path) = nominated_path {
+                (vec![path], None)
+            } else if recent {
                 (
                     cursor.recent.iter().take(FILES_PER_TURN).cloned().collect(),
                     None,
@@ -131,9 +290,22 @@ impl IntegrityOwner<'_> {
                     None
                 };
                 let Some(candidate) = candidate else {
-                    cursor.advance(path, recent);
+                    if !nominated {
+                        cursor.advance(path, recent);
+                    }
                     continue;
                 };
+                if nominated
+                    && let Some(nomination) = &nomination
+                    && !candidate.matches_row(
+                        nomination.source_hash,
+                        nomination.payload_digest,
+                        nomination.ordinal,
+                        nomination.stable_id,
+                    )
+                {
+                    continue;
+                }
                 check()?;
                 // Exclude replacement only at the actual publication boundary.
                 let locked = self.collection.select_existing_locked()?;
@@ -190,13 +362,15 @@ impl IntegrityOwner<'_> {
                     );
                     Ok(())
                 })?;
-                cursor.advance(path, recent);
-                cursor.head = Some(committed);
+                if !nominated {
+                    cursor.advance(path, recent);
+                }
+                cursor.rebind(committed);
                 self.registry
                     .retain_lexical_repair_head(self.lease, cohort, head, committed)?;
                 return Ok(());
             }
-            if !recent {
+            if !nominated && !recent {
                 cursor.after = next_after;
             }
             Ok(())
@@ -221,5 +395,56 @@ impl IntegrityOwner<'_> {
             "lexical audit cohort changed or was cancelled"
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use airk_core::identity::Incarnation;
+
+    fn ticket(sequence: u64, artifact: u8) -> LexicalSearchNomination {
+        LexicalSearchNomination {
+            head: CurrentToken {
+                incarnation: Incarnation::from_bytes([1; 16]),
+                sequence,
+                digest: Sha256Digest::from_bytes([sequence as u8; 32]),
+            },
+            artifact: ArtifactId::from_bytes([artifact; 16]),
+            source_hash: Sha256Digest::from_bytes([2; 32]),
+            payload_digest: Sha256Digest::from_bytes([3; 32]),
+            ordinal: 0,
+            stable_id: Sha256Digest::from_bytes([4; 32]),
+            policy: None,
+        }
+    }
+
+    #[test]
+    fn lexical_search_queue_coalesces_and_discards_stale_head() {
+        let mut cursor = LexicalAuditCursor::default();
+        let head = ticket(1, 0).head;
+        for artifact in 0..MAX_RECENT_PATHS as u8 {
+            assert!(cursor.note_search_miss(ticket(1, artifact)));
+            assert!(!cursor.note_search_miss(ticket(1, artifact)));
+        }
+        assert!(!cursor.note_search_miss(ticket(1, 32)));
+        assert_eq!(cursor.pending_search_arm(), Some(head));
+        cursor.settle_search_arm(head, LexicalAuditArm::Deferred);
+        assert_eq!(cursor.pending_search_arm(), Some(head));
+        cursor.settle_search_arm(head, LexicalAuditArm::Armed);
+        assert_eq!(cursor.pending_search_arm(), None);
+        assert!(cursor.take_search(head).is_some());
+        assert_eq!(cursor.pending_search_arm(), Some(head));
+        assert!(!cursor.note_search_miss(ticket(1, 0)));
+
+        let next = ticket(2, 0).head;
+        assert!(cursor.note_search_miss(ticket(2, 0)));
+        cursor.settle_search_arm(head, LexicalAuditArm::Stale);
+        cursor.rebind(head);
+        assert!(cursor.take_search(head).is_none());
+        assert_eq!(cursor.pending_search_arm(), Some(next));
+        cursor.settle_search_arm(next, LexicalAuditArm::Stale);
+        assert_eq!(cursor.pending_search_arm(), None);
+        assert!(!cursor.note_search_miss(ticket(2, 0)));
     }
 }

@@ -250,6 +250,92 @@ impl Kernel {
 }
 
 impl Kernel {
+    /// Attach the outer transport's cooperative check for a single Search.
+    pub fn with_lexical_nomination_checkpoint(
+        mut self,
+        checkpoint: impl Fn() -> Result<()> + Send + Sync + 'static,
+    ) -> Self {
+        self.lexical_nomination_checkpoint = Some(std::sync::Arc::new(checkpoint));
+        self
+    }
+
+    pub(crate) fn nominate_lexical_search_miss(
+        &self,
+        read: &airk_store::current::CurrentRead,
+        query: &airk_core::SearchQuery,
+        filters: &airk_core::SearchFilters,
+        response: &airk_core::SearchResponse,
+    ) -> Result<bool> {
+        use airk_core::search_execution::{RequestedMode, ServedMode};
+        use airk_store::service::collection::integrity::LexicalAuditCursor;
+        let Some(outer) = self.lexical_nomination_checkpoint.as_ref() else {
+            return Ok(false);
+        };
+        if self.service_selection.is_none()
+            || query.path_prefix.as_ref().is_none_or(String::is_empty)
+            || *filters != airk_core::SearchFilters::default()
+            || !response.hits.is_empty()
+            || response.truncated
+            || !response.execution.as_ref().is_some_and(|execution| {
+                execution.requested_mode == RequestedMode::Lexical
+                    && execution.served_mode == ServedMode::Lexical
+                    && !execution.incomplete
+            })
+        {
+            return Ok(false);
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(20);
+        let checkpoint = || {
+            outer()?;
+            ensure!(std::time::Instant::now() < deadline, "lexical nomination window elapsed");
+            Ok(())
+        };
+        checkpoint()?;
+        let candidate = LexicalAuditCursor::prove_exact_search_miss(read, query, checkpoint)?;
+        if let Some(candidate) = candidate
+            && let Ok(mut cursor) = self.lexical_audit.try_lock()
+        {
+            checkpoint()?;
+            return Ok(cursor.note_search_miss(candidate));
+        }
+        Ok(false)
+    }
+    /// The actual worker owns the registry and project lease. The query path
+    /// only creates an in-memory nomination.
+    pub fn arm_pending_lexical_audit(
+        &self,
+        registry: &mut airk_store::service::registry::ServiceRegistry,
+        lease: &airk_store::service::ProjectLease,
+    ) -> Result<()> {
+        self.arm_pending_lexical_audit_at(registry, lease, None)
+    }
+
+    pub(crate) fn arm_pending_lexical_audit_at(
+        &self,
+        registry: &mut airk_store::service::registry::ServiceRegistry,
+        lease: &airk_store::service::ProjectLease,
+        observed_ms: Option<u64>,
+    ) -> Result<()> {
+        let head = self
+            .lexical_audit
+            .try_lock()
+            .ok()
+            .and_then(|cursor| cursor.pending_search_arm());
+        let Some(head) = head else { return Ok(()) };
+        let now = match observed_ms {
+            Some(value) => value,
+            None => std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_millis()
+                .try_into()?,
+        };
+        let disposition = registry.arm_existing_lexical_audit(lease, head, now)?;
+        if let Ok(mut cursor) = self.lexical_audit.try_lock() {
+            cursor.settle_search_arm(head, disposition);
+        }
+        Ok(())
+    }
+
     /// Observe only an existing retained index for the native maintenance owner.
     /// Empty registrations never create an audit or initialize an index here.
     pub fn observe_service_audit_index(

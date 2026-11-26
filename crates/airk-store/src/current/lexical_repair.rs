@@ -11,7 +11,7 @@ use airk_core::{SearchQuery, identity::Sha256Digest};
 use anyhow::{Result, ensure};
 use std::collections::BTreeSet;
 
-const MAX_CHUNKS: usize = 8;
+pub(crate) const MAX_CHUNKS: usize = 8;
 const MAX_CONTROL_PATHS: usize = 8;
 const MAX_TERMS: usize = 8;
 const MAX_TERM_BYTES: usize = 256;
@@ -53,6 +53,19 @@ pub(crate) struct LexicalRepairProposal {
 impl LexicalRepairProposal {
     pub(crate) fn expected(&self) -> &CurrentToken {
         &self.expected
+    }
+
+    pub(crate) fn matches_row(
+        &self,
+        source_hash: Sha256Digest,
+        payload_digest: Sha256Digest,
+        ordinal: u32,
+        stable_id: Sha256Digest,
+    ) -> bool {
+        self.source_hash == source_hash
+            && self.payload_digest == payload_digest
+            && self.ordinal == ordinal
+            && self.chunk.stable_id == stable_id
     }
 
     /// Used for the ordinary postcommit replay on the exact target file.

@@ -1136,7 +1136,10 @@ pub(crate) async fn serve(
         while !job_closing.load(Ordering::Acquire) {
             let allowance = match work_receiver.recv_timeout(Duration::from_millis(200)) {
                 Ok(allowance) => allowance,
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    let _ = kernel.arm_pending_lexical_audit(&mut registry, &job_lease);
+                    continue;
+                }
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
             };
             // Unregister can commit between supervisor observation and dispatch.

@@ -6,7 +6,7 @@ use super::{
     vectors::VectorMatrix,
     writer::{VectorSetup, vector_setup},
 };
-use airk_core::identity::Sha256Digest;
+use airk_core::identity::{ArtifactId, Sha256Digest};
 use anyhow::{Context, Result, ensure};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::{Path, PathBuf};
@@ -32,6 +32,15 @@ impl VectorState {
             _ => anyhow::bail!("unknown stored vector state"),
         })
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FtsMissIdentity {
+    pub(crate) artifact: ArtifactId,
+    pub(crate) source_hash: Sha256Digest,
+    pub(crate) payload_digest: Sha256Digest,
+    pub(crate) ordinal: u32,
+    pub(crate) stable_id: Sha256Digest,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -212,6 +221,89 @@ impl IndexReader {
                 })
             })
             .transpose()
+    }
+
+    /// Use an indexed two-row lookahead. Reject even an unauthorized sibling
+    /// instead of scanning hidden paths to prove the selected file is unique.
+    pub(crate) fn exact_fts_miss_identity(
+        &self,
+        path: &str,
+        maximum_chunks: usize,
+    ) -> Result<Option<FtsMissIdentity>> {
+        validate_path(path)?;
+        let prefix_count: i64 = self.connection.query_row(
+            "SELECT count(*) FROM (
+                SELECT path FROM files WHERE path>=?1 ORDER BY path LIMIT 2
+             ) WHERE substr(path,1,length(?1))=?1",
+            [path],
+            |row| row.get(0),
+        )?;
+        if prefix_count != 1 {
+            return Ok(None);
+        }
+        let maximum_bytes = i64::try_from(super::FTS_RESTORE_MAX_BYTES)?;
+        let mut handle = self.connection.prepare_cached(
+            "SELECT h.value, f.source_hash, f.payload
+             FROM files f JOIN handles h ON h.file_id=f.id JOIN payloads p ON f.payload=p.digest
+             WHERE f.path=?1 AND h.kind=?2 AND typeof(h.value)='blob' AND length(h.value)=16
+               AND typeof(f.source_hash)='blob' AND length(f.source_hash)=32
+               AND typeof(f.payload)='blob' AND length(f.payload)=32 AND length(f.record)<=?3
+               AND p.raw_bytes BETWEEN 0 AND ?3 AND length(p.body)<=?3
+             LIMIT 2",
+        )?;
+        let mut handles = handle.query(params![
+            path,
+            super::HandleKind::Artifact as u8,
+            maximum_bytes
+        ])?;
+        let Some(row) = handles.next()? else {
+            return Ok(None);
+        };
+        let artifact: Vec<u8> = row.get(0)?;
+        let artifact = ArtifactId::from_bytes(
+            artifact
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("stored artifact handle has the wrong length"))?,
+        );
+        let source_hash = digest(row.get(1)?)?;
+        let payload_digest = digest(row.get(2)?)?;
+        if handles.next()?.is_some() {
+            return Ok(None);
+        }
+
+        let mut chunks = self.connection.prepare_cached(
+            "SELECT c.ordinal, CASE WHEN length(c.stable_id)=32 THEN c.stable_id END,
+                    EXISTS (SELECT 1 FROM fts WHERE fts.rowid=c.id)
+             FROM chunks c JOIN files f ON c.file_id=f.id
+             WHERE f.path=?1 ORDER BY c.ordinal LIMIT ?2",
+        )?;
+        let mut rows = chunks.query(params![
+            path,
+            i64::try_from(maximum_chunks.saturating_add(1))?
+        ])?;
+        let mut missing = None;
+        let mut count = 0;
+        while let Some(row) = rows.next()? {
+            if count == maximum_chunks {
+                return Ok(None);
+            }
+            count += 1;
+            if !row.get::<_, bool>(2)? {
+                let Some(stable_id): Option<Vec<u8>> = row.get(1)? else {
+                    return Ok(None);
+                };
+                if missing.replace((row.get(0)?, digest(stable_id)?)).is_some() {
+                    return Ok(None);
+                }
+            }
+        }
+        Ok(missing.map(|(ordinal, stable_id)| FtsMissIdentity {
+            artifact,
+            source_hash,
+            payload_digest,
+            ordinal,
+            stable_id,
+        }))
     }
 
     /// Return the entire bounded chunk roster or decline the file before

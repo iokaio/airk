@@ -545,6 +545,9 @@ impl Kernel {
         } else {
             Vec::new()
         };
+        if definitions.is_empty() {
+            let _ = self.nominate_lexical_search_miss(&read, query, filters, &response);
+        }
         Ok((
             super::SearchWithDefinitionsResponse {
                 evidence: response,

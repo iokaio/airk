@@ -20717,3 +20717,47 @@ Codex-scoped freeze and complete-evidence pass manifest that pins all
 actual catalogs, model roles and the production verdict schema. Hosted
 sign-in and entitlement for the exact roles remain unverified. No
 development or sealed scenario has a scored Codex session.
+
+### 25 November 2026 — Deferred lexical repair nomination
+
+Canonical explicit lexical Search can nominate an exact-file no-hit.
+The request owner performs a metadata check on the same authorized read,
+with a 20 ms cooperative check window and a 5 ms reserve against the
+original transport deadline. These are implementation limits for nomination,
+not a measured repair or delivery bound. The existing Verify cohort
+receives only bounded artifact, row, publication and policy identifiers.
+The worker advances an existing eligible same-head intent in its idle
+loop and then uses the ordinary automatic job. The cohort independently
+authenticates the retained text and positive and no-match controls before
+it writes. The triggering response follows ordinary Search.
+
+A native Kernel fixture exercised a legitimate empty exact-file query,
+then two explicit misses against one injected omission. Both triggering
+responses remained ordinary empty responses. One native Verify job was
+armed and recovered the expected original citation before the next
+canonical Search. The fixture also retained the earlier post-publication
+and idle cases. Store tests exercised duplicate and stale signals and
+the registry's stop, pause and in-flight scheduling fences. This is
+in-process native owner evidence. The actual MCP and supervisor adapters
+compiled under Clippy. No external Search transport was launched.
+
+The first compile refused a moved Kernel binding in the owner loop.
+Its failure receipt is
+9a4d19b7d414437f6e2a94cfb1674d68dd5237f67e262459044540b689242f03.
+Using the existing job-owned Kernel corrected the scope. The r2
+all-feature, all-target Store, Kernel, MCP and Supervisor Clippy passed
+in 6.952 s. Nextest ci passed three selected Store and Kernel tests, with
+1,500 skipped, in 229.750 s including compilation. The guarded owner
+audited 1,370 changes against the warm Windows target and incremental
+settings. Exact commands and timings are retained in
+L5C/windows-completion-lexical-nomination-preflight-r2. The source
+receipt is f4a79d0782d0d78b9a8187236886479eefe275e74866a4c087e8ad953164d010
+and the execution receipt is 98d82face03bdfe7513b9656abda9a3cd875ee7288ffc81186b33c5ad5707c38.
+
+Same-request repair needs exact original timing and an observed bound
+that covers scheduling through verified replay and delivery. The carried
+worker frame preserves remaining time and hard expiry but does not
+establish the original ordinary allowance. The next implementation
+target is a private, same-process M3 admission and a bounded wait on the
+existing maintenance owner, followed by one canonical replay. A carried
+or otherwise unknown allowance stays on deferred repair.

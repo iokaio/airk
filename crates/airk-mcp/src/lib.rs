@@ -1060,6 +1060,7 @@ impl AirkServer {
         )
     )]
     async fn search(&self, Parameters(args): Parameters<SearchArgs>) -> CallToolResult {
+        let attempt = self.read_attempt.clone();
         self.execute_verified_response(
             UsageOperation::Search,
             args.response,
@@ -1083,15 +1084,32 @@ impl AirkServer {
                     None if args.semantic => CurrentSearchMode::Vector,
                     None => CurrentSearchMode::Default,
                 };
+                let filters = airk_core::SearchFilters {
+                    language: args.language,
+                    evidence_kind: args.evidence_kind.map(Into::into),
+                    exclude_path_prefix: args.exclude_path_prefix,
+                };
+                let kernel = if let Some(attempt) = attempt.filter(|value| !value.is_combined_member())
+                    && let Some(reserved) = attempt
+                        .deadline()
+                        .checked_sub(std::time::Duration::from_millis(5))
+                {
+                    kernel.with_lexical_nomination_checkpoint(move || {
+                        attempt.check_delivery_live()?;
+                        anyhow::ensure!(
+                            std::time::Instant::now() < reserved,
+                            "lexical nomination delivery reserve"
+                        );
+                        Ok(())
+                    })
+                } else {
+                    kernel
+                };
                 kernel.search_response_with_adaptive_limit(
                     &query,
                     mode,
                     (!args.full_chunks.unwrap_or(false)).then_some(768),
-                    &airk_core::SearchFilters {
-                        language: args.language,
-                        evidence_kind: args.evidence_kind.map(Into::into),
-                        exclude_path_prefix: args.exclude_path_prefix,
-                    },
+                    &filters,
                     args.limit.is_none(),
                 )
             },

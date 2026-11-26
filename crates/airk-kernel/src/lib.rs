@@ -107,6 +107,7 @@ pub struct Kernel {
     source_policy: Arc<std::sync::Mutex<source_policy::PolicyRuntime>>,
     read_scope: Option<Arc<scoped_reads::SessionScope>>,
     verification_cancellation: Option<Arc<std::sync::atomic::AtomicBool>>,
+    lexical_nomination_checkpoint: Option<LexicalNominationCheckpoint>,
     progress: Option<ProgressObserver>,
     rebuild_observer: Option<Arc<rebuild_observation::RebuildObserver>>,
     arbiter_context: Option<Arc<arbiter::NativeContext>>,
@@ -135,6 +136,7 @@ struct SplitKernelAuthority {
 }
 
 type ProgressObserver = Arc<dyn Fn(&airk_core::readiness::IndexProgress) + Send + Sync>;
+type LexicalNominationCheckpoint = Arc<dyn Fn() -> Result<()> + Send + Sync>;
 
 #[cfg(windows)]
 fn managed_data_path(path: PathBuf) -> Result<PathBuf> {
@@ -402,6 +404,7 @@ impl Kernel {
             })?,
             read_scope: None,
             verification_cancellation: None,
+            lexical_nomination_checkpoint: None,
             progress: None,
             rebuild_observer: None,
             arbiter_context: None,
@@ -463,6 +466,7 @@ impl Kernel {
             )?,
             read_scope: None,
             verification_cancellation: None,
+            lexical_nomination_checkpoint: None,
             progress: None,
             rebuild_observer: None,
             arbiter_context: None,

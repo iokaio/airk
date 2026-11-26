@@ -5,6 +5,7 @@ use crate::{
     current::{CurrentRead, CurrentToken, audit_witness::AuditInputWitness},
     service::{
         ProjectLease,
+        collection::integrity::LexicalAuditArm,
         registry::{AuditDrainProof, ServiceRegistry},
     },
 };
@@ -48,6 +49,14 @@ struct Intent {
     head: CurrentToken,
     allowance: u64,
 }
+struct LexicalArmState {
+    intent: Option<Vec<u8>>,
+    next_ms: i64,
+    busy: bool,
+    eligible: bool,
+    paused: bool,
+}
+
 /// Minted only for the actual fenced running cohort; serialized rows are inert.
 #[derive(Debug)]
 pub struct AutomaticAuditContext {
@@ -314,6 +323,76 @@ impl ServiceRegistry {
         tx.commit()?;
         Ok(())
     }
+    /// Wake only the same-head, already-enabled automatic Verify intent.
+    /// The worker's lease never authorizes clearing Stop, blocking, or pause.
+    pub fn arm_existing_lexical_audit(
+        &mut self,
+        lease: &ProjectLease,
+        head: CurrentToken,
+        now_ms: u64,
+    ) -> Result<LexicalAuditArm> {
+        let now_ms = i64::try_from(now_ms)?;
+        ensure!(now_ms < i64::MAX, "invalid lexical audit wake time");
+        let project = lease.identity().0.to_string();
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        jobs::worker_epoch(&tx, &self.root, lease)?;
+        let saved = tx.query_row(
+            "SELECT CASE WHEN typeof(a.intent)='blob' THEN substr(a.intent,1,?2) END,
+                 a.next_ms,
+                 a.job IS NOT NULL OR a.manual<>0
+                    OR EXISTS(SELECT 1 FROM service_jobs j WHERE j.project=a.project AND j.state IN('pending','running'))
+                    OR EXISTS(SELECT 1 FROM service_background b WHERE b.project=a.project AND (b.source_pending=1 OR b.semantic_pending=1))
+                    OR EXISTS(SELECT 1 FROM service_setup_pending s WHERE s.project=a.project),
+                 a.blocked IS NULL AND p.registered=1,
+                 p.paused
+             FROM service_background_audit a JOIN projects p ON p.binding=a.project
+             WHERE a.project=?1",
+            params![project, i64::try_from(MAX_STATE + 1)?],
+            |row| Ok(LexicalArmState {
+                intent: row.get(0)?,
+                next_ms: row.get(1)?,
+                busy: row.get(2)?,
+                eligible: row.get(3)?,
+                paused: row.get(4)?,
+            }),
+        ).optional()?;
+        let Some(saved) = saved else {
+            return Ok(LexicalAuditArm::Stale);
+        };
+        if !saved.eligible || saved.next_ms == i64::MAX {
+            return Ok(LexicalAuditArm::Stale);
+        }
+        let Some(bytes) = saved.intent else {
+            return Ok(LexicalAuditArm::Stale);
+        };
+        ensure!(bytes.len() <= MAX_STATE, "audit intent exceeds bound");
+        let intent: Intent = serde_json::from_slice(&bytes)?;
+        ensure!(
+            intent.version == 1 && (1..=(512 << 20)).contains(&intent.allowance),
+            "invalid automatic audit intent"
+        );
+        if intent.head != head {
+            return Ok(LexicalAuditArm::Stale);
+        }
+        if saved.busy || saved.paused {
+            return Ok(LexicalAuditArm::Deferred);
+        }
+        if saved.next_ms > now_ms {
+            ensure!(
+                tx.execute(
+                    "UPDATE service_background_audit SET next_ms=?1,revision=revision+1
+                     WHERE project=?2 AND next_ms=?3",
+                    params![now_ms, project, saved.next_ms],
+                )? == 1,
+                "automatic lexical audit wake changed"
+            );
+        }
+        tx.commit()?;
+        Ok(LexicalAuditArm::Armed)
+    }
+
     pub fn due_automatic_audits(
         &self,
         now_ms: u64,
@@ -627,6 +706,60 @@ mod tests {
         drop(writer);
         drop(lock);
         Ok((collection, store.current_read(&scope)?))
+    }
+
+    #[test]
+    fn search_wake_arms_only_same_head_and_respects_stop_pause_and_inflight() -> Result<()> {
+        let (_temp, mut registry, lease, _bound) = fixture()?;
+        let head = CurrentToken {
+            incarnation: Incarnation::from_bytes([91; 16]),
+            sequence: 0,
+            digest: Sha256Digest::from_bytes([92; 32]),
+        };
+        registry
+            .connection
+            .execute("UPDATE service_background_audit SET next_ms=500", [])?;
+        let other = CurrentToken {
+            sequence: 1,
+            ..head
+        };
+        assert_eq!(
+            registry.arm_existing_lexical_audit(&lease, other, 0)?,
+            LexicalAuditArm::Stale
+        );
+        assert!(registry.due_automatic_audits(0, 8)?.is_empty());
+
+        registry.pause(lease.identity().0, true)?;
+        assert_eq!(
+            registry.arm_existing_lexical_audit(&lease, head, 0)?,
+            LexicalAuditArm::Deferred
+        );
+        assert!(registry.due_automatic_audits(0, 8)?.is_empty());
+        registry.pause(lease.identity().0, false)?;
+        assert_eq!(
+            registry.arm_existing_lexical_audit(&lease, head, 0)?,
+            LexicalAuditArm::Armed
+        );
+        let due = registry.due_automatic_audits(0, 8)?;
+        assert_eq!(due.len(), 1);
+        assert_eq!(
+            registry.arm_existing_lexical_audit(&lease, head, 0)?,
+            LexicalAuditArm::Armed
+        );
+        assert_eq!(registry.due_automatic_audits(0, 8)?, due);
+
+        let job = enqueue(&mut registry, &lease)?;
+        assert_eq!(
+            registry.arm_existing_lexical_audit(&lease, head, 0)?,
+            LexicalAuditArm::Deferred
+        );
+        registry.cancel_pending(job.id)?;
+        assert_eq!(
+            registry.arm_existing_lexical_audit(&lease, head, 0)?,
+            LexicalAuditArm::Stale
+        );
+        assert!(registry.due_automatic_audits(500, 8)?.is_empty());
+        Ok(())
     }
 
     #[test]
