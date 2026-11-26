@@ -20544,3 +20544,41 @@ alone cannot establish an omitted posting from source evidence. Inline
 admission still needs the original allowance and a measured repair and
 fallback bound. No service-triggered repair, same-request replay, or
 repair latency gate has been measured.
+
+### 25 November 2026 — Current lexical repair publication proof
+
+The disposable Windows Current test published normal retained extraction
+JSON and an independent original UTF-8 source digest through PlainWriter.
+After omitting the posting for the second line, the repair authenticated
+the stored payload, original source bytes, stable chunk and citation before
+publishing. One transaction advanced the Store sequence and the existing
+lexical commit. A fresh ordinary Current lexical read found the exact line.
+A previously opened damaged reader kept its old snapshot, a healthy reader
+kept its cited hit, and the control and no-match results, file rows and
+committed vector remained within their tested invariants. Stale settings
+with the same token, an intervening configuration publication, wrong source
+or payload identity, failed controls and permit reuse were refused.
+
+The first native batch passed Clippy and both detached selectors.
+The Current test stopped at fixture admission because its legacy
+extraction profile defaults to Detailed and the test declared Balanced.
+The corrected fixture uses the matching saved configuration. Both runs
+are retained in L5C/windows-completion-current-repair-preflight-r1 and its
+r2 sibling. The r1 execution SHA-256 is
+452a58cee8660d47f16128ce4a4b93f4ad98b645ade758665938234b4739d3b4.
+On r2, all-target and all-feature Store Clippy passed in 16.46 s with
+warnings denied. Nextest ci passed all three selected tests, with 919
+skipped, in 49.25 s including the build. Cargo used the warm Windows
+answer-loop/target-cuda target and incremental compilation. The checked
+human shell audited 164 changed outputs and retained the source digests
+and exact command, scope, resource admission and timing receipts.
+The r2 input identity is
+67d2516eb8e4855ae55804f82b94d2a7ec85350882a430909f85266e1ec019b5
+and its execution receipt is
+253a85ed785fc3a8d3712e6d652857400a8b249e0e7c43f6a22949024e7fd62e.
+
+The repair entry remains test-only. Next wire nomination and bounded
+verification to the existing maintenance owner on a disposable collection
+under the real project, scope and source-policy guards. A foreground
+attempt still needs a measured bound and timely fallback, and the existing
+scheduler needs explicit coverage for publication and idle discovery.

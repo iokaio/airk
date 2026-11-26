@@ -659,6 +659,147 @@ impl PlainWriter {
     }
 }
 
+#[cfg(test)]
+pub(super) struct CurrentFtsPermit {
+    directory: std::path::PathBuf,
+    scope: CurrentScope,
+    token: CurrentToken,
+    settings: Sha256Digest,
+    collection_state: Vec<u8>,
+    lexical_commit: Sha256Digest,
+}
+
+#[cfg(test)]
+impl FileStore {
+    pub(super) fn capture_current_fts_permit(
+        &self,
+        writer: &WriterLock,
+    ) -> Result<CurrentFtsPermit> {
+        let directory = super::gate::check_writer(self, writer)?;
+        let read = self.plain_read()?;
+        let collection_state = read
+            .reader
+            .meta(COLLECTION_STATE_KEY)?
+            .context("current repair has no applied collection state")?;
+        CollectionState::decode_canonical(&collection_state)?;
+        let lexical_commit = read
+            .reader
+            .meta(LEXICAL_COMMIT_KEY)?
+            .context("current repair has no lexical commit")?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("current repair lexical commit has the wrong length"))?;
+        Ok(CurrentFtsPermit {
+            directory,
+            scope: read.scope().clone(),
+            token: read.token(),
+            settings: crate::service::collection::settings_digest_with_writer(
+                self,
+                &read.scope().root,
+                writer,
+            )?,
+            collection_state,
+            lexical_commit: Sha256Digest::from_bytes(lexical_commit),
+        })
+    }
+}
+
+#[cfg(test)]
+impl PlainWriter {
+    pub(super) fn restore_missing_fts_row(
+        &mut self,
+        store: &FileStore,
+        writer: &WriterLock,
+        permit: &CurrentFtsPermit,
+        proposal: &index::FtsRestore<'_>,
+        deadline: std::time::Instant,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<CurrentToken> {
+        let directory = super::gate::check_writer(store, writer)?;
+        ensure!(
+            directory == permit.directory
+                && directory == self.directory.canonicalize()?
+                && self.scope == permit.scope
+                && permit.token == plain_token(&self.scope, proposal.sequence),
+            "stale or foreign Current FTS repair permit"
+        );
+        ensure!(
+            !cancelled() && std::time::Instant::now() < deadline,
+            "Current FTS repair cancelled or expired"
+        );
+        ensure!(
+            crate::service::collection::settings_digest_with_writer(
+                store,
+                &self.scope.root,
+                writer,
+            )? == permit.settings,
+            "Current FTS repair saved settings changed"
+        );
+        self.check_space((4 * index::FTS_RESTORE_MAX_BYTES) as u64)?;
+        writer.invalidate_census_before_mutation()?;
+        let next = self.index.restore_fts(
+            proposal,
+            index::FtsPublication::Current {
+                scope: &self.scope,
+                collection_state: &permit.collection_state,
+                lexical_commit: permit.lexical_commit,
+            },
+            deadline,
+            cancelled,
+            |record, retained| repair_chunk_terms(proposal, record, retained),
+        )?;
+        Ok(plain_token(&self.scope, next))
+    }
+}
+
+#[cfg(test)]
+fn repair_chunk_terms(
+    proposal: &index::FtsRestore<'_>,
+    record: &[u8],
+    retained: &[u8],
+) -> Result<String> {
+    use sha2::{Digest, Sha256};
+
+    let compact = decode_record(record)?.artifact;
+    let reference = compact
+        .retained
+        .as_ref()
+        .context("Current FTS repair has no retained reference")?;
+    let profile = reference
+        .profile
+        .as_ref()
+        .context("Current FTS repair has no extraction profile")?;
+    ensure!(
+        compact.path == proposal.missing.path
+            && compact.extraction_method == "utf8"
+            && compact.content_hash.parse::<Sha256Digest>()? == proposal.source_hash
+            && reference.legacy_origin.is_none()
+            && reference.object.parse::<Sha256Digest>()? == proposal.payload_digest
+            && reference.object_bytes == retained.len(),
+        "Current FTS repair retained binding differs"
+    );
+    let (artifact, payload) = super::plain::decode_retained_payload(&compact, profile, retained)?;
+    ensure!(
+        payload.text.len() == compact.bytes
+            && Sha256Digest::from_bytes(Sha256::digest(payload.text.as_bytes()).into())
+                == proposal.source_hash,
+        "Current FTS repair original source differs"
+    );
+    let (ordinal, stable_id, citation) = proposal
+        .missing
+        .expected
+        .context("Current FTS repair expected chunk is absent")?;
+    let chunk = artifact
+        .chunks
+        .get(usize::try_from(ordinal)?)
+        .context("Current FTS repair retained chunk ordinal is absent")?;
+    let rebuilt = plain_chunk(&compact, u64::from(ordinal), chunk)?;
+    ensure!(
+        rebuilt.stable_id == stable_id && rebuilt.citation.as_slice() == citation,
+        "Current FTS repair retained citation differs"
+    );
+    Ok(rebuilt.terms)
+}
+
 /// The engine entry of one changed file, per the mapping contract.
 fn file_entry(upsert: PlainUpsert) -> Result<FileEntry> {
     let PlainUpsert {
@@ -679,19 +820,7 @@ fn file_entry(upsert: PlainUpsert) -> Result<FileEntry> {
     );
     let mut chunks = Vec::with_capacity(full.chunks.len());
     for (ordinal, chunk) in full.chunks.iter().enumerate() {
-        let citation = Citation {
-            path: path.clone(),
-            content_hash: compact.content_hash.clone(),
-            start_line: chunk.start_line,
-            end_line: chunk.end_line,
-            location: chunk.location.clone(),
-        };
-        let terms = lexical::chunk_terms(path, &chunk.text);
-        chunks.push(ChunkEntry {
-            stable_id: lexical::stable_id(path, ordinal as u64)?,
-            citation: serde_json::to_string(&citation)?.into_bytes(),
-            terms,
-        });
+        chunks.push(plain_chunk(compact, ordinal as u64, chunk)?);
     }
     let mut handles = vec![Handle {
         kind: HandleKind::Artifact,
@@ -719,5 +848,22 @@ fn file_entry(upsert: PlainUpsert) -> Result<FileEntry> {
         chunks,
         handles,
         vector_pending,
+    })
+}
+
+fn plain_chunk(compact: &Artifact, ordinal: u64, chunk: &airk_core::Chunk) -> Result<ChunkEntry> {
+    let path = &compact.path;
+    let citation = Citation {
+        path: path.clone(),
+        content_hash: compact.content_hash.clone(),
+        start_line: chunk.start_line,
+        end_line: chunk.end_line,
+        location: chunk.location.clone(),
+    };
+    let terms = lexical::chunk_terms(path, &chunk.text);
+    Ok(ChunkEntry {
+        stable_id: lexical::stable_id(path, ordinal)?,
+        citation: serde_json::to_string(&citation)?.into_bytes(),
+        terms,
     })
 }

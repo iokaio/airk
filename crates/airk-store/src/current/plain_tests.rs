@@ -473,6 +473,304 @@ fn query(text: &str, limit: usize) -> SearchQuery {
     }
 }
 
+#[test]
+fn current_missing_fts_restore_publishes_once_and_preserves_pinned_readers() -> Result<()> {
+    use super::plain_writer::{CapturedPayload, PlainChange, PlainPublication, PlainUpsert};
+    use crate::index::{FileVectors, FtsRestore, FtsWitness, UnitEntry, VectorBatch, VectorSetup};
+    use std::time::{Duration, Instant};
+
+    const TARGET: &str = "src/a.rs";
+    const CONTROL: &str = "src/b.rs";
+    let directory = tempfile::tempdir()?;
+    let store = FileStore::new(directory.path().join("collections-1.2").join(COLLECTION));
+    let scope = CurrentScope {
+        root: ROOT.into(),
+        collection: COLLECTION.into(),
+        incarnation: Incarnation::from_bytes([3; 16]),
+    };
+    let lock = store.lock()?;
+    let mut configuration = state(BTreeMap::new()).configuration;
+    // This fixture's retained profile has no legacy detail option.
+    configuration.index_detail = airk_core::extraction::IndexDetail::Detailed;
+    store.plain_create(&lock, &scope, &configuration)?;
+    let mut writer = store.plain_writer(&lock)?;
+    let sources = [
+        utf8(TARGET, "firstline\nrepairneedle\n", vec![]),
+        utf8(CONTROL, "controlneedle\n", vec![]),
+    ];
+    let mut changes = Vec::new();
+    let mut expected = Vec::new();
+    for source in &sources {
+        let (_, written) = entry(source, 2)?;
+        let (compact, captured) =
+            CapturedPayload::capture(&written.full, &payload(source), &profile(source.language))?;
+        let file = written.file.clone();
+        expected.push(written);
+        changes.push(PlainChange::Upsert(Box::new(PlainUpsert {
+            input: CapturedInput::new(compact),
+            file,
+            captured,
+            vector_pending: source.path == TARGET,
+        })));
+    }
+    let normal = writer.publish(PlainPublication {
+        changes,
+        resources: vec![],
+        configuration: None,
+        recount: false,
+    })?;
+    assert_eq!((normal.files_changed, normal.chunks_added), (2, 3));
+    let stale = store.capture_current_fts_permit(&lock)?;
+    let vector = VectorSetup {
+        dimensions: 2,
+        pipeline: Sha256Digest::from_bytes([11; 32]),
+    };
+    let key = Sha256Digest::from_bytes([12; 32]);
+    writer.configure_vectors(Some(&vector))?;
+    writer.commit_vectors(
+        VectorBatch {
+            setup: vector,
+            files: vec![FileVectors {
+                path: TARGET.into(),
+                source_hash: expected[0].file.state.source_hash,
+                units: vec![UnitEntry {
+                    ordinal: 0,
+                    embedding_key: key,
+                    members: b"fixture members".to_vec(),
+                }],
+                failed: false,
+            }],
+            vectors: vec![(key, vec![1.0, 0.0])],
+        },
+        vec![],
+    )?;
+    let healthy = store.current_read(&scope)?;
+    let previous = healthy.token()?;
+    let target_query = query("repairneedle", 5);
+    let positive_query = query("controlneedle", 5);
+    let no_match_query = query("unmatchedneedle", 5);
+    let target = healthy.lexical_search(&target_query)?;
+    assert_eq!(hit_paths(&target), [(TARGET.to_owned(), 1)]);
+    let positive = healthy.lexical_search(&positive_query)?;
+    assert_eq!(hit_paths(&positive), [(CONTROL.to_owned(), 0)]);
+    assert!(healthy.lexical_search(&no_match_query)?.values.is_empty());
+    let expected_citation = Citation {
+        path: TARGET.into(),
+        content_hash: expected[0].file.state.source_hash.to_string(),
+        start_line: 2,
+        end_line: 2,
+        location: DocumentLocation::Lines { start: 2, end: 2 },
+    };
+    let target_citation = serde_json::to_vec(&expected_citation)?;
+    let positive_citation = serde_json::to_vec(&positive.values[0].citation)?;
+    assert_eq!(
+        serde_json::to_vec(&target.values[0].citation)?,
+        target_citation
+    );
+    assert_ne!(
+        expected[0].file.state.source_hash,
+        expected[0].file.state.payload_digest
+    );
+
+    let injection =
+        rusqlite::Connection::open(store.directory().join(crate::index::DATABASE_FILE))?;
+    assert_eq!(
+        injection.execute(
+            "DELETE FROM fts WHERE rowid=(SELECT id FROM chunks WHERE stable_id=?1)",
+            [target.values[0].stable_id.as_bytes().as_slice()],
+        )?,
+        1
+    );
+    drop(injection);
+    let damaged = store.current_read(&scope)?;
+    let pinned = store.plain_read()?;
+    assert_eq!(damaged.token()?, previous);
+    assert!(damaged.lexical_search(&target_query)?.values.is_empty());
+    let permit = store.capture_current_fts_permit(&lock)?;
+    let proposal = FtsRestore {
+        sequence: previous.sequence,
+        source_hash: expected[0].file.state.source_hash,
+        payload_digest: expected[0].file.state.payload_digest,
+        canonical_terms: "xa xrepairneedle xrs xsrc",
+        missing: FtsWitness {
+            path: TARGET,
+            terms: &["xrepairneedle"],
+            expected: Some((1, target.values[0].stable_id, &target_citation)),
+        },
+        positive: FtsWitness {
+            path: CONTROL,
+            terms: &["xcontrolneedle"],
+            expected: Some((0, positive.values[0].stable_id, &positive_citation)),
+        },
+        no_match: FtsWitness {
+            path: TARGET,
+            terms: &["xunmatchedneedle"],
+            expected: None,
+        },
+    };
+    let deadline = || Instant::now() + Duration::from_secs(10);
+    let stale_proposal = FtsRestore {
+        sequence: normal.token.sequence,
+        ..proposal.clone()
+    };
+    let wrong_source = FtsRestore {
+        source_hash: Sha256Digest::from_bytes([13; 32]),
+        ..proposal.clone()
+    };
+    let wrong_payload = FtsRestore {
+        payload_digest: Sha256Digest::from_bytes([14; 32]),
+        ..proposal.clone()
+    };
+    let wrong_positive = FtsRestore {
+        positive: FtsWitness {
+            expected: Some((0, positive.values[0].stable_id, b"wrong citation")),
+            ..proposal.positive
+        },
+        ..proposal.clone()
+    };
+    let wrong_negative = FtsRestore {
+        no_match: FtsWitness {
+            terms: &["xrepairneedle"],
+            ..proposal.no_match
+        },
+        ..proposal.clone()
+    };
+    for (permit, proposal, message) in [
+        (&stale, &stale_proposal, "publication is stale"),
+        (&permit, &wrong_source, "binding differs"),
+        (&permit, &wrong_payload, "binding differs"),
+        (&permit, &wrong_positive, "witness evidence differs"),
+        (&permit, &wrong_negative, "witness match differs"),
+    ] {
+        let error = writer
+            .restore_missing_fts_row(&store, &lock, permit, proposal, deadline(), || false)
+            .unwrap_err();
+        assert!(error.to_string().contains(message), "{error:#}");
+    }
+    // Saving a native roots setting is independently visible to the writer
+    // permit even when the applied publication and its token stay unchanged.
+    let settings = crate::service::collection::settings_digest_with_writer(&store, ROOT, &lock)?;
+    let settings_path = store.directory().join("roots.json");
+    assert!(!settings_path.try_exists()?);
+    crate::roots::RootConfig::load(store.directory(), ROOT)?.save(store.directory())?;
+    let error = writer
+        .restore_missing_fts_row(&store, &lock, &permit, &proposal, deadline(), || false)
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("saved settings changed"),
+        "{error:#}"
+    );
+    let refused = store.current_read(&scope)?;
+    assert_eq!(refused.token()?, previous);
+    assert_eq!(refused.head().lexical_commit, damaged.head().lexical_commit);
+    assert!(refused.lexical_search(&target_query)?.values.is_empty());
+
+    std::fs::remove_file(settings_path)?;
+    assert_eq!(
+        crate::service::collection::settings_digest_with_writer(&store, ROOT, &lock)?,
+        settings
+    );
+    let mut changed_configuration = configuration;
+    changed_configuration.extractor_version.push_str("/next");
+    let drift = writer.publish(PlainPublication {
+        changes: vec![],
+        resources: vec![],
+        configuration: Some(&changed_configuration),
+        recount: false,
+    })?;
+    let drifted = store.current_read(&scope)?;
+    assert_eq!(drifted.token()?, drift.token);
+    assert_eq!(drifted.head().lexical_commit, target.manifest_digest);
+    assert_eq!(
+        drifted
+            .collection_state()?
+            .expect("applied configuration")
+            .configuration
+            .extractor_version,
+        changed_configuration.extractor_version
+    );
+    assert!(drifted.lexical_search(&target_query)?.values.is_empty());
+    let error = writer
+        .restore_missing_fts_row(&store, &lock, &permit, &proposal, deadline(), || false)
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("publication is stale"),
+        "{error:#}"
+    );
+
+    let proposal = FtsRestore {
+        sequence: drift.token.sequence,
+        ..proposal
+    };
+    let permit = store.capture_current_fts_permit(&lock)?;
+    let committed =
+        writer.restore_missing_fts_row(&store, &lock, &permit, &proposal, deadline(), || false)?;
+    let reused = writer
+        .restore_missing_fts_row(&store, &lock, &permit, &proposal, deadline(), || false)
+        .unwrap_err();
+    assert!(
+        reused.to_string().contains("publication is stale"),
+        "{reused:#}"
+    );
+    let repaired = store.current_read(&scope)?;
+    assert_eq!(committed, repaired.token()?);
+    assert_eq!(committed.sequence, drift.token.sequence + 1);
+    let replay = repaired.lexical_search(&target_query)?;
+    assert_eq!(hit_paths(&replay), [(TARGET.to_owned(), 1)]);
+    assert!(!replay.incomplete);
+    assert_eq!(replay.values[0].stable_id, target.values[0].stable_id);
+    assert_eq!(
+        serde_json::to_vec(&replay.values[0].citation)?,
+        target_citation
+    );
+    assert_eq!(
+        replay.manifest_digest,
+        framed_digest(
+            b"airk-index/lexical/1",
+            &[
+                scope.incarnation.as_bytes(),
+                &committed.sequence.to_be_bytes()
+            ]
+        )
+    );
+    assert_eq!(replay.manifest_digest, repaired.head().lexical_commit);
+    let compact = repaired.artifact(TARGET)?.expect("compact record");
+    let retained =
+        repaired.load_retained_bounded(&compact, crate::index::FTS_RESTORE_MAX_BYTES as u64)?;
+    assert_eq!(retained.chunks[1].text, "repairneedle\n");
+    assert_eq!(damaged.token()?, previous);
+    assert_eq!(damaged.head().lexical_commit, target.manifest_digest);
+    assert!(damaged.lexical_search(&target_query)?.values.is_empty());
+    assert_eq!(
+        hit_paths(&healthy.lexical_search(&target_query)?),
+        [(TARGET.to_owned(), 1)]
+    );
+    assert_eq!(
+        hit_paths(&repaired.lexical_search(&positive_query)?),
+        [(CONTROL.to_owned(), 0)]
+    );
+    assert!(repaired.lexical_search(&no_match_query)?.values.is_empty());
+    let after = store.plain_read()?;
+    assert_eq!(after.sequence(), committed.sequence);
+    assert_eq!(after.reader().file(TARGET)?, pinned.reader().file(TARGET)?);
+    assert_eq!(
+        after.reader().file(CONTROL)?,
+        pinned.reader().file(CONTROL)?
+    );
+    assert_eq!(
+        after.reader().vector_setup()?,
+        pinned.reader().vector_setup()?
+    );
+    assert_eq!(
+        after.reader().units(TARGET)?,
+        pinned.reader().units(TARGET)?
+    );
+    let matrix = after.reader().load_vectors()?.expect("vector matrix");
+    assert_eq!(matrix.rows(), 1);
+    assert_eq!(matrix.search(&[1.0, 0.0], 1, None)?[0].score, 1.0);
+    Ok(())
+}
+
 fn hit_paths(candidates: &lexical::CurrentLexicalCandidates) -> Vec<(String, u64)> {
     candidates
         .values

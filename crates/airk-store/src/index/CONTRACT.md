@@ -175,6 +175,33 @@ the next Store sequence. Existing readers keep their snapshots. The proof
 does not bound SQLite sync latency or exercise service diagnosis, admission,
 Current publication authority, or request replay.
 
+## Private Current publication proof
+
+The Store transaction also has a test-only Current caller. A permit captured
+under the checked collection writer binds the native directory, Current token,
+scope, applied collection-state bytes, old lexical commit and saved-settings
+digest. The writer rechecks saved settings under that same native lock. The
+transaction rechecks the committed sequence, scope, applied state and old
+lexical commit.
+
+The Current witness binds the retained extraction JSON digest separately from
+the original source hash. The transaction limits payload and compact record
+reads to 32 KiB, checks retained JSON bytes against their digest, and uses the
+Current reader's extraction binding and the ordinary writer's chunk mapping.
+The initial proof admits UTF-8 source only and also hashes the retained
+original source bytes. The chunk ordinal, stable identity, citation, and
+canonical terms must agree with the proposal.
+
+The same three lexical witnesses run against the transaction before and
+after insertion. A successful transaction advances the Store sequence and
+writes the Current lexical commit calculated for that sequence. The reader
+proof publishes the original data through the ordinary Current writer, omits
+one complete FTS row, and verifies native lexical search and retained citation
+on the new publication. Earlier readers retain their snapshots and the
+existing vector generation remains readable. This proof does not qualify a
+service repair permit, hard deadline, trigger, or scheduler.
+
+
 ## Not yet
 
 Compaction of dead vector rows; the free-space and size-cap check (D8) is

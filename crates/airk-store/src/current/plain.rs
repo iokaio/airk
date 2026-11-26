@@ -220,6 +220,41 @@ pub(super) fn open_reader(
     })
 }
 
+pub(super) fn decode_retained_payload(
+    compact: &Artifact,
+    profile: &airk_core::extraction::ExtractionProfile,
+    bytes: &[u8],
+) -> Result<(Artifact, airk_core::extraction::ExtractionPayload)> {
+    let reference = compact
+        .retained
+        .as_ref()
+        .context("retained reference missing")?;
+    let payload: airk_core::extraction::ExtractionPayload = serde_json::from_slice(bytes)?;
+    let artifact = airk_core::binding::bind_payload(
+        &payload,
+        profile,
+        airk_core::binding::ArtifactBinding {
+            path: &compact.path,
+            source_hash: compact.content_hash.parse()?,
+            source_bytes: compact.bytes,
+        },
+    )?;
+    ensure!(
+        artifact.retained.is_none()
+            && artifact.path == compact.path
+            && artifact.content_hash == compact.content_hash
+            && artifact.bytes == compact.bytes
+            && artifact.language == compact.language
+            && artifact.extraction_method == compact.extraction_method
+            && artifact.parse_status == compact.parse_status
+            && artifact.chunks.len() == reference.chunks
+            && artifact.extracted_bytes() == reference.extracted_bytes
+            && artifact.facts.len() == reference.facts,
+        "retained artifact does not match pinned inventory"
+    );
+    Ok((artifact, payload))
+}
+
 impl CurrentRead {
     /// The stored payload bytes of a compact record, bound to this snapshot's row.
     fn stored_payload(&self, compact: &Artifact, maximum: u64) -> Result<Vec<u8>> {
@@ -274,30 +309,7 @@ impl CurrentRead {
             .as_ref()
             .context("obsolete extraction format; rebuild the index")?;
         let bytes = self.stored_payload(compact, maximum)?;
-        let payload: airk_core::extraction::ExtractionPayload = serde_json::from_slice(&bytes)?;
-        let artifact = airk_core::binding::bind_payload(
-            &payload,
-            profile,
-            airk_core::binding::ArtifactBinding {
-                path: &compact.path,
-                source_hash: compact.content_hash.parse()?,
-                source_bytes: compact.bytes,
-            },
-        )?;
-        ensure!(
-            artifact.retained.is_none()
-                && artifact.path == compact.path
-                && artifact.content_hash == compact.content_hash
-                && artifact.bytes == compact.bytes
-                && artifact.language == compact.language
-                && artifact.extraction_method == compact.extraction_method
-                && artifact.parse_status == compact.parse_status
-                && artifact.chunks.len() == reference.chunks
-                && artifact.extracted_bytes() == reference.extracted_bytes
-                && artifact.facts.len() == reference.facts,
-            "retained artifact does not match pinned inventory"
-        );
-        Ok((artifact, payload))
+        decode_retained_payload(compact, profile, &bytes)
     }
 
     /// The full artifact of a compact record, rebuilt from this snapshot's payload.

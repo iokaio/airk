@@ -359,6 +359,7 @@ fn detached_missing_fts_row_repair_is_atomic_and_preserves_snapshots() -> Result
     let proposal = FtsRestore {
         sequence,
         source_hash: hash(BODY),
+        payload_digest: hash(BODY),
         canonical_terms: CANONICAL_TERMS,
         missing: FtsWitness {
             path: PATH,
@@ -390,6 +391,7 @@ fn detached_missing_fts_row_repair_is_atomic_and_preserves_snapshots() -> Result
     );
     let wrong_source = FtsRestore {
         source_hash: hash("wrong"),
+        payload_digest: hash("wrong"),
         ..proposal.clone()
     };
     assert!(

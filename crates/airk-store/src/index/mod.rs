@@ -19,6 +19,8 @@ pub use reader::{
     MAX_PAGE, PathLookup, PathPage, UnitRow, VectorState,
 };
 pub use schema::IncompatibleIndex;
+#[cfg(test)]
+pub(crate) use writer::{FTS_RESTORE_MAX_BYTES, FtsPublication, FtsRestore, FtsWitness};
 pub(crate) use schema::is_legacy_database;
 pub use vectors::{LiveRows, VectorFile, VectorHit, VectorMatrix};
 pub use writer::{

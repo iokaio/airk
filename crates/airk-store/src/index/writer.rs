@@ -104,7 +104,7 @@ pub struct IndexWriter {
 
 #[cfg(test)]
 #[derive(Clone, Copy)]
-pub(super) struct FtsWitness<'a> {
+pub(crate) struct FtsWitness<'a> {
     pub path: &'a str,
     pub terms: &'a [&'a str],
     pub expected: Option<(u32, Sha256Digest, &'a [u8])>,
@@ -112,13 +112,27 @@ pub(super) struct FtsWitness<'a> {
 
 #[cfg(test)]
 #[derive(Clone)]
-pub(super) struct FtsRestore<'a> {
+pub(crate) struct FtsRestore<'a> {
     pub sequence: u64,
     pub source_hash: Sha256Digest,
+    pub payload_digest: Sha256Digest,
     pub canonical_terms: &'a str,
     pub missing: FtsWitness<'a>,
     pub positive: FtsWitness<'a>,
     pub no_match: FtsWitness<'a>,
+}
+
+#[cfg(test)]
+pub(crate) const FTS_RESTORE_MAX_BYTES: usize = 32 * 1024;
+
+#[cfg(test)]
+pub(crate) enum FtsPublication<'a> {
+    Detached,
+    Current {
+        scope: &'a crate::current::CurrentScope,
+        collection_state: &'a [u8],
+        lexical_commit: Sha256Digest,
+    },
 }
 
 #[cfg(test)]
@@ -165,18 +179,37 @@ fn verify_fts_witness(
 
 #[cfg(test)]
 impl IndexWriter {
-    /// Private proof for a detached index with one UTF-8 chunk covering the whole source.
     pub(super) fn restore_missing_fts_row(
         &mut self,
         proposal: &FtsRestore<'_>,
         deadline: std::time::Instant,
         cancelled: impl Fn() -> bool,
     ) -> Result<u64> {
+        self.restore_fts(
+            proposal,
+            FtsPublication::Detached,
+            deadline,
+            cancelled,
+            |_, _| unreachable!("detached repair uses the raw source"),
+        )
+    }
+
+    /// Private transactional proof. The Current owner checks its writer permit
+    /// and authenticates the actual retained chunk; the detached fixture uses
+    /// its entire raw source as the only chunk.
+    pub(crate) fn restore_fts(
+        &mut self,
+        proposal: &FtsRestore<'_>,
+        publication: FtsPublication<'_>,
+        deadline: std::time::Instant,
+        cancelled: impl Fn() -> bool,
+        current_chunk_terms: impl FnOnce(&[u8], &[u8]) -> Result<String>,
+    ) -> Result<u64> {
         use crate::current::{lexical, plain_writer};
         use sha2::{Digest, Sha256};
         use std::time::Instant;
 
-        const MAX_BYTES: usize = 32 * 1024;
+        const MAX_BYTES: usize = FTS_RESTORE_MAX_BYTES;
 
         let check_budget = || {
             ensure!(!cancelled(), "FTS repair cancelled");
@@ -192,7 +225,6 @@ impl IndexWriter {
             proposal.positive.expected.is_some()
                 && proposal.no_match.expected.is_none()
                 && proposal.missing.path != proposal.positive.path
-                && ordinal == 0
                 && citation.len() <= MAX_BYTES
                 && proposal.canonical_terms.len() <= MAX_BYTES,
             "invalid FTS repair proposal"
@@ -211,41 +243,82 @@ impl IndexWriter {
             sequence(&transaction)? == proposal.sequence,
             "FTS repair publication is stale"
         );
-        for key in [
-            plain_writer::SCOPE_KEY,
-            plain_writer::COLLECTION_STATE_KEY,
-            plain_writer::LEXICAL_COMMIT_KEY,
-        ] {
-            ensure!(
-                schema::meta_blob(&transaction, key)?.is_none(),
-                "FTS repair proof requires a detached index"
-            );
-        }
-        let (id, raw_bytes, encoding, body, missing): (i64, i64, u8, Vec<u8>, bool) = transaction
+        let is_current = match &publication {
+            FtsPublication::Detached => {
+                ensure!(
+                    ordinal == 0 && proposal.payload_digest == proposal.source_hash,
+                    "detached FTS repair requires one raw source chunk"
+                );
+                for key in [
+                    plain_writer::SCOPE_KEY,
+                    plain_writer::COLLECTION_STATE_KEY,
+                    plain_writer::LEXICAL_COMMIT_KEY,
+                ] {
+                    ensure!(
+                        schema::meta_blob(&transaction, key)?.is_none(),
+                        "FTS repair proof requires a detached index"
+                    );
+                }
+                false
+            }
+            FtsPublication::Current {
+                scope,
+                collection_state,
+                lexical_commit,
+            } => {
+                ensure!(
+                    schema::meta_blob(&transaction, plain_writer::SCOPE_KEY)?.as_deref()
+                        == Some(serde_json::to_vec(scope)?.as_slice())
+                        && schema::meta_blob(&transaction, plain_writer::COLLECTION_STATE_KEY)?
+                            .as_deref()
+                            == Some(*collection_state)
+                        && schema::meta_blob(&transaction, plain_writer::LEXICAL_COMMIT_KEY)?
+                            .as_deref()
+                            == Some(digest_bytes(lexical_commit)),
+                    "FTS repair Current publication metadata differs"
+                );
+                true
+            }
+        };
+        let (id, raw_bytes, encoding, body, record, missing): (i64, i64, u8, Vec<u8>, Vec<u8>, bool) = transaction
             .query_row(
-                "SELECT c.id, p.raw_bytes, p.encoding, p.body, \
+                "SELECT c.id, p.raw_bytes, p.encoding, p.body, f.record, \
                    NOT EXISTS(SELECT 1 FROM fts WHERE fts.rowid=c.id) \
                  FROM chunks c JOIN files f ON f.id=c.file_id JOIN payloads p ON p.digest=f.payload \
-                 WHERE f.path=?1 AND f.source_hash=?2 AND f.payload=?2 AND c.ordinal=?3 \
-                   AND c.stable_id=?4 AND c.citation=?5 AND p.raw_bytes BETWEEN 0 AND ?6 \
-                   AND length(p.body)<=?6 AND NOT EXISTS(SELECT 1 FROM chunks other \
-                     WHERE other.file_id=f.id AND other.id<>c.id)",
-                params![proposal.missing.path, digest_bytes(&proposal.source_hash), ordinal, digest_bytes(&stable_id), citation, i64::try_from(MAX_BYTES)?],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+                 WHERE f.path=?1 AND f.source_hash=?2 AND f.payload=?3 AND c.ordinal=?4 \
+                   AND c.stable_id=?5 AND c.citation=?6 AND p.raw_bytes BETWEEN 0 AND ?7 \
+                   AND length(p.body)<=?7 AND length(f.record)<=?7 \
+                   AND (?8 OR NOT EXISTS(SELECT 1 FROM chunks other \
+                     WHERE other.file_id=f.id AND other.id<>c.id))",
+                params![
+                    proposal.missing.path,
+                    digest_bytes(&proposal.source_hash),
+                    digest_bytes(&proposal.payload_digest),
+                    ordinal,
+                    digest_bytes(&stable_id),
+                    citation,
+                    i64::try_from(MAX_BYTES)?,
+                    is_current,
+                ],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
             )
             .optional()?
             .context("FTS repair retained chunk binding differs or exceeds bounds")?;
         ensure!(missing, "FTS repair requires an absent row");
         let raw = super::decode_payload(encoding, u64::try_from(raw_bytes)?, &body)?;
         ensure!(
-            Sha256Digest::from_bytes(Sha256::digest(&raw).into()) == proposal.source_hash,
-            "FTS repair retained source digest differs"
+            Sha256Digest::from_bytes(Sha256::digest(&raw).into()) == proposal.payload_digest,
+            "FTS repair retained payload digest differs"
         );
-        let source = std::str::from_utf8(&raw)?;
+        let canonical_terms = if is_current {
+            current_chunk_terms(&record, &raw)?
+        } else {
+            let source = std::str::from_utf8(&raw)?;
+            ensure!(!source.is_empty(), "FTS repair retained source is empty");
+            lexical::chunk_terms(proposal.missing.path, source)
+        };
         ensure!(
-            !source.is_empty()
-                && !proposal.canonical_terms.is_empty()
-                && lexical::chunk_terms(proposal.missing.path, source) == proposal.canonical_terms,
+            !proposal.canonical_terms.is_empty() && canonical_terms == proposal.canonical_terms,
             "FTS repair canonical terms differ"
         );
         verify_fts_witness(&transaction, proposal.missing, None)?;
@@ -263,6 +336,14 @@ impl IndexWriter {
             .sequence
             .checked_add(1)
             .context("index sequence overflow")?;
+        if let FtsPublication::Current { scope, .. } = publication {
+            let lexical_commit = plain_writer::lexical_commit(scope, next);
+            schema::set_meta(
+                &transaction,
+                plain_writer::LEXICAL_COMMIT_KEY,
+                digest_bytes(&lexical_commit),
+            )?;
+        }
         schema::set_meta(&transaction, "sequence", i64::try_from(next)?)?;
         check_budget()?;
         transaction.commit()?;
