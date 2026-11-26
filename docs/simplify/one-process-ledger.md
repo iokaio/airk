@@ -19864,3 +19864,59 @@ Scoped Rust formatting, whitespace and repository checks passed. The
 workspace formatting probe found existing differences outside the changed
 files, which this work leaves for their owners. No matching CUDA image
 or new rank result was produced by these checks.
+
+### 25 November 2026 — Exact vector ranks on the settled Windows CUDA pair
+
+The model-image build initially refused the obsolete MiniLM directory.
+The corrected build verified the retained FP16 manifest and all three
+asset hashes against the native catalog and the Step 8 admission receipt.
+Locked offline Cargo used the prior warm target and incremental 1.
+The corrected execution receipt under
+`answer-loop/L5C/windows-completion-vector-image-r2/execution.json` has
+SHA-256 `9e920f05f5c46b3a7c561040b0b263d7ee6ab66d20004767737c2f15d3386645`.
+It records the service and CLI commands, elapsed times and 2,228 audited
+outputs. The staged service SHA-256 is
+`b948cb60d8f7874c4d50512fc5ab26fb8daace1e8eae3f896208ec60ceed2c50`
+and the CLI SHA-256 is
+`50ca088dd294272adbc88b7238ae92f850382c4cf3a84e1a57a2aca5905bcec1`.
+
+R1 reopened both publications but libtest buffered the census trace.
+R2 enabled live trace output for this fixture only. Four startup probes
+preceded 127 of 133 frozen cohort events. R2 stopped after 357.25 seconds
+when Bookbuilder A3 emitted three full-vector rankings but the Search
+call failed before its bounded semantic trace. The native log does not
+identify the error. R3 supplied the six missing fact queries in 38.95
+seconds. An isolated A3 instruction probe succeeded in 21.83 seconds
+including custody checks and reproduced all six notes' earlier ranks.
+The three lifetimes closed with zero surviving Job members, retained the
+original 41 Index and Vectors job identities and started zero new ones.
+
+| Repository | Notes | Instruction top 10 | Instruction top 40 | Additional notes in focused top 40 | Fact-derived top 10 | Fact-derived top 40 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Bookbuilder | 61 | 3 | 7 | 0 | 21 | 38 |
+| Munarium | 52 | 10 | 21 | 4 | 34 | 45 |
+| Combined | 113 | 13 | 28 | 4 | 55 | 83 |
+
+Fact-derived queries use labels and remain diagnostic. The vector result
+separates wording-sensitive cases from misses that survive the targeted
+query. It does not locate losses at lexical selection, fusion or packing,
+and it does not decide an index pilot. Native lexical and fusion
+measurements are the next action.
+
+Private receipts under `windows-completion-vector-image-r2`:
+
+- `vector-rank-census-r2-retained.json`,
+  `f6b465e3af53e0b159bdfbfd02e2b717d5b569f0745fcf92ef0424531e6468a7`.
+  It binds all 127 cohort events by query digest, pipeline and publication
+  after recording the four startup probes.
+- `vector-rank-census-r3-facts.json`,
+  `4044dba3e95223eba64bc4e92d4b47cc2a233b1ff1ced06b6806c28edb33d95a`.
+- `vector-rank-census-r3-instruction.json`,
+  `4f03f677ca3cdca75e75fc93fb53f324982205e5ff4cd882d52cea3c9411b651`.
+
+The verified Windows SID matched the interactive and output owner.
+Two independent read-only reviews verified the capture and recovery
+boundaries. The 69 fixture tests passed using a process-local environment
+without the injected Git config used by the outer shell. The single
+trace-binding regression passed. The full workspace formatting issue
+outside the touched code remains recorded separately.

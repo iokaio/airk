@@ -768,9 +768,9 @@ the frozen cohort, snapshots, audit input, native audit log, Ready handle,
 and their SHA-256 pins. Give it an unused `--output` under the private
 campaign root. It sends the frozen instructions and the fact sentences
 only to the isolated evaluation service. It reports instruction and
-focused vector ranks, fact-derived vector ranks, and instruction ranks
-in the delivered reply. Empty focused lists mean the native split did
-not supply another embedding. Treat the labeled fact queries only as
+focused vector ranks, fact-derived vector ranks, and delivered ranks for the semantic-subquery
+arm. Empty focused lists mean no auxiliary embedding was available for
+the native request. Treat the labeled fact queries only as
 diagnostics. The report covers the vector component of the rank census.
 Run the lexical, fusion, label and source-fidelity checks separately.
 

@@ -1526,6 +1526,8 @@ def worker(args):
                                                   "sha256": sha256(life / "restart-exception.json")}
     write_json(handle_path, handle, replace=True)
     command = [images["service"]["path"], "--ignored", "--exact", SELECTORS[args.selector], "--test-threads", "1"]
+    if "AIRK_PRIVATE_VECTOR_CENSUS_PATHS" in overrides:
+        command.append("--no-capture")
     ready = None
     reason = None
     with (life / "service.log").open("xb") as log:
