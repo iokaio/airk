@@ -159,7 +159,8 @@ class Capture(BaseHTTPRequestHandler):
 
 
 def run_app_server(cmd, env, workspace, *, model, effort, instruction, tool_catalog,
-                   clean_home, dispatch=None, output_schema=None, base_instructions=None, timeout=45):
+                   clean_home, dispatch=None, output_schema=None, base_instructions=None, timeout=45,
+                   require_chatgpt=False):
     tools = dynamic_specs(tool_catalog)
     allowed = {tool["name"] for tool in tool_catalog}
     records = []
@@ -201,8 +202,12 @@ def run_app_server(cmd, env, workspace, *, model, effort, instruction, tool_cata
                 line = messages.get(timeout=remaining)
                 if line is None:
                     raise RuntimeError("app-server exited before the expected response")
-                records.append(line)
                 message = json.loads(line)
+                event = message.get("method")
+                # Account read is only a readiness gate. Its payload can contain personal information.
+                if not (event or "").startswith("account/") and not (
+                        "method" not in message and message.get("id") in ((4, 5) if require_chatgpt else (5,))):
+                    records.append(line)
                 if key is not None and message.get("id") == key and "method" not in message:
                     if "error" in message:
                         error = message["error"]
@@ -217,6 +222,10 @@ def run_app_server(cmd, env, workspace, *, model, effort, instruction, tool_cata
                 if event and "id" in message:
                     common.require(event == "item/tool/call", "unexpected app-server request")
                     write(dispatch_tool(message, thread_id, turn_id, dispatch, allowed, attempts))
+                if event == "thread/tokenUsage/updated":
+                    params = message["params"]
+                    if params["threadId"] == thread_id and params["turnId"] == turn_id:
+                        status["usage"] = params["tokenUsage"]
                 if event == "item/completed":
                     params = message["params"]
                     item = params["item"]
@@ -229,7 +238,8 @@ def run_app_server(cmd, env, workspace, *, model, effort, instruction, tool_cata
 
         code = None
         try:
-            send("initialize", {"clientInfo": {"name": "airk-synthetic-preflight", "version": "1"},
+            client_name = "airk-answer-eval" if require_chatgpt else "airk-synthetic-preflight"
+            send("initialize", {"clientInfo": {"name": client_name, "version": "1"},
                                 "capabilities": {"experimentalApi": True}}, 1)
             receive(1)
             send("initialized", {})
@@ -242,16 +252,29 @@ def run_app_server(cmd, env, workspace, *, model, effort, instruction, tool_cata
                 common.require(not configured, "app-server inherited an MCP server")
             else:
                 common.require(not any(status["configured_mcp"].values()), "app-server inherited an enabled MCP server")
+            if require_chatgpt:
+                status["stage"] = "account/read"
+                send("account/read", {"refreshToken": False}, 5)
+                account = receive(5)
+                common.require((account.get("account") or {}).get("type") == "chatgpt",
+                               "isolated Codex home lacks a ChatGPT sign-in")
+                status["auth_route"] = "chatgpt"
             status["stage"] = "thread/start"
             thread = {"model": model, "cwd": str(workspace), "approvalPolicy": "never",
                       "sandbox": "read-only", "environments": [], "ephemeral": True,
                       "dynamicTools": tools, "config": {"mcp_servers": {}}}
+            if require_chatgpt:
+                thread["modelProvider"] = "openai"
             if base_instructions is not None:
                 thread["baseInstructions"] = base_instructions
             send("thread/start", thread, 2)
             started = receive(2)
             common.require(started["model"] == model and started.get("reasoningEffort") == effort,
                            "app-server substituted a different model or effort")
+            status.update(model_observed=started["model"], effort_observed=started["reasoningEffort"],
+                          provider_observed=started.get("modelProvider"))
+            if require_chatgpt:
+                common.require(status["provider_observed"] == "openai", "app-server substituted a different provider")
             thread_id = status["thread_id"] = started["thread"]["id"]
             status["instructions_count"] = len(started.get("instructionSources") or [])
             common.require(not status["instructions_count"], "app-server inherited an instruction source")
@@ -267,7 +290,7 @@ def run_app_server(cmd, env, workspace, *, model, effort, instruction, tool_cata
                            "crossed terminal turn")
             status["turn_status"] = completed["turn"]["status"]
             code = 0 if status["turn_status"] == "completed" else 1
-        except Empty:
+        except (Empty, subprocess.TimeoutExpired):
             pass
         except common.HarnessError as error:
             status["protocol_error"] = str(error)
@@ -283,6 +306,7 @@ def run_app_server(cmd, env, workspace, *, model, effort, instruction, tool_cata
                 process.wait(timeout=4)
             reader.join(timeout=2)
             stderr.join(timeout=2)
+            status["process_exit"] = process.returncode
     return code, b"".join(records), b"".join(errors), status
 
 

@@ -232,12 +232,95 @@ def require_model_identity(rows: list[dict], freeze: dict | None = None) -> None
                        "mixed agent model or effort in an OpenAI grading pass")
 
 
+def require_file_digest(path: Path, expected: str | None, key: str) -> None:
+    common.require(path.is_file() and common.sha256_file(path) == expected,
+                   f"{key}: missing or changed {path.name}")
+
+
+def require_codex_session(entry: dict, session: dict, provenance: dict) -> None:
+    key = entry["key"]
+    common.require(not entry.get("reused_from") and session.get("codex") == provenance
+                   and provenance.get("provider") == "openai"
+                   and provenance.get("auth_route") == "isolated_chatgpt"
+                   and session.get("model_requested") == entry["agent_model"]
+                   and session.get("effort_requested") == entry["agent_effort"] == "medium"
+                   and session.get("tool_catalog_input_sha256") == entry["tool_catalog_sha256"]
+                   and session.get("status") in ("complete", "failed", "timeout"),
+                   f"{key}: session differs from the frozen Codex actor")
+    directory = Path(entry["session_dir"])
+    require_file_digest(directory / "stream.jsonl", session.get("stream_sha256"), key)
+    require_file_digest(directory / "brief.md", session.get("brief_sha256"), key)
+    require_file_digest(directory / "codex-tools.json", session.get("codex_tools_sha256"), key)
+    if session["status"] == "complete":
+        observed = session.get("codex_observed") or {}
+        common.require(session.get("exit_code") == 0 and not session.get("is_error")
+                       and observed.get("model_observed") == entry["agent_model"]
+                       and observed.get("effort_observed") == "medium"
+                       and observed.get("provider_observed") == "openai"
+                       and observed.get("auth_route") == "chatgpt"
+                       and observed.get("turn_status") == "completed"
+                       and isinstance(session.get("session_id"), str) and session["session_id"]
+                       and session["session_id"] == observed.get("thread_id"),
+                       f"{key}: completed Codex actor identity differs")
+
+
+def codex_verdicts(entry: dict, scenario: dict, session: dict, provenance: dict) -> list[dict]:
+    import judge
+
+    key = entry["key"]
+    directory = Path(entry["session_dir"])
+    packet = judge.build_packet(scenario, directory, key)
+    common.require(len(entry.get("judges", [])) == 2, f"{key}: exactly two scoring judges required")
+    seen = {session["session_id"]}
+    verdicts = []
+    for name, path in zip(("j1", "j2"), map(Path, entry["judges"]), strict=True):
+        record = common.read_json(path)
+        common.require(record.get("schema") == judge.VERDICT_SCHEMA and record.get("key") == key
+                       and record.get("judge") == name and record.get("status") == "valid"
+                       and record.get("provider") == "codex" and record.get("codex") == provenance
+                       and record.get("model_requested") == "gpt-6.2-astra"
+                       and record.get("effort_requested") == "medium" and not record.get("problems")
+                       and Path(record.get("session_dir", "")).resolve() == directory.resolve(),
+                       f"{key}: invalid or crossed Codex verdict {name}")
+        packet_path = path.with_name("packet.json")
+        require_file_digest(packet_path, record.get("packet_sha256"), key)
+        common.require(common.read_json(packet_path) == packet, f"{key}: {name} scored a different packet")
+        output_path = path.with_name("output.json")
+        require_file_digest(output_path, record.get("output_sha256"), key)
+        require_file_digest(path.with_name("app-server.jsonl"), record.get("app_server_sha256"), key)
+        output = common.read_json(output_path)
+        verdict, usage, problems = judge.validate_codex_judge(record.get("exit_code"), output, "gpt-6.2-astra", scenario)
+        identifier = record.get("session_id")
+        common.require(not problems and verdict == record.get("verdict") and usage == record.get("usage")
+                       and identifier == output.get("thread_id") and identifier not in seen
+                       and record.get("codex_turn_id") == output.get("turn_id"),
+                       f"{key}: {name} lacks a distinct valid Astra verdict")
+        seen.add(identifier)
+        verdicts.append(verdict)
+    return verdicts
+
+
 def build_rows(index: dict, adjudications: dict) -> list[dict]:
     freeze = index.get("agent_freeze")
     common.require(freeze is not None or not any(row.get("agent_model") in common.OPENAI_EVAL_AGENT_MODELS
                                                  for row in index["results"]),
                    "OpenAI grading requires the pass agent freeze")
     require_model_identity(index["results"], freeze)
+    codex = index.get("codex")
+    common.require(freeze is None or codex is not None, "OpenAI grading requires pinned Codex provenance")
+    if codex is not None:
+        prompts = index["prompts_freeze"]
+        scenarios = index["freeze"]
+        scenario_freeze = Path(scenarios["path"])
+        require_file_digest(Path(prompts["path"]), prompts["sha256"], index["series"])
+        require_file_digest(scenario_freeze, scenarios["sha256"], index["series"])
+        manifest = common.read_json(Path(prompts["path"]))
+        common.require(freeze is not None and freeze["effort"] == "medium"
+                       and codex.get("freeze_sha256") == prompts["sha256"]
+                       and (manifest.get("scenario_freeze") or {}).get("sha256") == scenarios["sha256"]
+                       and not any(row.get("reused_from") for row in index["results"]),
+                       "Codex grading freeze differs or contains reused work")
+        frozen_scenarios = common.read_json(scenario_freeze)["files"]
     rows = []
     by_key = {r["key"]: r for r in index["results"]}
     for entry in index["results"]:
@@ -253,9 +336,29 @@ def build_rows(index: dict, adjudications: dict) -> list[dict]:
                            f"{entry['key']}: session agent differs from the frozen model or effort")
         coverage = common.read_json(source["coverage"]) if source.get("coverage") and Path(source["coverage"]).is_file() else None
         judged = []
-        for path in source.get("judges", []):
-            record = common.read_json(path) if Path(path).is_file() else None
-            judged.append(record["verdict"] if record and record.get("status") == "valid" else None)
+        if codex is not None:
+            import coverage as evidence_coverage
+
+            require_codex_session(entry, session, codex)
+            scenario_path = Path(entry["scenario_path"]).resolve()
+            rel = scenario_path.relative_to(scenario_freeze.resolve().parent).as_posix()
+            require_file_digest(scenario_path, frozen_scenarios.get(rel), entry["key"])
+            scenario = common.load_scenario(scenario_path)
+            common.require(scenario["id"] == entry["scenario_id"] == session["scenario_id"]
+                           and scenario["_sha256"] == session["scenario_sha256"],
+                           f"{entry['key']}: scenario identity differs")
+            if session["status"] == "complete":
+                common.require(coverage == evidence_coverage.for_session(
+                    scenario, Path(entry["session_dir"]), write=False), f"{entry['key']}: coverage differs")
+                judged = codex_verdicts(entry, scenario, session, codex)
+            else:
+                common.require(entry["key"] not in adjudications, "cannot adjudicate an incomplete Codex session")
+        else:
+            common.require("codex" not in session, "Codex sessions require verified provider provenance")
+            for path in source.get("judges", []):
+                record = common.read_json(path) if Path(path).is_file() else None
+                common.require(not record or record.get("provider") != "codex", "Codex verdict requires provider provenance")
+                judged.append(record["verdict"] if record and record.get("status") == "valid" else None)
         while len(judged) < 2:
             judged.append(None)
         status = session.get("status", "missing")

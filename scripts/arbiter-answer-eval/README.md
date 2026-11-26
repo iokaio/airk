@@ -856,6 +856,31 @@ refusal. The judge fixture returns a synthetic verdict under a small
 schema. These checks qualify the loopback transport. Hosted model access,
 production verdict generation and measured sessions remain separate.
 
+### Pinned Codex actor and judge adapters
+
+A new judged pass can select `"provider": "codex"` explicitly. Its
+`codex_config` supplies an absolute executable and model catalog, their
+SHA-256s, a dedicated signed-in ChatGPT home and the verified prompt
+freeze SHA-256. The provider requires medium effort, Sol or Astra for
+the actor, and two separately completed Astra judge threads. The
+pass compares actual frozen file digests and rejects reuse of earlier
+sessions or verdicts. Both standalone grading and pass grading revalidate
+the original blinded judge packet, strict verdict and distinct thread IDs.
+
+The ordinary actor uses the existing tool wrapper and counts every
+attempted call in its reconciliation. Its strict call cap applies to the
+twelve admitted calls. The judge receives no tools. Both roles retain
+actual Codex thread and turn identity, observed model and effort, and
+reported token usage. Cost stays unavailable unless supported by a
+separate receipt. The historical runner remains available for its archived
+specs.
+
+The dedicated home must be provisioned separately. The adapters keep the
+global Codex home and settings outside the production launch and use the
+built-in OpenAI provider. Synthetic loopback qualifies the exact tool
+offers and transport only. Hosted model admission, the fresh pass
+manifests and complete-evidence qualification are separate gates.
+
 ### Wider Search shortlist coverage
 
 Run the paired Search collector with a fixture launched under the private

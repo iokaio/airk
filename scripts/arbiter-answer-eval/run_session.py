@@ -26,14 +26,17 @@ import re
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
+import codex_isolation_probe as codex_driver  # noqa: E402
 import common  # noqa: E402
 import evidence  # noqa: E402
+import mcp_wrapper  # noqa: E402
 
 SYSTEM_PROMPT = """You are preparing to carry out a software development task in a code repository that you cannot see directly. You can reach the repository only through the tools you have been given; they only read it. There is no shell, file system or web access.
 
@@ -53,6 +56,66 @@ SESSION_SCHEMA = "airk.private.answer-eval-session/1"
 BUILTIN_DENY = ["Bash", "PowerShell", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Glob", "Grep", "LS",
                 "WebFetch", "WebSearch", "Agent", "Task", "TodoWrite", "Skill", "ToolSearch", "SlashCommand",
                 "BashOutput", "KillShell", "ExitPlanMode", "Monitor"]
+
+
+@dataclass(frozen=True)
+class CodexRunConfig:
+    executable: Path
+    executable_sha256: str
+    model_catalog: Path
+    model_catalog_sha256: str
+    isolated_home: Path
+    freeze_sha256: str
+
+
+def codex_provenance(config: CodexRunConfig) -> dict:
+    for digest in (config.executable_sha256, config.model_catalog_sha256, config.freeze_sha256):
+        common.require(re.fullmatch(r"[a-f0-9]{64}", digest) is not None, "Codex requires SHA-256 pins")
+    common.require(config.executable.is_absolute() and config.model_catalog.is_absolute(),
+                   "Codex binary and model catalog paths must be absolute")
+    common.require(common.sha256_file(config.executable) == config.executable_sha256, "Codex executable pin differs")
+    common.require(common.sha256_file(config.model_catalog) == config.model_catalog_sha256,
+                   "Codex model catalog pin differs")
+    home = config.isolated_home
+    default_home = Path.home() / ".codex"
+    active_home = Path(os.environ.get("CODEX_HOME") or default_home)
+    common.require(home.is_absolute() and home.is_dir() and home.resolve() == home
+                   and home not in (default_home.resolve(), active_home.resolve())
+                   and not (home / "config.toml").exists(),
+                   "Codex requires a dedicated preprovisioned home without a user config")
+    return {"provider": "openai", "driver": "codex-app-server-0.171.0-contract",
+            "executable": str(config.executable), "executable_sha256": config.executable_sha256,
+            "model_catalog_sha256": config.model_catalog_sha256, "freeze_sha256": config.freeze_sha256,
+            "auth_route": "isolated_chatgpt"}
+
+
+def codex_command(config: CodexRunConfig, directory: Path) -> list[str]:
+    options = {
+        "model_provider": "openai", "model_catalog_json": config.model_catalog.as_posix(),
+        "model_reasoning_effort": "medium", "web_search": "disabled", "project_doc_max_bytes": 0,
+        "features.shell_tool": False, "features.view_image": False, "features.apps": False,
+        "features.multi_agent": False, "features.multi_agent_v2.disable_native_tools": True,
+        "features.code_mode.enabled": False, "agents.enabled": False, "tools.experimental_request_user_input.enabled": False,
+        "features.goals": False, "features.plugins": False, "features.remote_plugin": False,
+        "history.persistence": "none", "analytics.enabled": False, "otel.metrics_exporter": "none",
+        "cli_auth_credentials_store": "file", "forced_login_method": "chatgpt",
+        "log_dir": (directory / "codex-logs").resolve().as_posix(),
+        "sqlite_home": (directory / "codex-state").resolve().as_posix(),
+    }
+    command = [str(config.executable), "app-server", "--stdio", "--strict-config"]
+    for name, value in options.items():
+        command.extend(("-c", f"{name}={json.dumps(value)}"))
+    return command
+
+
+def codex_child_env(config: CodexRunConfig, directory: Path) -> dict:
+    omitted = {"CODEX_HOME", "OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL",
+               "CODEX_INTERNAL_ORIGINATOR_OVERRIDE", "CHATGPT_BASE_URL"}
+    env = {name: os.environ[name] for name in os.environ
+           if name.upper() not in omitted and not name.upper().startswith("AIRK_")}
+    temporary = str((directory / "codex-tmp").resolve())
+    env.update(CODEX_HOME=str(config.isolated_home), TEMP=temporary, TMP=temporary, TMPDIR=temporary)
+    return env
 
 
 def result_name(configuration: str, device: str) -> str:
@@ -120,6 +183,12 @@ def audit(stream: dict, path: str, turns: list[dict], brief: str) -> dict:
         reasons.append(f"tool uses outside the wrapper: {used_outside}")
     if not init:
         reasons.append("no init event in the stream")
+    return citation_and_call_audit(turns, brief, reasons,
+                                   sum(1 for u in stream.get("tool_uses") or [] if u.get("name") in allowed),
+                                   (stream.get("result") or {}).get("permission_denials", []))
+
+
+def citation_and_call_audit(turns, brief, reasons, stream_calls, denials):
     spans = []
     counted = [row for row in turns if row.get("turn")]
     for row in counted:
@@ -130,12 +199,51 @@ def audit(stream: dict, path: str, turns: list[dict], brief: str) -> dict:
     # Pilot finding: briefs also wrote "lines 14-26" or "at 236" after a named file; those cannot be audited.
     bare = re.findall(r"\blines?\s+\d+(?:\s*[-\u2013]\s*\d+)?|\bat\s+\d{2,}\b", brief or "", re.I)
     wrapper_calls = len(turns)
-    stream_calls = sum(1 for u in stream.get("tool_uses") or [] if u.get("name") in allowed)
     return {"discard": bool(reasons), "discard_reasons": reasons,
             "citations": {"cited": cited, "unbacked": unbacked, "ok": not unbacked, "unaudited_bare_refs": len(bare)},
             "tool_use_count": {"stream": stream_calls, "wrapper_logged": wrapper_calls, "counted": len(counted),
                                "refused": wrapper_calls - len(counted), "agree": stream_calls == wrapper_calls},
-            "permission_denials": (stream.get("result") or {}).get("permission_denials", [])}
+            "permission_denials": denials}
+
+
+def audit_codex(stream_path, status, path, turns, brief):
+    reasons = []
+    allowed = set(common.PATH_TOOLS[path])
+    ids = set()
+    calls = []
+    thread_id, turn_id = status.get("thread_id"), status.get("turn_id")
+    if status.get("protocol_error"):
+        reasons.append(status["protocol_error"])
+    if status.get("configured_mcp") not in (None, {}):
+        reasons.append("Codex inherited MCP servers")
+    for event in common.read_jsonl(stream_path):
+        method = event.get("method")
+        if method == "item/tool/call" and "id" in event:
+            call = event.get("params") or {}
+            ident = call.get("callId")
+            if (not isinstance(ident, str) or not ident or ident in ids
+                    or call.get("threadId") != thread_id or call.get("turnId") != turn_id
+                    or call.get("namespace") != codex_driver.DYNAMIC_NAMESPACE or call.get("tool") not in allowed):
+                reasons.append("Codex requested a crossed, duplicate or outside tool")
+            else:
+                ids.add(ident)
+                calls.append((ident, event["id"], call.get("tool"), call.get("arguments")))
+        elif method and "id" in event:
+            reasons.append(f"unexpected Codex server request: {method}")
+    attempts = status.get("attempts", [])
+    audit_calls = [(a["call_id"], a["rpc_id"], a["tool"], a["arguments"]) for a in attempts]
+    aligned = (calls == audit_calls and len(turns) == len(attempts)
+               and all(row.get("call") == index and row.get("tool") == a["tool"]
+                       and row.get("arguments") == a["arguments"]
+                       and bool(row.get("ok")) == a["success"]
+                       for index, (row, a) in enumerate(zip(turns, attempts), 1)))
+    if not aligned:
+        reasons.append("Codex tool requests differ from wrapper log")
+    if len([row for row in turns if row.get("turn")]) > common.TURN_CAP:
+        reasons.append("Codex exceeded the admitted tool-call cap")
+    result = citation_and_call_audit(turns, brief, reasons, len(calls), [])
+    result["tool_use_count"]["agree"] = aligned and result["tool_use_count"]["agree"]
+    return result
 
 
 def run(*, scenario: dict, path: str, handle: Path, series: str, sessions_root: Path, configuration: str | None = None,
@@ -143,13 +251,31 @@ def run(*, scenario: dict, path: str, handle: Path, series: str, sessions_root: 
         model: str = common.AGENT_MODEL, effort: str | None = common.AGENT_EFFORT,
         timeout_s: float = 1800.0, call_timeout_s: float = 300.0,
         max_budget_usd: float | None = None, claude: str | None = None, rerun: bool = False,
-        accept_queryable: bool = False) -> dict:
+        accept_queryable: bool = False, codex: CodexRunConfig | None = None) -> dict:
+    if codex is None:
+        common.require(model not in common.OPENAI_EVAL_AGENT_MODELS,
+                       "OpenAI actor models require an explicit frozen Codex configuration")
+    else:
+        common.require(model in common.OPENAI_EVAL_AGENT_MODELS and effort == "medium",
+                       "Codex actor requires a locked OpenAI model and medium effort")
+        common.require(claude is None and max_budget_usd is None,
+                       "Claude executable and budget switches are unavailable for Codex")
+        common.require(catalog is not None, "Codex actor requires the frozen AIRK tool catalog")
+    provenance = codex_provenance(codex) if codex else None
     repo, slot = scenario["repository"], scenario["slot"]
     directory = session_dir(sessions_root, series, repo, slot, result_name(configuration or path, device), sample)
     record_path = directory / "session.json"
     if record_path.is_file() and not rerun:
         record = common.read_json(record_path)
         if record.get("status") in ("complete", "discarded", "failed", "timeout"):
+            if provenance is not None:
+                common.require(record.get("codex") == provenance and record.get("model_requested") == model
+                               and record.get("effort_requested") == effort and record.get("path") == path
+                               and record.get("scenario_sha256") == scenario.get("_sha256")
+                               and record.get("tool_catalog_input_sha256") == common.sha256_file(catalog),
+                               "retained session differs from the frozen Codex actor")
+            else:
+                common.require("codex" not in record, "retained Codex session requires its provider configuration")
             return record
     if directory.exists():
         attempt = 1
@@ -164,6 +290,10 @@ def run(*, scenario: dict, path: str, handle: Path, series: str, sessions_root: 
     common.write_text(instruction_file, instruction)
     mcp_config = directory / "mcp-config.json"
     loaded = common.load_handle(handle, accept_queryable=accept_queryable)  # refuse an unready handle up front
+    if codex is not None:
+        return run_codex_agent(scenario, path, loaded, handle, series, directory, configuration, device,
+                               sample, catalog, answer_defaults, model, effort, timeout_s, call_timeout_s,
+                               accept_queryable, codex, provenance)
     wrapper = wrapper_command(handle, repo, path, instruction_file, log_dir, catalog, answer_defaults, call_timeout_s,
                               accept_queryable)
     common.write_json(mcp_config, {"mcpServers": {common.SERVER_NAME: {"type": "stdio", "command": wrapper[0],
@@ -235,14 +365,91 @@ def run(*, scenario: dict, path: str, handle: Path, series: str, sessions_root: 
     return record
 
 
+def run_codex_agent(scenario, path, loaded, handle, series, directory, configuration, device, sample,
+                    catalog, answer_defaults, model, effort, timeout_s, call_timeout_s, accept_queryable,
+                    codex, provenance):
+    work = directory / "work"
+    log_dir = directory / "wrapper"
+    for child in ("codex-logs", "codex-state", "codex-tmp"):
+        (directory / child).mkdir()
+    stream_path = directory / "stream.jsonl"
+    config_path = directory / "codex-tools.json"
+    command = codex_command(codex, directory)
+    instruction = scenario["instruction"]
+    repo, slot = scenario["repository"], scenario["slot"]
+    began = time.monotonic()
+    deadline = began + timeout_s
+
+    def backend(tool, arguments):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired("AIRK wrapper", timeout_s)
+        return common.call_tool(loaded, tool, repo, arguments, min(call_timeout_s, remaining),
+                                strip_env=common.AGENT_STRIPPED_ENV)
+
+    tool_input_sha256 = common.sha256_file(catalog)
+    wrapper = mcp_wrapper.Wrapper(handle=loaded, repo=repo, path=path, instruction=instruction,
+                                  catalog=common.load_catalog(catalog), log_dir=log_dir,
+                                  answer_defaults=answer_defaults, call_timeout_s=call_timeout_s,
+                                  backend=backend, deadline=deadline)
+    tools = wrapper.list_tools()
+    common.write_json(config_path, codex_driver.dynamic_specs(tools))
+    record = {"schema": SESSION_SCHEMA, "series": series, "repo": repo, "slot": slot, "scenario_id": scenario.get("id"),
+              "scenario_sha256": scenario.get("_sha256"), "kind": scenario.get("kind"), "path": path,
+              "configuration": configuration or path, "device": device, "sample": sample,
+              "handle": {"path": str(handle), "sha256": common.sha256_file(handle),
+                         "index_id": loaded.index_id(repo), "accept_queryable": accept_queryable},
+              "handle_readiness_start": loaded.readiness(), "answer_defaults": answer_defaults,
+              "answer_budget_source": common.answer_budget_source(), "model_requested": model,
+              "effort_requested": effort, "command": command, "stdin": "instruction.txt", "cwd": str(work),
+              "codex": provenance, "tool_catalog_input_sha256": tool_input_sha256,
+              "codex_tools_sha256": common.sha256_file(config_path), "status": "running", "started": common.now_iso()}
+    record_path = directory / "session.json"
+    common.write_json(record_path, record)
+    try:
+        exit_code, stdout, stderr, observed = codex_driver.run_app_server(
+            command, codex_child_env(codex, directory), work, model=model, effort=effort,
+            instruction=instruction, tool_catalog=tools, clean_home=True, dispatch=wrapper.call,
+            base_instructions=system_prompt(path), timeout=max(0, deadline - time.monotonic()), require_chatgpt=True)
+    except OSError:
+        exit_code, stdout, stderr, observed = 2, b"", b"", {"stage": "start", "startup_failed": True}
+    common.write_bytes(stream_path, stdout)
+    common.write_bytes(directory / "stderr.txt", stderr)
+    brief = observed.get("final") or ""
+    common.write_text(directory / "brief.md", brief)
+    turns = common.read_jsonl(wrapper.turn_log)
+    counted = [row for row in turns if row.get("turn")]
+    checks = audit_codex(stream_path, observed, path, turns, brief)
+    checks["rejected_calls"] = [row for row in turns if row.get("rejected")]
+    model_observed = observed.get("model_observed")
+    turn_completed = observed.get("turn_status") == "completed"
+    completed = exit_code == 0 and turn_completed and bool(brief)
+    record.update(session_id=observed.get("thread_id"), codex_observed=observed, cost_usd=None,
+                  usage=observed.get("usage"), model_usage=None, models_used=[model_observed] if model_observed else [],
+                  ended=common.now_iso(), elapsed_ms=int((time.monotonic() - began) * 1000),
+                  exit_code=exit_code, is_error=not completed, num_turns=1 if observed.get("turn_id") else 0,
+                  stream_sha256=common.sha256_file(stream_path), brief_sha256=common.sha256_file(directory / "brief.md"),
+                  wrapper_turns=len(counted), audit=checks, answer_budgets_sent=common.distinct_budgets(counted),
+                  handle_readiness_end=loaded.readiness())
+    if exit_code is None:
+        record["status"] = "timeout"
+    elif checks["discard"] and observed.get("turn_id"):
+        record["status"] = "discarded"
+    else:
+        record["status"] = "complete" if completed and not checks["discard"] else "failed"
+    common.write_json(record_path, record)
+    return record
+
+
 def reaudit(directory: Path) -> dict:
     """Recompute a finished session's audit from its stored stream, wrapper log and brief."""
     directory = Path(directory)
     record = common.read_json(directory / "session.json")
-    stream = common.parse_stream(directory / "stream.jsonl")
+    stream_path = directory / "stream.jsonl"
     turns = common.read_jsonl(directory / "wrapper" / "turns.jsonl")
     brief = (directory / "brief.md").read_text(encoding="utf-8") if (directory / "brief.md").is_file() else ""
-    checks = audit(stream, record["path"], turns, brief)
+    checks = (audit_codex(stream_path, record["codex_observed"], record["path"], turns, brief)
+              if "codex" in record else audit(common.parse_stream(stream_path), record["path"], turns, brief))
     checks["rejected_calls"] = [t for t in turns if t.get("rejected")]
     record.setdefault("audit_history", []).append({"at": common.now_iso(), "previous": record.get("audit")})
     record["audit"] = checks
@@ -271,15 +478,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-budget-usd", type=float)
     parser.add_argument("--rerun", action="store_true", help="keep the old folder as .attempt-N and run again")
     parser.add_argument("--claude", help="Claude Code executable (default: common.find_claude())")
+    parser.add_argument("--codex-config", type=Path, help="frozen Codex provider configuration JSON")
     parser.add_argument("--accept-queryable", action="store_true", help="pilot only (see common.load_handle)")
     args = parser.parse_args(argv)
+    codex = None
+    if args.codex_config:
+        config = common.read_json(args.codex_config)
+        for name in ("executable", "model_catalog", "isolated_home"):
+            config[name] = Path(config[name])
+        codex = CodexRunConfig(**config)
     record = run(scenario=common.load_scenario(args.scenario), path=args.path, handle=args.handle, series=args.series,
                  sessions_root=args.sessions_root, configuration=args.configuration, device=args.device,
                  sample=args.sample, catalog=args.catalog,
                  answer_defaults=json.loads(args.answer_defaults) if args.answer_defaults else None,
                  model=args.model, effort=args.effort, timeout_s=args.timeout, call_timeout_s=args.call_timeout,
                  max_budget_usd=args.max_budget_usd, rerun=args.rerun, claude=args.claude,
-                 accept_queryable=args.accept_queryable)
+                 accept_queryable=args.accept_queryable, codex=codex)
     print(json.dumps({k: record.get(k) for k in ("status", "session_id", "cost_usd", "wrapper_turns", "elapsed_ms")}))
     return 0 if record["status"] == "complete" else 1
 

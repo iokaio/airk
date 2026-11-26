@@ -107,16 +107,64 @@ class Pass:
             if spec.get("answer_defaults") is not None and "answer_defaults" not in entry:
                 entry["answer_defaults"] = spec["answer_defaults"]
             common.require(entry["handle"], f"entry {entry.get('configuration')} names no handle")
+        self.codex = None
+        self.codex_identity = None
+        self.codex_catalogs = {}
+        provider = spec.get("provider")
+        common.require(provider in (None, "codex"), "unknown evaluation provider")
+        common.require((provider == "codex") == ("codex_config" in spec),
+                       "Codex needs an explicit provider and pinned configuration")
+        if provider == "codex":
+            common.require(check_prompts and spec.get("prompts_freeze") and spec.get("freeze")
+                           and spec.get("strict_judged_receipts") and not self.pilot
+                           and not spec.get("claude") and not spec.get("prior_series")
+                           and self.judges() == ["j1", "j2"],
+                           "Codex evaluation requires strict fresh receipts and both freezes")
+            model = spec.get("agent_model")
+            common.require(model in ("gpt-6.2-sol", "gpt-6.2-astra") and spec.get("agent_effort") == "medium"
+                           and spec.get("judge_model") == "gpt-6.2-astra" and spec.get("judge_effort") == "medium"
+                           and all(self.agent_model(entry) == model and self.agent_effort(entry) == "medium"
+                                   and entry.get("catalog") and entry.get("max_budget_usd") is None
+                                   for entry in spec.get("results", [])),
+                           "Codex evaluation model, effort, or tool catalog differs from the selected roles")
+            config = spec["codex_config"]
+            fields = ("executable", "executable_sha256", "model_catalog", "model_catalog_sha256",
+                      "isolated_home", "freeze_sha256")
+            common.require(isinstance(config, dict) and set(config) == set(fields)
+                           and all(isinstance(config[field], str) and config[field] for field in fields),
+                           "invalid pinned Codex configuration")
+            self.codex = run_session.CodexRunConfig(
+                Path(config["executable"]), config["executable_sha256"], Path(config["model_catalog"]),
+                config["model_catalog_sha256"], Path(config["isolated_home"]), config["freeze_sha256"],
+            )
+            self.codex_identity = run_session.codex_provenance(self.codex)
+            self.codex_catalogs = {
+                entry["catalog"]: common.sha256_file(Path(entry["catalog"]))
+                for entry in spec.get("results", [])
+            }
+        else:
+            common.require(all(self.agent_model(entry) not in common.OPENAI_EVAL_AGENT_MODELS
+                               for entry in spec.get("results", [])),
+                           "OpenAI evaluation models require the Codex provider")
         self.prompts = None
         if spec.get("prompts_freeze"):
             self.prompts = prompts_freeze.verify(Path(spec["prompts_freeze"])) if check_prompts else None
         else:
             common.require(self.pilot, "a judged pass spec must pin prompts_freeze (decision 5)")
+        if self.codex is not None:
+            common.require(self.prompts["sha256"] == self.codex.freeze_sha256,
+                           "Codex prompt freeze pin differs from the verified manifest")
+            manifest = common.read_json(Path(spec["prompts_freeze"]))
+            common.require((manifest.get("scenario_freeze") or {}).get("sha256")
+                           == common.sha256_file(Path(spec["freeze"])),
+                           "Codex scenario freeze differs from the prompt freeze")
         self.settle_fn = settle_fn or self._settle
         self.r_root = Path(r_root)
         self.pass_dir = self.r_root / "passes" / self.series
         self._stage_guard_lock = threading.Lock()
         self.sessions_root = self.r_root / "sessions"
+        common.require(self.codex is None or not (self.pass_dir / "reuse.json").exists(),
+                       "Codex passes cannot reuse prior sessions or verdicts")
         self.pass_dir.mkdir(parents=True, exist_ok=True)
         scenarios_dir = Path(spec.get("scenarios_dir") or self.r_root / "scenarios")
         files = common.scenario_files(scenarios_dir, spec.get("repos", common.REPOS), spec.get("slots", common.SLOTS))
@@ -330,7 +378,7 @@ class Pass:
         return value
 
     def reuse_source(self, scenario: dict, entry: dict, digest: dict) -> dict | None:
-        if not entry.get("reuse", True) or not digest.get("ok") or not digest.get("digest"):
+        if self.codex is not None or not entry.get("reuse", True) or not digest.get("ok") or not digest.get("digest"):
             return None
         tools = common.PATH_TOOLS[entry["path"]]
         agent = (self.agent_model(entry), self.agent_effort(entry))
@@ -370,6 +418,7 @@ class Pass:
 
     def reuse_map(self) -> dict:
         path = self.pass_dir / "reuse.json"
+        common.require(self.codex is None or not path.exists(), "Codex passes cannot use reused results")
         return common.read_json(path) if path.is_file() else {}
 
     def record_reuse(self, key: str, source: dict) -> None:
@@ -412,7 +461,7 @@ class Pass:
                 return {"key": key, "reused_from": existing}
             directory = self.session_dir(scenario, entry)
             done = directory / "session.json"
-            if done.is_file() and common.read_json(done).get("status") in ("complete", "failed", "timeout"):
+            if self.codex is None and done.is_file() and common.read_json(done).get("status") in ("complete", "failed", "timeout"):
                 return {"key": key, "status": common.read_json(done).get("status"), "resumed": True}
             digest = self.digest(scenario, entry)
             # Gate arms (plan 12.7): the live configuration must be the arm's before any agent session runs.
@@ -425,7 +474,7 @@ class Pass:
                 return {"key": key, "reused_from": source}
         else:
             done = self.session_dir(scenario, entry, sample) / "session.json"
-            if done.is_file() and common.read_json(done).get("status") in ("complete", "failed", "timeout"):
+            if self.codex is None and done.is_file() and common.read_json(done).get("status") in ("complete", "failed", "timeout"):
                 return {"key": key, "status": common.read_json(done).get("status"), "resumed": True}
         kwargs = dict(scenario=scenario, path=entry["path"], handle=self.handle_of(entry), series=self.series,
                       sessions_root=self.sessions_root, configuration=entry["configuration"],
@@ -437,6 +486,11 @@ class Pass:
                       call_timeout_s=float(entry.get("call_timeout", 300)),
                       max_budget_usd=entry.get("max_budget_usd"),
                       accept_queryable=bool(self.spec.get("accept_queryable")))
+        if self.codex is not None:
+            catalog = entry["catalog"]
+            common.require(common.sha256_file(Path(catalog)) == self.codex_catalogs[catalog],
+                           f"{key}: Codex catalog changed after pass admission")
+            kwargs["codex"] = self.codex
         if entry.get("stage_guard"):
             # Before every session, not only every plan step: an agent can pause long between calls, and a
             # stage that unloaded meanwhile would serve the next session without it (s8 shakedown, 23 Nov 2026).
@@ -622,6 +676,9 @@ class Pass:
                            "arm": entry.get("arm"), "agent_model": self.agent_model(entry),
                            "agent_effort": self.agent_effort(entry), "timing_only": bool(entry.get("timing_only")),
                            "device": entry.get("device", "none"), "sample": sample}
+                    if self.codex is not None:
+                        row["scenario_path"] = scenario["_path"]
+                        row["tool_catalog_sha256"] = self.codex_catalogs[entry["catalog"]]
                     if key in reuse:
                         source = reuse[key]
                         row["reused_from"] = source["key"] if source["series"] == self.series else (
@@ -642,6 +699,9 @@ class Pass:
         if self.spec.get("agent_model") in common.OPENAI_EVAL_AGENT_MODELS:
             index["agent_freeze"] = {"model": self.spec["agent_model"],
                                      "effort": self.spec.get("agent_effort") or common.AGENT_EFFORT}
+        if self.codex is not None:
+            common.require(not reuse, "Codex passes cannot use reused results")
+            index["codex"] = self.codex_identity
         # Reused rows point at a key; grade.py reads the source's files through the row itself.
         for row in results:
             if row.get("reused_from") and ":" in row["reused_from"]:
@@ -672,14 +732,18 @@ class Pass:
             record_path = Path(row["session_dir"]) / "session.json"
             if not record_path.is_file() or common.read_json(record_path).get("status") != "complete":
                 continue
+            scenario = by_id[row["scenario_id"]]
+            if self.codex is not None:
+                self.require_terminal_session(row, scenario, None)
             for name in self.judges():
-                jobs.append((by_id[row["scenario_id"]], row, name))
+                jobs.append((scenario, row, name))
         workers = int(self.spec.get("judge_concurrency", 4))
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
             futures = [pool.submit(self.judge_runner, scenario=s, session_dir=Path(row["session_dir"]), key=row["key"],
                                    out_dir=self.pass_dir / "judging" / row["key"], judge=name, claude=self.claude,
                                    model=self.spec.get("judge_model") or common.JUDGE_MODEL,
-                                   effort=self.spec.get("judge_effort") or common.JUDGE_EFFORT)
+                                   effort=self.spec.get("judge_effort") or common.JUDGE_EFFORT,
+                                   **({"codex": self.codex} if self.codex is not None else {}))
                        for s, row, name in jobs]
             for future in concurrent.futures.as_completed(futures):
                 record = future.result()
@@ -733,6 +797,9 @@ class Pass:
         if session["status"] == "complete":
             common.require(session.get("exit_code") == 0 and not session.get("is_error"),
                            f"{key}: complete session receipt has a failing exit")
+        if self.codex is not None:
+            common.require(reuse is None, "Codex passes cannot use reused results")
+            grade.require_codex_session(row, session, self.codex_identity)
         self.require_receipt_hash(directory / "stream.jsonl", session.get("stream_sha256"), key)
         self.require_receipt_hash(directory / "brief.md", session.get("brief_sha256"), key)
         if row["sample"] == 1:
@@ -802,7 +869,8 @@ class Pass:
             scenario = by_id[row["scenario_id"]]
             session, source_key = self.require_terminal_session(row, scenario, reuse.get(row["key"]))
             if session["status"] == "complete":
-                self.require_complete_judges(row, scenario, source_key)
+                if self.codex is None:
+                    self.require_complete_judges(row, scenario, source_key)
             else:
                 common.require(source_key not in adjudications,
                                f"{row['key']}: a failed or timed-out session cannot be adjudicated as complete")

@@ -20680,3 +20680,40 @@ semantic checks, retrieval-triggered nomination, same-request replay and
 deadline qualification open. The next scope is an exact-file lexical
 request under the original read budget and real maintenance authority.
 The cooperative work window does not bound storage sync or response p95.
+
+### 25 November 2026 — Pinned Codex adapters and pass provenance
+
+Actor, judge, pass and grader now have an explicit Codex provider path.
+Actor evidence reconciles the stock app-server's tool requests with the
+existing wrapper, including refusals. The judge uses the strict translated
+verdict schema and validates a completed tool-free thread. Codex passes
+require the actual prompt and scenario freeze digests, forbid previous
+session and verdict reuse, and require medium effort and two distinct
+Astra judges. Both judge receipts revalidate the same blinded packet,
+retained raw verdict and OpenAI model/effort. The legacy archive path
+retains its own provider semantics.
+
+After adding provider admission and call deadlines, the pinned Windows
+stock binary again completed the synthetic Sol Search round trip, with
+15 exact offers, 12 admitted calls and two refusals. The receipt is
+d111fcddb6706d1835428abcfea413e6caa48dff452c753c78c22404c2a5cd0f.
+The Astra synthetic judge completed with zero tools under its strict
+fixture schema. Its receipt is
+57d40f7ee7a651cc623c4f95314737497faf00d5f55fcb1e1729825900af2f19.
+The two guarded r2 loopback runs audited 122 and 106 outputs and took
+8.472 s and 7.734 s respectively. They exercised probe source
+d497d1b4a37d5a814a0d158cd758cc46f819b8728a924d9081ff83a7157fd6ab
+without credentials or hosted access. Exact commands are in
+L5C/codex-tool-roundtrip-r2-search and its judge sibling.
+
+Twenty focused Python checks passed, including actor, judge and pass
+provenance, the existing mixed-model rejection and historic pass flow.
+The guarded pure run command and output receipts are in
+L5C/codex-provider-routing-pure-r1. Execution SHA-256 is
+6277d42f4fa3816d43784d5403b3298b30ec5aab8ccf86a2b646534de080eae5.
+
+The benchmark remains closed. The next harness dependency is a new
+Codex-scoped freeze and complete-evidence pass manifest that pins all
+actual catalogs, model roles and the production verdict schema. Hosted
+sign-in and entitlement for the exact roles remain unverified. No
+development or sealed scenario has a scored Codex session.

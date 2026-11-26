@@ -11,7 +11,9 @@ recognizable shape, so the blinding is partial (plan 4.5).
 ``run_judge`` launches one fresh headless Claude Code session on
 ``claude-opus-5-5`` with every tool removed (``--tools ''``), no settings,
 CLAUDE.md or memory (``--setting-sources ''``), no MCP servers, and a JSON
-schema for its reply. Two independent judges are two such sessions (j1, j2).
+schema for its reply. The opt-in Codex path starts a fresh isolated
+app-server thread for Astra or Sol and uses a strict translation of the
+same verdict schema. Two independent judges use separate sessions (j1, j2).
 """
 
 from __future__ import annotations
@@ -23,12 +25,16 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 import common  # noqa: E402
+
+if TYPE_CHECKING:
+    from run_session import CodexRunConfig
 
 PACKET_SCHEMA = "airk.private.answer-eval-judge-packet/1"
 VERDICT_SCHEMA = "airk.private.answer-eval-verdict/1"
@@ -187,14 +193,168 @@ def validate(verdict: dict | None, scenario: dict) -> list[str]:
     return problems
 
 
+CODEX_MODELS = ("gpt-6.2-astra", "gpt-6.2-sol")
+
+
+def codex_verdict_schema() -> dict:
+    """Close the same verdict schema for the app-server strict output format."""
+    def close(node):
+        if "properties" in node:
+            return {**node, "properties": {key: close(value) for key, value in node["properties"].items()},
+                    "additionalProperties": False}
+        if "items" in node:
+            return {**node, "items": close(node["items"])}
+        if "enum" in node and "type" not in node:
+            return {"type": "string", **node}
+        return node
+    return close(verdict_schema())
+
+
+def exact_json(text: str) -> dict:
+    def unique_object(pairs):
+        value = dict(pairs)
+        if len(value) != len(pairs):
+            raise ValueError("duplicate verdict key")
+        return value
+
+    value = json.loads(text, object_pairs_hook=unique_object)
+    if not isinstance(value, dict):
+        raise ValueError("expected a JSON object")
+    return value
+
+
+def matches_verdict_schema(value, schema) -> bool:
+    kind = schema["type"]
+    if kind == "object":
+        props = schema["properties"]
+        return (type(value) is dict and set(value) == set(schema["required"])
+                and all(matches_verdict_schema(value[key], prop) for key, prop in props.items()))
+    if kind == "array":
+        return type(value) is list and all(matches_verdict_schema(item, schema["items"]) for item in value)
+    if kind == "string":
+        return type(value) is str and ("enum" not in schema or value in schema["enum"])
+    if kind == "boolean":
+        return type(value) is bool
+    if kind == "integer":
+        return type(value) is int and schema["minimum"] <= value <= schema["maximum"]
+    raise ValueError("unexpected verdict schema type")
+
+
+def codex_usage(status: dict) -> dict | None:
+    raw = status.get("usage")
+    if not isinstance(raw, dict):
+        return None
+    observed = raw.get("total")
+    fields = {"inputTokens": "input_tokens", "cachedInputTokens": "cached_input_tokens",
+              "outputTokens": "output_tokens", "reasoningOutputTokens": "reasoning_output_tokens",
+              "totalTokens": "total_tokens"}
+    if not isinstance(observed, dict) or any(
+        type(observed.get(key)) is not int or observed[key] < 0 for key in fields
+    ):
+        return None
+    return {name: observed[key] for key, name in fields.items()}
+
+
+def validate_codex_judge(exit_code, status: dict, model: str, scenario: dict) -> tuple:
+    if exit_code is None:
+        return None, None, ["judge timed out"]
+    if exit_code != 0 or status.get("turn_status") != "completed":
+        return None, None, ["Codex judge did not complete"]
+    if (status.get("model_observed") != model or status.get("effort_observed") != "medium"
+        or status.get("provider_observed") != "openai" or status.get("auth_route") != "chatgpt"
+        or status.get("configured_mcp") != {} or status.get("attempts") != []
+        or status.get("instructions_count") != 0
+        or not all(isinstance(status.get(key), str) and status[key] for key in ("thread_id", "turn_id"))):
+        return None, None, ["Codex judge identity or tool isolation differs"]
+    usage = codex_usage(status)
+    if usage is None:
+        return None, None, ["Codex judge token usage is unavailable"]
+    final = status.get("final")
+    try:
+        verdict = exact_json(final)
+    except (ValueError, TypeError):
+        return None, usage, ["no exact JSON verdict"]
+    if not matches_verdict_schema(verdict, codex_verdict_schema()):
+        return None, usage, ["Codex verdict does not match the strict schema"]
+    problems = validate(verdict, scenario)
+    expected = {note["id"] for note in scenario["notes"] if note["mark"] == "essential"}
+    if any(note["id"] not in expected for note in verdict["notes"]):
+        problems.append("verdict judges notes outside the essential roster")
+    return verdict, usage, problems
+
+
+def run_codex_judge(config, *, record, model, prompt, work, out, timeout_s, scenario):
+    from codex_isolation_probe import run_app_server
+    from run_session import codex_child_env, codex_command, codex_provenance
+
+    schema = codex_verdict_schema()
+    record.update({"provider": "codex", "stdin": "app-server JSON-RPC",
+                   "output_schema_sha256": common.sha256_bytes(json.dumps(
+                       schema, sort_keys=True, separators=(",", ":")).encode("utf-8"))})
+    began = time.monotonic()
+    try:
+        record["codex"] = codex_provenance(config)
+        command = codex_command(config, work)
+        record["command"] = command
+        for name in ("codex-tmp", "codex-logs", "codex-state"):
+            (work / name).mkdir()
+        child_env = codex_child_env(config, work)
+        exit_code, transcript, stderr, status = run_app_server(
+            command, child_env, work, model=model, effort="medium", instruction=prompt,
+            tool_catalog=[], clean_home=True, output_schema=schema, base_instructions=JUDGE_SYSTEM,
+            timeout=timeout_s, require_chatgpt=True,
+        )
+    except subprocess.TimeoutExpired:
+        exit_code, transcript, stderr, status = None, b"", b"", {}
+    except (common.HarnessError, OSError, subprocess.SubprocessError, ValueError) as error:
+        exit_code, transcript, stderr, status = 2, b"", b"", {"launch_failure": type(error).__name__}
+    record["ended"] = common.now_iso()
+    record["elapsed_ms"] = int((time.monotonic() - began) * 1000)
+    common.write_bytes(out / "app-server.jsonl", transcript)
+    if stderr:
+        common.write_bytes(out / "stderr.txt", stderr)
+    verdict, usage, problems = validate_codex_judge(exit_code, status, model, scenario)
+    common.write_json(out / "output.json", status)
+    observed_model = status.get("model_observed")
+    record.update({"exit_code": exit_code, "output_sha256": common.sha256_file(out / "output.json"),
+                   "app_server_sha256": common.sha256_bytes(transcript),
+                   "cost_usd": None, "usage": usage, "model_usage": None,
+                   "models_used": [observed_model] if observed_model else [],
+                   "session_id": status.get("thread_id"), "codex_turn_id": status.get("turn_id"),
+                   "verdict": verdict, "problems": problems,
+                   "status": "valid" if not problems else "invalid"})
+    return record
+
+
 def run_judge(*, scenario: dict, session_dir: Path, key: str, out_dir: Path, judge: str = "j1",
               model: str = common.JUDGE_MODEL, effort: str | None = common.JUDGE_EFFORT,
               claude: str | None = None, timeout_s: float = 900.0,
-              rerun: bool = False) -> dict:
+              rerun: bool = False, codex: CodexRunConfig | None = None) -> dict:
+    if codex is not None:
+        common.require(claude is None and model in CODEX_MODELS and effort == "medium",
+                       "Codex judging requires the exact Astra or Sol model and medium effort")
     out = Path(out_dir) / judge
     verdict_path = out / "verdict.json"
     if verdict_path.is_file() and not rerun:
-        return common.read_json(verdict_path)
+        cached = common.read_json(verdict_path)
+        if codex is not None:
+            from run_session import codex_provenance
+
+            packet = build_packet(scenario, session_dir, key)
+            packet_bytes = (json.dumps(packet, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+            common.require(cached.get("provider") == "codex" and cached.get("key") == key
+                           and cached.get("judge") == judge
+                           and cached.get("model_requested") == model
+                           and cached.get("effort_requested") == effort
+                           and cached.get("codex") == codex_provenance(codex)
+                           and cached.get("packet_sha256") == common.sha256_bytes(packet_bytes)
+                           and cached.get("output_sha256") == common.sha256_file(out / "output.json")
+                           and cached.get("app_server_sha256") == common.sha256_file(out / "app-server.jsonl"),
+                           "cached judge has different Codex evidence; use an explicit rerun")
+        else:
+            common.require(cached.get("provider") != "codex",
+                           "cached judge belongs to Codex; use an explicit rerun")
+        return cached
     if out.exists():
         attempt = 1
         while out.with_name(f"{judge}.attempt-{attempt}").exists():
@@ -205,6 +365,14 @@ def run_judge(*, scenario: dict, session_dir: Path, key: str, out_dir: Path, jud
     packet = build_packet(scenario, session_dir, key)
     common.write_json(out / "packet.json", packet)
     prompt = packet_prompt(packet)
+    if codex is not None:
+        record = {"schema": VERDICT_SCHEMA, "key": key, "judge": judge, "model_requested": model,
+                  "effort_requested": effort, "packet_sha256": common.sha256_file(out / "packet.json"),
+                  "session_dir": str(session_dir), "started": common.now_iso()}
+        record = run_codex_judge(codex, record=record, model=model, prompt=prompt, work=work,
+                                 out=out, timeout_s=timeout_s, scenario=scenario)
+        common.write_json(verdict_path, record)
+        return record
     claude = claude or common.find_claude()
     command = judge_command(claude, model, effort)
     record = {"schema": VERDICT_SCHEMA, "key": key, "judge": judge, "model_requested": model,
@@ -253,7 +421,24 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--packet-only", action="store_true")
     parser.add_argument("--rerun", action="store_true")
     parser.add_argument("--claude", help="Claude Code executable (default: common.find_claude())")
+    parser.add_argument("--codex", type=Path, help="Pinned Codex executable")
+    parser.add_argument("--codex-sha256")
+    parser.add_argument("--model-catalog", type=Path)
+    parser.add_argument("--model-catalog-sha256")
+    parser.add_argument("--codex-home", type=Path)
+    parser.add_argument("--freeze-sha256")
     args = parser.parse_args(argv)
+    pins = (args.codex, args.codex_sha256, args.model_catalog,
+            args.model_catalog_sha256, args.codex_home, args.freeze_sha256)
+    codex = None
+    if any(value is not None for value in pins):
+        if not all(value is not None for value in pins) or args.claude:
+            parser.error("Codex judging requires all six pins and excludes --claude")
+        if args.model not in CODEX_MODELS or args.effort != "medium":
+            parser.error("Codex judging requires an explicit Astra or Sol model and medium effort")
+        from run_session import CodexRunConfig
+
+        codex = CodexRunConfig(*pins)
     scenario = common.load_scenario(args.scenario)
     if args.packet_only:
         print(json.dumps(build_packet(scenario, args.session_dir, args.key), indent=1, ensure_ascii=False))
@@ -261,7 +446,8 @@ def main(argv: list[str] | None = None) -> int:
     status = 0
     for name in args.judges.split(","):
         record = run_judge(scenario=scenario, session_dir=args.session_dir, key=args.key, out_dir=args.out_dir,
-                           judge=name, model=args.model, effort=args.effort, rerun=args.rerun, claude=args.claude)
+                           judge=name, model=args.model, effort=args.effort, rerun=args.rerun,
+                           claude=args.claude, codex=codex)
         print(json.dumps({"judge": name, "status": record["status"], "cost_usd": record.get("cost_usd"),
                           "problems": record["problems"]}))
         status |= record["status"] != "valid"

@@ -38,7 +38,7 @@ class Wrapper:
     def __init__(self, *, handle: common.Handle | None, repo: str, path: str, instruction: str,
                  catalog: dict[str, dict], log_dir: Path, answer_defaults: dict | None = None,
                  parse_defaults: dict | None = None, call_timeout_s: float = 300.0,
-                 backend=None) -> None:
+                 backend=None, deadline: float | None = None) -> None:
         common.require(path in common.PATH_TOOLS, f"unknown path {path!r}")
         self.handle, self.repo, self.path = handle, repo, path
         self.instruction = instruction
@@ -59,6 +59,7 @@ class Wrapper:
         self.parse_forced = {"schema": common.PARSE_SCHEMA}
         self.parse_defaults = {"mode": "execute"} if parse_defaults is None else dict(parse_defaults)
         self.call_timeout_s = call_timeout_s
+        self.deadline = deadline
         self.backend = backend or self._cli_backend
         self.counted = 0
         self.calls = 0
@@ -111,6 +112,8 @@ class Wrapper:
                 return self._reject(tool, arguments, "arguments must be an object")
             if tool not in self.tools:
                 return self._reject(tool, arguments, f"{tool} is not available; available tools: {', '.join(self.tools)}")
+            if self.deadline is not None and time.monotonic() >= self.deadline:
+                return self._reject(tool, arguments, "evaluation turn deadline reached")
             if self.counted >= common.TURN_CAP:
                 return self._reject(tool, arguments, f"the {common.TURN_CAP}-call limit is reached; write your brief now")
             if self.counted == 0:
@@ -162,6 +165,9 @@ class Wrapper:
     MAX_TYPED_RETRIES = 8
     MAX_RETRY_WAIT_MS = 2000
 
+    def _retry_fits_deadline(self, wait_ms: int) -> bool:
+        return self.deadline is None or time.monotonic() + wait_ms / 1000 < self.deadline
+
     def _with_typed_retries(self, tool: str, sent: dict, stem: str):
         """One turn: the call, repeated while the service returns a typed retry (baseline-bookbuilder finding:
         selection_busy, publication_busy and scoped_observation_unavailable under 4 concurrent sessions).
@@ -173,9 +179,11 @@ class Wrapper:
             retry, delay_ms, code = common.typed_retry(outcome.envelope, index_id)
             if not retry:
                 break
+            wait = min(max(delay_ms, 25) * (2 ** len(retries)), self.MAX_RETRY_WAIT_MS)
+            if not self._retry_fits_deadline(wait):
+                break
             path = self.results_dir / f"{stem}.retry-{len(retries) + 1}.stdout.json"
             common.write_bytes(path, outcome.stdout)
-            wait = min(max(delay_ms, 25) * (2 ** len(retries)), self.MAX_RETRY_WAIT_MS)
             time.sleep(wait / 1000)
             retries.append({"code": code, "elapsed_ms": outcome.elapsed_ms, "waited_ms": wait,
                             "result_path": str(path), "result_sha256": common.sha256_bytes(outcome.stdout)})
@@ -199,10 +207,12 @@ class Wrapper:
             queued, after_ms, ticket_id = loop_reply.ticket_wait(body)
             if not queued or not ticket_id:
                 break
+            wait = min(max(after_ms, 250), self.MAX_TICKET_WAIT_MS)
+            if not self._retry_fits_deadline(wait):
+                break
             attaches += 1
             path = self.results_dir / f"{stem}.ticket-{attaches}.stdout.json"
             common.write_bytes(path, outcome.stdout)
-            wait = min(max(after_ms, 250), self.MAX_TICKET_WAIT_MS)
             time.sleep(wait / 1000)
             retries.append({"code": "ticket", "ticket": ticket_id, "elapsed_ms": outcome.elapsed_ms,
                             "waited_ms": wait, "result_path": str(path),
