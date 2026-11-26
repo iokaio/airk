@@ -75,11 +75,18 @@ def rank_query(response, note, inventory, union_only):
         }
         for branch, item in lexical.items()
     }
-    ranked_fusion = (
-        (item["rank"], audit.unit_span(item["citation"]) if "citation" in item
-         else inventory.get((item["path"], item["ordinal"])))
-        for item in fusion
-    )
+    note_paths = {audit.note_path(location) for location in audit.note_locations(note)}
+    ranked_fusion = []
+    for item in fusion:
+        if "citation" in item:
+            span = audit.unit_span(item["citation"])
+        elif item["path"] in note_paths:
+            key = (item["path"], item["ordinal"])
+            common.require(key in inventory, "fused vector occurrence is absent from the authenticated note inventory")
+            span = inventory[key]
+        else:
+            continue
+        ranked_fusion.append((item["rank"], span))
     return {
         "lexical": ranked_lexical,
         "fused_candidate_rank": audit.first_covering_rank(ranked_fusion, note, union_only=union_only),
@@ -122,6 +129,8 @@ def collect(args):
     vector.check_settled(args, handle, before, stage)
     return {"schema": "airk.private.branch-rank-census/1", "identity": identity, "notes": results,
             "repo": args.repo, "case": args.case,
+            "collector_sha256": common.sha256_file(Path(__file__)),
+            "shared_replay_sha256": common.sha256_file(Path(vector.__file__)),
             "input_sha256": {name: getattr(args, f"{name}_sha256") for name in
                              ("cohort", "snapshots", "audit_input", "audit_native", "handle")},
             "scope": "Lexical ranks cover scored groups before the native cut. An empty lexical roster means the "

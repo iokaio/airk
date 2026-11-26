@@ -22,5 +22,12 @@ class BranchReplay(unittest.TestCase):
             branches.focused_queries(query, {"byte_ranges": [[1, 3]], "embedded": 1})
 
 
+    def test_fusion_refuses_unknown_vector_ordinal_on_accepted_path(self):
+        note = {"path": "src/a.rs", "lines": [10, 20]}
+        response = (([], 0), {}, [{"path": "src/a.rs", "ordinal": 3, "rank": 4}], [])
+        with self.assertRaisesRegex(common.HarnessError, "absent from the authenticated note inventory"):
+            branches.rank_query(response, note, {("src/a.rs", 1): None}, False)
+
+
 if __name__ == "__main__":
     unittest.main()

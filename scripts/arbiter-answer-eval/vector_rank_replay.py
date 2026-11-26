@@ -97,6 +97,12 @@ def open_fixture(args, snapshots, *, branch_only):
                    and gpu.get("search") == "semantic_subqueries" and gpu.get("reuse_settled") is True
                    and bool(gpu.get("branch_census_only")) is branch_only,
                    "census requires the pinned roster and the reviewed focused-query profile")
+    settings = raw.get("service_environment", {})
+    expected = json.loads(search.pinned(args.audit_input, args.audit_input_sha256))
+    target_paths = sorted({path for entry in expected["collections"] for path in entry["paths"]})
+    common.require(json.loads(settings.get("AIRK_PRIVATE_VECTOR_CENSUS_PATHS", "[]")) == target_paths
+                   and settings.get("AIRK_PRIVATE_BRANCH_CENSUS_ONLY") == ("1" if branch_only else None),
+                   "dispatched native census mode or target roster differs")
     identity = search.live_identity(handle, raw, sorted(audit.REPOSITORIES))
     indexes = identity["indexes"]
     before = {repo: settled.snapshot(handle, repo, args.timeout) for repo in indexes}
