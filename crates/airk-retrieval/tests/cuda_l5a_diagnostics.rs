@@ -1175,6 +1175,228 @@ fn directory_files(directory: &Path) -> Result<Files> {
 /// winner agrees and every raw score is within the recorded tolerance.
 const L5C_FOCUS_TOLERANCE: f64 = 1e-3;
 
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FocusShortlist {
+    schema: String,
+    rows: Vec<FocusShortlistRow>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FocusShortlistRow {
+    id: String,
+    query: String,
+    candidates: Vec<Candidate>,
+}
+
+#[test]
+#[ignore = "L5C GPU: frozen 16/40 Focus shortlist through the strict native scorer"]
+fn l5c_focus_shortlist() -> Result<()> {
+    use airk_core::arbiter::FocusScore;
+    use std::collections::BTreeSet;
+
+    let started = Instant::now();
+    let deadline = deadline_from_env(900)?;
+    let (_, raw_input, input_sha) = pinned("L5C_FOCUS_SHORTLIST_INPUT")?;
+    ensure!(
+        raw_input.len() <= 64 << 20,
+        "Focus shortlist input exceeds 64 MiB"
+    );
+    let input: FocusShortlist = serde_json::from_slice(&raw_input)?;
+    ensure!(
+        input.schema == "airk.private.focus-shortlist-input/1"
+            && (1..=20).contains(&input.rows.len()),
+        "invalid Focus shortlist schema or row count"
+    );
+    let mut row_ids = BTreeSet::new();
+    for row in &input.rows {
+        let mut candidate_ids = BTreeSet::new();
+        ensure!(
+            !row.id.trim().is_empty()
+                && row_ids.insert(&row.id)
+                && !row.query.trim().is_empty()
+                && row.candidates.len() == 40
+                && row.candidates.iter().all(|candidate| {
+                    !candidate.id.trim().is_empty()
+                        && candidate_ids.insert(&candidate.id)
+                        && !candidate.text.trim().is_empty()
+                }),
+            "invalid Focus shortlist row or candidate roster"
+        );
+    }
+
+    let (_, raw_profile, profile_sha) = pinned("L5A_PROFILE")?;
+    let (_, raw_map, map_sha) = pinned("L5A_ASSET_MAP")?;
+    let profile: Profile = serde_json::from_slice(&raw_profile)?;
+    let manifest = "a3157dd1a6de8f6b5c6ea5348a7d2e53d70c0853f8d66833a12a39ca91f2d183"
+        .parse::<Sha256Digest>()?;
+    let graph = "a16fcaa1bf2d67b019b30cda56d76ba23d589c346ef2ae76d75c229ebe866810"
+        .parse::<Sha256Digest>()?;
+    ensure!(
+        profile.model == ModelChoice::FocusQwenReranker06B
+            && profile.manifest == manifest
+            && profile.max_tokens == 1024
+            && profile.max_candidates == 4
+            && profile.device_execution.is_some()
+            && profile
+                .assets
+                .iter()
+                .any(|asset| asset.role == AssetRole::Model && asset.sha256 == graph),
+        "expected the retained strict CUDA Focus 1024 W8 profile"
+    );
+    let source = files(&raw_map)?;
+    let compiler_asset = profile
+        .assets
+        .iter()
+        .find(|asset| asset.role == AssetRole::Compiler)
+        .context("Focus compiler missing")?;
+    let tokenizer_asset = profile
+        .assets
+        .iter()
+        .find(|asset| asset.role == AssetRole::Tokenizer)
+        .context("Focus tokenizer missing")?;
+    let compiler = Compiler::from_verified(
+        &source.read_asset(compiler_asset)?,
+        &source.read_asset(tokenizer_asset)?,
+    )?;
+    let capacity = plan()?;
+    let output = PathBuf::from(env("L5A_OUTPUT")?);
+    let mut receipt = json!({
+        "schema": "airk.private.focus-shortlist-cuda/1", "complete": false,
+        "input_sha256": input_sha, "profile_sha256": profile_sha,
+        "asset_map_sha256": map_sha, "model_manifest": manifest, "graph_sha256": graph,
+        "pid": std::process::id(), "image": std::env::current_exe()?,
+        "math_environment": math_environment(), "rows": [],
+        "qualification": false, "product_admission": false,
+        "gpu_process_memory": {"available": false, "reason": "The native CUDA runner measures adapter-wide memory, not process-attributed GPU memory."},
+    });
+    write_fresh(&output, &receipt)?;
+
+    let run = (|| -> Result<()> {
+        let n = native(deadline)?;
+        receipt["runtime_manifest"] = json!(n.runtime.manifest_identity());
+        let adapters = n.runtime.adapters(deadline)?;
+        ensure!(adapters.len() == 1, "exactly one CUDA adapter required");
+        let device = n.runtime.device(adapters[0].uuid, deadline)?;
+        receipt["adapter_before_open"] = json!(device.observation(deadline)?);
+        // SAFETY: the actual exclusive lease is retained by n throughout.
+        let catalog =
+            unsafe { EvaluationCatalog::from_native_lease(n.lease.clone(), vec![profile])? };
+        let execution = catalog.execution_profile(manifest)?.bind_cuda_probe(
+            device.clone(),
+            capacity,
+            deadline,
+        )?;
+        let opening = Instant::now();
+        let scorer = Scorer::open(execution, &source)?;
+        receipt["cold_open_us"] = json!(opening.elapsed().as_micros());
+        let placement = scorer
+            .device_placement()?
+            .context("CUDA placement missing")?;
+        ensure!(
+            placement.complete
+                && !placement.nodes.is_empty()
+                && placement
+                    .nodes
+                    .iter()
+                    .all(|node| node.ep == "CUDAExecutionProvider"),
+            "complete strict CUDA placement required"
+        );
+        receipt["placement"] = placement_summary(&placement);
+        receipt["execution_identity"] = json!(scorer.execution_identity()?);
+        receipt["adapter_after_open"] = json!(device.observation(deadline)?);
+        flush(&output, &receipt)?;
+
+        for row in &input.rows {
+            let mut arms = Vec::new();
+            for width in [16, 40] {
+                let arm_start = Instant::now();
+                let initial = device.observation(deadline)?;
+                let mut peak_device_used = initial.total_bytes.saturating_sub(initial.free_bytes);
+                let mut candidates = Vec::new();
+                let mut relevance = Vec::new();
+                let mut pair_wall_us = 0_u128;
+                for (index, candidate) in row.candidates[..width].iter().enumerate() {
+                    let ordinal = index + 1;
+                    let pair = Instant::now();
+                    // Use the same single-candidate compile and independent two-logit readout as Search Focus.
+                    let compiled = compiler
+                        .compile("", &row.query, std::slice::from_ref(candidate))
+                        .with_context(|| {
+                            format!("Focus width {width} ordinal {ordinal} could not compile")
+                        })?;
+                    let logits = scorer
+                        .score_with_deadline(&compiled, deadline)
+                        .with_context(|| format!("Focus width {width} ordinal {ordinal} failed"))?;
+                    scorer.synchronize(deadline)?;
+                    let pair_us = pair.elapsed().as_micros();
+                    pair_wall_us += pair_us;
+                    let [no_logit, yes_logit] = logits.as_slice() else {
+                        anyhow::bail!(
+                            "Focus width {width} ordinal {ordinal} returned invalid logit count"
+                        );
+                    };
+                    let score = FocusScore::from_logits(
+                        sha(candidate.id.as_bytes()),
+                        *no_logit,
+                        *yes_logit,
+                    )
+                    .with_context(|| {
+                        format!("Focus width {width} ordinal {ordinal} returned invalid logits")
+                    })?;
+                    let observation = device.observation(deadline)?;
+                    peak_device_used = peak_device_used.max(
+                        observation
+                            .total_bytes
+                            .saturating_sub(observation.free_bytes),
+                    );
+                    relevance.push(score.relevance);
+                    candidates.push(json!({
+                        "id": candidate.id, "ordinal": ordinal, "input_digest": compiled.input_digest,
+                        "no_logit": no_logit, "yes_logit": yes_logit, "relevance": score.relevance,
+                        "wall_us": pair_us, "adapter_free_bytes": observation.free_bytes,
+                    }));
+                }
+                let mut ranking: Vec<_> = (1..=width).collect();
+                ranking.sort_by(|&left, &right| {
+                    relevance[right - 1]
+                        .total_cmp(&relevance[left - 1])
+                        .then(left.cmp(&right))
+                });
+                arms.push(json!({
+                    "width": width, "candidates": candidates, "ranked_ordinals": ranking,
+                    "wall_us": arm_start.elapsed().as_micros(), "pair_wall_us": pair_wall_us,
+                    "adapter_before": initial,
+                    "sampled_adapter_peak_used_bytes": peak_device_used,
+                }));
+            }
+            receipt["rows"]
+                .as_array_mut()
+                .context("Focus shortlist receipt row list missing")?
+                .push(json!({"id": row.id, "arms": arms}));
+            flush(&output, &receipt)?;
+        }
+        scorer.synchronize(deadline)?;
+        ensure!(
+            scorer.device_settled() && !cuda::process_poisoned(),
+            "CUDA Focus scorer did not settle"
+        );
+        receipt["device_settled"] = json!(true);
+        drop(scorer);
+        receipt["adapter_after_release"] = json!(device.observation(deadline)?);
+        Ok(())
+    })();
+    receipt["elapsed_s"] = json!(started.elapsed().as_secs_f64());
+    receipt["process_cuda_poisoned"] = json!(cuda::process_poisoned());
+    match &run {
+        Ok(()) => receipt["complete"] = json!(true),
+        Err(error) => receipt["error"] = error_value(error),
+    }
+    flush(&output, &receipt)?;
+    run
+}
+
 /// Focus parity on the actual A6000 (review M2 of the CUDA Focus seam): the
 /// CPU Focus profile and its CUDA twin score the same compiled pairs (the
 /// worst-case full-width pair and the profile fixture's real pairs) in one

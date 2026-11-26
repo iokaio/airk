@@ -20186,3 +20186,30 @@ the follow-up reference. The wider Focus check, extraction anchors
 beyond the disposable DOCX fixture, independent embedding-route
 comparison and held-out selection remain pending. Autonomous repair
 follows index research. All Windows fixture Jobs used here settled.
+
+### 25 November 2026 — Private wider Focus diagnostic prepared
+
+The 40-candidate Search shortlist trace previously recorded citation and
+order. It did not retain the exact model windows. The opt-in test-support
+capture now uses the native bounded Focus window with the 1,024-token
+policy and records the query digest, publication, original order, full-hit
+digest and UTF-8 window. The ordinary Search trace and four-candidate
+service limit are unchanged.
+
+The private CUDA selector uses the original strict Focus 1024 W8 profile
+and fixture asset pins. It scores one pair per native dispatch for the
+first 16 and all 40 independently. The collector pins the trace,
+dual-width input and scored result, checks the shared model input digests
+and reports top-ten citation coverage for each repository. That coverage
+concerns shortlist ranking before ordinary response packing.
+
+Both scoped Windows Clippy checks passed with the pinned offline warm
+target and incremental enabled. The capture library check took 3.15 s
+and CUDA scorer check took 63.0 s before receipt auditing. The run
+reserved 34,359,738,368 bytes with 1,090,010,402,816 bytes free at
+admission and audited 114 changed outputs. Execution receipt
+`windows-completion-focus-preflight-r1/execution.json` SHA-256
+`d9b2656007f714cd2e00b3a398eefc76a2e31f9bbc429c9153acd0096142a456`.
+Repository checks and collector command parsing passed. This is diagnostic
+implementation evidence. The next action is to build the test images,
+capture the exact live cohort and run the strict CUDA comparison.

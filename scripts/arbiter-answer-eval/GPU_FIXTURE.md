@@ -903,3 +903,30 @@ identities during startup and closure. Any observed drift fails the run
 without a fresh build fallback. The new lifetime retains the original
 control root and records its reuse evidence in reused-indexes.json.
 Sealed gate roots keep their separate lifetime policy.
+
+### Step 4 wider Focus diagnostic
+
+Use the Windows x86_64 `cuda_l5a_diagnostics` image built with `gpu-cuda`
+and `test-support`, next to its authenticated CUDA runtime. Reuse the
+strict Focus 1024 W8 profile and asset map from the retained CUDA pair.
+Set `L5A_PROFILE`, `L5A_PROFILE_SHA256`, `L5A_ASSET_MAP`,
+`L5A_ASSET_MAP_SHA256`, `L5A_PLAN`, `L5A_CONTROL_PARENT`,
+`L5A_OUTPUT` (a fresh private JSON path), and `L5A_DEADLINE_S`.
+Set `L5C_FOCUS_SHORTLIST_INPUT` and `L5C_FOCUS_SHORTLIST_INPUT_SHA256`
+to the private frozen input JSON with schema
+`airk.private.focus-shortlist-input/1`. Its `rows` array contains one to
+20 objects with `id`, exact `query`, and exactly 40 ordered `candidates`
+with distinct `id` and exact model-window `text`. Freeze the original
+publication and roster in the input preparation receipt. A candidate that
+cannot compile or score fails the run.
+
+Invoke the staged native test image with
+`--ignored --exact l5c_focus_shortlist --test-threads 1`. The diagnostic
+scores the first 16 and all 40 as separate serial passes on the same
+resident CUDA scorer. Each pass retains one-based original ordinals,
+two logits, normalized relevance, ranked ordinals with original-order
+ties, and wall time for compilation and synchronized scoring. Adapter
+memory is sampled before each pass and after each pair. The native runner
+reports adapter-wide memory and separately records that per-process GPU
+memory attribution is unavailable. Keep the input and result under the
+private campaign root.

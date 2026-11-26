@@ -819,7 +819,7 @@ pub(crate) fn distinct_files_first(paths: &[&str]) -> Vec<usize> {
 /// A bounded Focus window that fits one pair: it starts at the first line that
 /// names a question identifier, ends on a char boundary, and never grows the
 /// original hit.
-pub(super) fn focus_window(text: &str, question: &str, pair_tokens: usize) -> (usize, usize) {
+pub(crate) fn focus_window(text: &str, question: &str, pair_tokens: usize) -> (usize, usize) {
     let budget = (pair_tokens * 2)
         .saturating_sub(question.len() * 2)
         .saturating_sub(320)

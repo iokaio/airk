@@ -756,7 +756,14 @@ fn search_with_switch(
             shortlist::select(&shortlist, query.limit)
         };
         #[cfg(feature = "test-support")]
-        trace_shortlist(query, &token, &shortlist, &selected);
+        {
+            trace_shortlist(query, &token, &shortlist, &selected);
+            if profile == v2::SearchProfile::WideShortlist
+                && std::env::var("AIRK_PRIVATE_FOCUS_SHORTLIST").is_ok_and(|value| value == "1")
+            {
+                trace_focus_shortlist_inputs(query, &token, &shortlist, &selected);
+            }
+        }
         incomplete |= shortlist.len() > selected.len();
         hits = selected
             .into_iter()
@@ -1327,6 +1334,45 @@ fn trace_shortlist(
             "query_sha256": format!("{:x}", Sha256::digest(query.text.as_bytes())),
             "publication": publication,
             "candidates": citations,
+            "selected": selected,
+        })
+    );
+}
+
+#[cfg(feature = "test-support")]
+fn trace_focus_shortlist_inputs(
+    query: &SearchQuery,
+    publication: &CurrentToken,
+    candidates: &[(Hit, bool)],
+    selected: &[usize],
+) {
+    use airk_core::arbiter::resource_policy::ResourcePolicy;
+    use sha2::{Digest, Sha256};
+
+    let pair_input_tokens = ResourcePolicy::focus_static1024().focus_pair_input_tokens;
+    let candidates: Vec<_> = candidates
+        .iter()
+        .enumerate()
+        .map(|(ordinal, (hit, _))| {
+            let (utf8_start, utf8_end) =
+                crate::arbiter::software::focus_window(&hit.text, &query.text, pair_input_tokens);
+            serde_json::json!({
+                "ordinal": ordinal,
+                "citation": &hit.citation,
+                "hit_text_sha256": format!("{:x}", Sha256::digest(hit.text.as_bytes())),
+                "utf8_start": utf8_start,
+                "utf8_end": utf8_end,
+                "window_text": &hit.text[utf8_start..utf8_end],
+            })
+        })
+        .collect();
+    eprintln!(
+        "AIRK_FOCUS_SHORTLIST_INPUTS {}",
+        serde_json::json!({
+            "query_sha256": format!("{:x}", Sha256::digest(query.text.as_bytes())),
+            "publication": publication,
+            "pair_input_tokens": pair_input_tokens,
+            "candidates": candidates,
             "selected": selected,
         })
     );

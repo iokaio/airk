@@ -721,6 +721,26 @@ enabled minus the change with Focus disabled. Read it alongside cache and
 fixed-arm-order limits, and for an experimental index, the changed
 publications. The report does not contain query text or excerpts.
 
+### Private Focus shortlist inputs
+
+For the wider Focus diagnostic, a test-support service can set
+`AIRK_PRIVATE_FOCUS_SHORTLIST=1` with `wide_shortlist`. This adds an
+`AIRK_FOCUS_SHORTLIST_INPUTS` record to the private service log whenever the
+40-candidate shortlist is formed. It binds the SHA-256 of the exact query
+text, the publication, the 1024-token pair width, the ordered candidate
+citations, and the selected zero-based ordinals. Each candidate contains
+its zero-based ordinal, full hit-text hash, and the exact bounded Focus
+window text with its UTF-8 byte range. The window uses the native bounded
+Focus rule. The ordinary shortlist trace remains available.
+
+Use this capture only in the isolated evaluation service with the pinned
+development scope, query cohort, and CUDA Focus profile. The log contains
+private source excerpts. Keep it and any input extracts under checked
+private campaign storage, outside staging, packaging, and judged sessions.
+Record its hash in diagnostic receipts. This capture establishes the
+input to the proposed wider scoring experiment. A separate execution
+receipt must establish actual model work, device, and timing.
+
 ### Committed vector passage coverage
 
 `search_vector_audit.py` takes the SHA-256-pinned Search cohort and a

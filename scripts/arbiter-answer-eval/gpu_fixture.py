@@ -303,6 +303,8 @@ def worker(args):
     FX.ENVIRONMENT.update(vector_census_environment(args.vector_census_input, args.vector_census_sha256))
     if args.branch_census_only:
         FX.ENVIRONMENT["AIRK_PRIVATE_BRANCH_CENSUS_ONLY"] = "1"
+    if args.private_focus_shortlist:
+        FX.ENVIRONMENT["AIRK_PRIVATE_FOCUS_SHORTLIST"] = "1"
     if args.synthetic_root:
         FX.REPOSITORIES[SYNTHETIC] = Path(args.synthetic_root)
         FX.EXCLUSIONS[SYNTHETIC] = []
@@ -367,6 +369,11 @@ def start(args):
     capture = card_capture_environment(args.card_capture, args.model, args.dispatch_observer)
     census = vector_census_environment(args.vector_census_input, args.vector_census_sha256)
     require(not args.branch_census_only or bool(census), "branch census requires a pinned target roster")
+    if args.private_focus_shortlist:
+        require(args.reuse_settled and args.model == PAIR and args.search == "wide_shortlist"
+                and tuple(args.repositories) == tuple(FX.DEFAULT_REPOSITORIES)
+                and not (args.branch_census_only or capture or census or args.synthetic_root),
+                "private Focus shortlist requires the settled CUDA pair with only wide_shortlist")
     if census:
         require(args.reuse_settled and tuple(args.repositories) == tuple(FX.DEFAULT_REPOSITORIES),
                 "vector census requires the settled evaluation pair")
@@ -394,6 +401,7 @@ def start(args):
         **({"search": args.search} if args.search is not None else {}),
         **({"vector_census_sha256": args.vector_census_sha256} if census else {}),
         **({"branch_census_only": True} if args.branch_census_only else {}),
+        **({"private_focus_shortlist": True} if args.private_focus_shortlist else {}),
         "cuda": ({"pair": str(args.pair), "pair_sha256": args.pair_sha256} if pair
                  else {k: str(v) for k, v in MODELS[args.model].items()}),
         "cuda_rows": pair["profiles"] if pair else CUDA_PROFILES,
@@ -416,6 +424,8 @@ def start(args):
                  "--vector-census-sha256", args.vector_census_sha256]
     if args.branch_census_only:
         argv.append("--branch-census-only")
+    if args.private_focus_shortlist:
+        argv.append("--private-focus-shortlist")
     if args.seed_cpu:
         argv += ["--seed-cpu", args.seed_cpu]
     if args.synthetic_root:
@@ -681,6 +691,8 @@ def main():
         sub.add_argument("--vector-census-input", type=Path)
         sub.add_argument("--vector-census-sha256")
         sub.add_argument("--branch-census-only", action="store_true")
+        sub.add_argument("--private-focus-shortlist", action="store_true",
+                         help="capture exact private pair input windows on the settled wide shortlist")
         sub.add_argument("--reuse-settled", action="store_true",
                          help="require unchanged settled indexes on a same-install CUDA restart")
         sub.add_argument("--seed-cpu", choices=SEEDS)
