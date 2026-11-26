@@ -20784,3 +20784,70 @@ Twenty-eight focused Python checks passed with no installed service,
 credentials or hosted sessions. The exact commands and result log
 are in L5C/codex-stage-a-freeze-treatment-pure-r1. Execution SHA-256
 is 066f88c1274ebf66fe73830ce0604b58b8fcd5ce1eb4bb9aa2496af6b619a9a7.
+
+### 25 November 2026 — Same-request lexical recovery components
+
+Standalone singleton Window Search can carry its original arrival,
+ordinary allowance and hard deadline privately through the current
+in-process worker. The one-shot handoff matches the actually emitted
+read carrier, selected worker, request and scope. Carried, nested,
+foreign or unknown timing leaves the deferred path. No public frame
+field changed. The admission keeps the earlier of the hard deadline
+and twice the original allowance from arrival. The bounded wait retains
+the ordinary reply, stops on cancellation or its deadline and leaves
+Verify's work under its existing owner. A matching verified repair can
+spend one replay credit. The replay requires the exact successor
+publication and stored citation identity. An absent or late verified
+result leaves the ordinary response available.
+
+The Store completion path now produces an exact verified event even
+when no request is waiting. Current code can use actual observed
+completion and ordinary same-publication cited lookup times for the
+narrow class. It retains the native five-second delivery reserve under
+the original hard deadline. The observed times are admission inputs.
+They are not a p95 qualification or a deterministic storage sync bound.
+
+On Windows the all-feature, all-target Clippy run for Store, Kernel,
+MCP, Host, Frontend, Supervisor and Service passed in 73.697 s. Native
+Nextest ci passed all 10 selected tests, with 1,824 skipped, in 264.058 s
+including build. The selected cases cover one-shot provenance, changed
+worker/scope or carrier refusal, cancellation, 100 ms to 200 ms and
+150 ms timing caps, expiry and fallback, exact receipt notification,
+and ordinary canonical Kernel replay to the successor. The checked
+Windows owner audited 4,196 outputs. The warm target, incremental
+settings, command and timing receipt are in
+L5C/windows-completion-lexical-foreground-preflight-r1. Source SHA-256
+is 5a1228eb0b7a54b88005df87cc0e9cc4853d54f3439143d48bb5313dc63c6dce and
+execution SHA-256 is d86fc3f7d0e59629a718198eaf6b90b32974afa04521edf1fe63bca38c7874b8.
+
+The external Windows ToolsCall fixture is the next acceptance check. It
+uses the real singleton Window scope, a prior observed deferred repair
+and a healthy exact lookup on the same worker, then requires the first
+external Search after an independent omission to return the verified
+citation. Component passes alone do not qualify that transport or the
+ordinary workload's latency gate.
+
+#### Real first Window ToolsCall
+
+The separate Windows CLI fixture passed through the ordinary native
+M3 pipe. It selected the real singleton Window scope, held the old
+pinned publication and observed the same worker/epoch. Its first
+injected row omission used deferred repair. An exact ordinary Search
+on its successor supplied the healthy timing sample. After the second
+omission, one external Search returned the repaired original UTF-8
+citation, line and content hash under required verification. Native
+Verify settled once with the exact successor generation and digest.
+The healthy control and legitimate no-match held on the same fixture.
+
+The Windows all-feature CLI ToolsCall test Clippy passed in 39.170 s.
+Nextest ci selected one test and skipped 30. It passed in 16.937 s.
+The full command including compilation took 289.816 s. The checked
+owner used the existing short private fixture parent and warm target,
+retained exact timings and audited 4,184 changes. Evidence is in
+L5C/windows-completion-first-window-replay-r1. The source receipt is
+47fa696c42708b98fc4422d30a0b9a9f2ed0bef3563107579a076c0fa47a91e8 and
+execution SHA-256 is a785505f73189bfe468376ec8ef1239b998da68765675ca646c2ec8f040a354d.
+
+This qualifies the first-call behavior for the exercised singleton
+Window and missing-row class. Ordinary-workload p95, broader fault
+coverage and external slow and cancellation scenarios remain open.

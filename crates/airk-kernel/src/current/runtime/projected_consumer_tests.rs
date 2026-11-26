@@ -786,28 +786,38 @@ fn automatic_verify_restores_missing_plain_fts_before_canonical_search() -> Resu
     let selected = kernel
         .refresh_service_snapshot()?
         .with_lexical_nomination_checkpoint(|| Ok(()));
-    let exact = |text: &str| {
-        selected.search_response_with_filters(
-            &SearchQuery {
-                text: text.into(),
-                path_prefix: Some(TARGET.into()),
-                limit: 2,
-                max_bytes: 4096,
-            },
+    let query = |text: &str| SearchQuery {
+        text: text.into(),
+        path_prefix: Some(TARGET.into()),
+        limit: 2,
+        max_bytes: 4096,
+    };
+    let exact = |request: &Kernel, text: &str| {
+        request.search_response_with_filters(
+            &query(text),
             crate::current::CurrentSearchMode::Lexical,
             None,
             &airk_core::SearchFilters::default(),
         )
     };
-    assert!(exact("unmatchedneedle")?.hits.is_empty());
+    assert!(exact(&selected, "unmatchedneedle")?.hits.is_empty());
     assert!(kernel.lexical_audit.lock().unwrap().pending_search_arm().is_none());
-
     let damaged = Connection::open_with_flags(&database, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
     assert_eq!(damaged.execute("DELETE FROM fts WHERE rowid=?1", [target])?, 1);
     assert_eq!(fts_rows(&damaged)?, (0, 1));
     drop(damaged);
-    for _ in 0..2 {
-        let reply = exact("repairneedle")?;
+    let (send, receive) = std::sync::mpsc::sync_channel(1);
+    let (waiting, reservation) = selected.clone().with_lexical_repair_waiter(
+        idle_token,
+        std::time::Instant::now() + std::time::Duration::from_secs(10),
+        move |verified| {
+            let _ = send.try_send(verified);
+        },
+    );
+    let ordinary = exact(&waiting, "repairneedle")?;
+    assert!(reservation.is_registered());
+    let duplicate = exact(&selected, "repairneedle")?;
+    for reply in [&ordinary, &duplicate] {
         assert_eq!(reply.generation, idle_token.sequence);
         assert!(!reply.truncated && reply.hits.is_empty());
     }
@@ -834,7 +844,24 @@ fn automatic_verify_restores_missing_plain_fts_before_canonical_search() -> Resu
     let token = store.plain_read()?.token();
     assert_eq!(token.sequence, idle_token.sequence + 1);
     assert_eq!(token.digest, recovered.revision().revision);
-    let reply = exact("repairneedle")?;
+    let notice = receive.try_recv().context("verified repair did not notify the reader")?;
+    assert_eq!(notice.old, idle_token);
+    assert_eq!(notice.new, token);
+    assert!(!notice.elapsed.is_zero());
+    let corrected = selected
+        .replay_verified_lexical_repair(
+            notice,
+            &ordinary,
+            &query("repairneedle"),
+            None,
+            &airk_core::SearchFilters::default(),
+            false,
+        )?
+        .context("one-shot canonical replay declined the verified citation")?;
+    assert_eq!(corrected.evidence.generation, token.sequence);
+    assert_eq!(corrected.evidence.hits[0].citation.path, TARGET);
+    let reply = exact(&selected, "repairneedle")?;
+    assert!(selected.observed_lexical_repair_times().is_some());
     assert_eq!(reply.generation, token.sequence);
     let [hit] = reply.hits.as_slice() else {
         anyhow::bail!("expected one exact Search hit after nominated repair");

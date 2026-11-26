@@ -108,6 +108,7 @@ pub struct Kernel {
     read_scope: Option<Arc<scoped_reads::SessionScope>>,
     verification_cancellation: Option<Arc<std::sync::atomic::AtomicBool>>,
     lexical_nomination_checkpoint: Option<LexicalNominationCheckpoint>,
+    lexical_repair_reservation: Option<LexicalRepairReservation>,
     progress: Option<ProgressObserver>,
     rebuild_observer: Option<Arc<rebuild_observation::RebuildObserver>>,
     arbiter_context: Option<Arc<arbiter::NativeContext>>,
@@ -118,6 +119,7 @@ pub struct Kernel {
     service_collection: Option<airk_store::service::collection::Collection>,
     service_selection: Option<Arc<airk_store::service::collection::Selection>>,
     service_freshness: Option<Arc<service_freshness::Cache>>,
+    lexical_repair_timing: Arc<std::sync::Mutex<Option<LexicalRepairTiming>>>,
     lexical_audit: Arc<
         std::sync::Mutex<airk_store::service::collection::integrity::LexicalAuditCursor>,
     >,
@@ -137,6 +139,35 @@ struct SplitKernelAuthority {
 
 type ProgressObserver = Arc<dyn Fn(&airk_core::readiness::IndexProgress) + Send + Sync>;
 type LexicalNominationCheckpoint = Arc<dyn Fn() -> Result<()> + Send + Sync>;
+
+type LexicalRepairCallback =
+    Box<dyn FnOnce(airk_store::service::collection::integrity::VerifiedLexicalRepair) + Send>;
+
+struct LexicalRepairTiming {
+    publication: airk_store::current::CurrentToken,
+    settings: airk_core::identity::Sha256Digest,
+    repair: std::time::Duration,
+    replay: Option<std::time::Duration>,
+}
+
+struct LexicalRepairRegistration {
+    publication: airk_store::current::CurrentToken,
+    deadline: std::time::Instant,
+    callback: Option<LexicalRepairCallback>,
+    waiter: Option<airk_store::service::collection::integrity::LexicalAuditWaiter>,
+}
+
+/// Request-owned observation of the maintenance owner's verified repair.
+#[derive(Clone)]
+pub struct LexicalRepairReservation(Arc<std::sync::Mutex<LexicalRepairRegistration>>);
+
+impl LexicalRepairReservation {
+    pub fn is_registered(&self) -> bool {
+        self.0.try_lock().is_ok_and(|state| state.waiter.is_some())
+    }
+}
+
+
 
 #[cfg(windows)]
 fn managed_data_path(path: PathBuf) -> Result<PathBuf> {
@@ -405,6 +436,7 @@ impl Kernel {
             read_scope: None,
             verification_cancellation: None,
             lexical_nomination_checkpoint: None,
+            lexical_repair_reservation: None,
             progress: None,
             rebuild_observer: None,
             arbiter_context: None,
@@ -416,6 +448,7 @@ impl Kernel {
             service_selection: None,
             service_freshness: None,
             lexical_audit: Arc::default(),
+            lexical_repair_timing: Arc::default(),
             split_authority: None,
             native_owner: Arc::new(std::sync::Mutex::new(None)),
         };
@@ -467,6 +500,7 @@ impl Kernel {
             read_scope: None,
             verification_cancellation: None,
             lexical_nomination_checkpoint: None,
+            lexical_repair_reservation: None,
             progress: None,
             rebuild_observer: None,
             arbiter_context: None,
@@ -478,6 +512,7 @@ impl Kernel {
             service_selection: None,
             service_freshness: None,
             lexical_audit: Arc::default(),
+            lexical_repair_timing: Arc::default(),
             split_authority: None,
             native_owner: Arc::new(std::sync::Mutex::new(None)),
         };

@@ -459,6 +459,24 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
                     continue;
                 }
             };
+            let read_context = read_context.map(|context| {
+                if state.execution.is_some()
+                    && purpose == SessionPurpose::Evidence
+                    && request.native.is_none()
+                    && request.context_partition.is_none()
+                    && request.answer_partition.is_none()
+                    && matches!(request.tool.as_str(), "search" | "airk_search")
+                    && let (Some(wire), Some(scope)) = (wire_attempt, grant.scope)
+                    && let Some(origin) = airk_host::read_attempt::claim_lexical_repair(
+                        wire,
+                        airk_host::read_attempt::LexicalRepairConsumer { worker: state.identity, scope },
+                    )
+                {
+                    context.with_claimed_lexical_repair(origin)
+                } else {
+                    context
+                }
+            });
             tools.restore_status_receipt(request.status_receipt);
             // The permit and revision materialization survive transport cancellation.
             let native_read = request.native.is_some();

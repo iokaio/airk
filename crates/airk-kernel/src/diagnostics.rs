@@ -259,6 +259,123 @@ impl Kernel {
         self
     }
 
+    /// Observed repair and canonical lookup times for this exact publication.
+    pub fn observed_lexical_repair_times(
+        &self,
+    ) -> Option<(
+        airk_store::current::CurrentToken,
+        airk_core::identity::Sha256Digest,
+        std::time::Duration,
+        std::time::Duration,
+    )> {
+        let state = self.lexical_repair_timing.try_lock().ok()?;
+        let observed = state.as_ref()?;
+        Some((observed.publication, observed.settings, observed.repair, observed.replay?))
+    }
+
+    pub(crate) fn observe_lexical_replay_time(
+        &self,
+        query: &airk_core::SearchQuery,
+        filters: &airk_core::SearchFilters,
+        response: &airk_core::SearchResponse,
+        elapsed: std::time::Duration,
+    ) {
+        use airk_core::search_execution::{RequestedMode, ServedMode};
+
+        let [hit] = response.hits.as_slice() else { return };
+        if elapsed.is_zero()
+            || response.truncated
+            || hit.truncated
+            || *filters != airk_core::SearchFilters::default()
+            || query.path_prefix.as_deref() != Some(hit.citation.path.as_str())
+            || !response.execution.as_ref().is_some_and(|execution| {
+                execution.requested_mode == RequestedMode::Lexical
+                    && execution.served_mode == ServedMode::Lexical
+                    && !execution.incomplete
+            })
+        {
+            return;
+        }
+        if let Some(publication) = response.publication.as_ref()
+            && let Ok(mut state) = self.lexical_repair_timing.try_lock()
+            && let Some(observed) = state.as_mut()
+            && (publication.incarnation, publication.generation, publication.revision)
+                == (observed.publication.incarnation, observed.publication.sequence, observed.publication.digest)
+        {
+            observed.replay = Some(observed.replay.map_or(elapsed, |previous| previous.max(elapsed)));
+        }
+    }
+
+    /// Attach a bounded waiter to an admitted external Search only.
+    pub fn with_lexical_repair_waiter(
+        mut self,
+        publication: airk_store::current::CurrentToken,
+        deadline: std::time::Instant,
+        callback: impl FnOnce(airk_store::service::collection::integrity::VerifiedLexicalRepair)
+            + Send
+            + 'static,
+    ) -> (Self, crate::LexicalRepairReservation) {
+        let reservation = crate::LexicalRepairReservation(std::sync::Arc::new(
+            std::sync::Mutex::new(crate::LexicalRepairRegistration {
+                publication,
+                deadline,
+                callback: Some(Box::new(callback)),
+                waiter: None,
+            }),
+        ));
+        self.lexical_repair_reservation = Some(reservation.clone());
+        (self, reservation)
+    }
+
+    /// Replay once on the expected successor and require the verified cited span.
+    pub fn replay_verified_lexical_repair(
+        &self,
+        notice: airk_store::service::collection::integrity::VerifiedLexicalRepair,
+        original: &airk_core::SearchResponse,
+        query: &airk_core::SearchQuery,
+        snippet_bytes: Option<usize>,
+        filters: &airk_core::SearchFilters,
+        automatic_limit: bool,
+    ) -> Result<Option<crate::current::SearchWithDefinitionsResponse>> {
+        use sha2::{Digest, Sha256};
+        let Some(old) = original.publication.as_ref() else {
+            return Ok(None);
+        };
+        if (old.incarnation, old.generation, old.revision)
+            != (notice.old.incarnation, notice.old.sequence, notice.old.digest)
+            || notice.old.incarnation != notice.new.incarnation
+        {
+            return Ok(None);
+        }
+        let mut selected = self.refresh_service_snapshot()?;
+        selected.lexical_nomination_checkpoint = None;
+        selected.lexical_repair_reservation = None;
+        let reply = selected.search_response_with_adaptive_limit(
+            query,
+            crate::current::CurrentSearchMode::Lexical,
+            snippet_bytes,
+            filters,
+            automatic_limit,
+        )?;
+        let Some(new) = reply.evidence.publication.as_ref() else {
+            return Ok(None);
+        };
+        if (new.incarnation, new.generation, new.revision)
+            != (notice.new.incarnation, notice.new.sequence, notice.new.digest)
+        {
+            return Ok(None);
+        }
+        for hit in &reply.evidence.hits {
+            let digest = airk_core::identity::Sha256Digest::from_bytes(
+                Sha256::digest(serde_json::to_vec(&hit.citation)?).into(),
+            );
+            if digest == notice.citation_sha256 {
+                return Ok(Some(reply));
+            }
+        }
+        Ok(None)
+    }
+
     pub(crate) fn nominate_lexical_search_miss(
         &self,
         read: &airk_store::current::CurrentRead,
@@ -296,6 +413,16 @@ impl Kernel {
             && let Ok(mut cursor) = self.lexical_audit.try_lock()
         {
             checkpoint()?;
+            if let Some(reservation) = self.lexical_repair_reservation.as_ref()
+                && let Ok(mut state) = reservation.0.try_lock()
+                && read.token()? == state.publication
+                && let Some(callback) = state.callback.take()
+            {
+                state.waiter = cursor.note_search_miss_with_waiter(
+                    candidate, state.deadline, callback,
+                );
+                return Ok(state.waiter.is_some());
+            }
             return Ok(cursor.note_search_miss(candidate));
         }
         Ok(false)
@@ -481,6 +608,22 @@ impl Kernel {
                 |read| self.attach_source_policy_read(read),
                 crate::service_execution::checkpoint,
             )?;
+            let delivery = cursor.take_verified_search_completion();
+            drop(cursor);
+            if let Some(delivery) = delivery {
+                let notice = delivery.notice();
+                if !notice.elapsed.is_zero()
+                    && let Ok(mut timing) = self.lexical_repair_timing.try_lock()
+                {
+                    *timing = Some(crate::LexicalRepairTiming {
+                        publication: notice.new,
+                        settings: notice.settings_sha256,
+                        repair: notice.elapsed,
+                        replay: None,
+                    });
+                }
+                delivery.notify();
+            }
         }
         let selected = collection.selected_store()?;
         let mut writer = selected.lock()?;

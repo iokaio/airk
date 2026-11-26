@@ -9,6 +9,9 @@ use std::{
 };
 use tokio_util::sync::CancellationToken;
 
+pub(crate) mod lexical_repair;
+pub use lexical_repair::LexicalRepairOrigin;
+
 const SELECTION_WAIT: Duration = Duration::from_millis(50);
 pub type WorkerReapObserver =
     Arc<dyn Fn(airk_core::service::WorkerIdentity) -> anyhow::Result<bool> + Send + Sync>;
@@ -92,6 +95,12 @@ pub struct ReadAttemptContext {
     native_unsettled: Arc<AtomicBool>,
     read_ceiling: Duration,
     answer_call: Arc<AtomicBool>,
+    standalone_lexical_repair: Option<Arc<lexical_repair::StandaloneLexicalRepair>>,
+    lexical_repair_selection: Option<(
+        airk_core::scoped_reads::SelectionScopeRef,
+        airk_core::index_catalog::IndexId,
+    )>,
+    claimed_lexical_repair: Option<Arc<lexical_repair::ClaimedLexicalRepair>>,
 }
 
 impl ReadAttemptContext {
@@ -119,6 +128,9 @@ impl ReadAttemptContext {
             native_unsettled: Arc::new(AtomicBool::new(false)),
             read_ceiling: airk_core::read_attempt::MAX_READ_BUDGET,
             answer_call: Arc::new(AtomicBool::new(false)),
+            standalone_lexical_repair: None,
+            lexical_repair_selection: None,
+            claimed_lexical_repair: None,
         }
     }
 
@@ -130,6 +142,99 @@ impl ReadAttemptContext {
             read_ceiling: ceiling,
             ..Self::new(Instant::now() + ceiling, canceled)
         }
+    }
+
+    /// Available only to native M3 when an original parent wasn't supplied.
+    /// Capture arrival and the default allowance from the same minting sample.
+    pub fn for_standalone_tools_call(tool: &str, canceled: CancellationToken) -> Self {
+        let arrival = Instant::now();
+        let allowance = airk_core::read_attempt::read_budget_for_tool(tool);
+        let mut context = Self::new(arrival + allowance, canceled).with_read_ceiling(allowance);
+        if matches!(tool, "search" | "airk_search") {
+            context.standalone_lexical_repair = Some(Arc::new(
+                lexical_repair::StandaloneLexicalRepair::new(arrival, allowance),
+            ));
+        }
+        context
+    }
+
+    pub fn can_bind_standalone_lexical_repair(&self) -> bool {
+        self.standalone_lexical_repair.is_some()
+            && self.lexical_repair_selection.is_none()
+            && self.wire_attempt.is_none()
+            && self.context_partition.is_none()
+            && self.answer_partition.is_none()
+    }
+
+    /// The service calls this once after singleton selection, before sending
+    /// the existing native attempt. The actual redeemed scope is checked later.
+    pub fn bind_standalone_lexical_repair(
+        self,
+        request_id: airk_core::identity::Incarnation,
+        selection: airk_core::scoped_reads::SelectionScopeRef,
+        index: airk_core::index_catalog::IndexId,
+    ) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            self.can_bind_standalone_lexical_repair(),
+            "standalone lexical repair requires a fresh singleton origin"
+        );
+        let mut context = self.with_request_id(request_id)?;
+        context.lexical_repair_selection = Some((selection, index));
+        Ok(context)
+    }
+
+    /// The selected frontend offers this at most once, using the scope of the
+    /// exact worker connection and the ID already present on its emitted frame.
+    pub fn take_lexical_repair_origin(
+        &self,
+        request_id: airk_core::identity::Incarnation,
+        scope: airk_core::service::ScopedReadRef,
+    ) -> Option<LexicalRepairOrigin> {
+        if self.request_id != Some(request_id)
+            || self.lexical_repair_selection != Some((scope.selection, scope.index_id))
+            || self.wire_attempt.is_some()
+            || self.context_partition.is_some()
+            || self.answer_partition.is_some()
+            || self.canceled.is_cancelled()
+        {
+            return None;
+        }
+        self.standalone_lexical_repair
+            .as_ref()?
+            .offer(request_id, self.deadline, &self.canceled)
+    }
+
+    /// Accept private provenance only after native worker admission matches
+    /// the exact frame and scope. Ordinary read cancellation is left intact.
+    pub fn with_claimed_lexical_repair(mut self, origin: LexicalRepairOrigin) -> Self {
+        if self.claimed_lexical_repair.is_none()
+            && self.wire_attempt.is_some()
+            && self.request_id == Some(origin.request_id())
+            && self.is_live()
+            && self.context_partition.is_none()
+            && self.answer_partition.is_none()
+        {
+            self.claimed_lexical_repair = origin.claim(self.deadline).map(Arc::new);
+        }
+        self
+    }
+
+    pub(crate) fn take_lexical_repair_admission(
+        &self,
+    ) -> Option<lexical_repair::LexicalRepairAdmission> {
+        if !self.is_live() || self.context_partition.is_some() || self.answer_partition.is_some() {
+            return None;
+        }
+        self.claimed_lexical_repair
+            .as_ref()?
+            .take()?
+            .narrow_to(self.deadline)
+    }
+
+    pub(crate) fn lexical_repair_cancellation(&self) -> Option<&CancellationToken> {
+        self.claimed_lexical_repair
+            .as_ref()
+            .map(|claim| claim.cancellation())
     }
 
     /// A transport context minted before the tool is known (an HTTP request

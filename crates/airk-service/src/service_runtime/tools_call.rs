@@ -28,7 +28,7 @@ pub(super) fn read_context(
 ) -> Result<ReadAttemptContext> {
     let context = match attempt {
         Some(attempt) => airk_host::read_attempt::decode_for_tool(attempt, tool)?,
-        None => ReadAttemptContext::for_tool(tool, Default::default()),
+        None => ReadAttemptContext::for_standalone_tools_call(tool, Default::default()),
     };
     require_live(&context)?;
     Ok(context)
@@ -238,6 +238,12 @@ pub(super) async fn selection_read(
     }
     let (backend, arguments) = match grant.selection.index_ids.as_slice() {
         [index_id] if !uses_combined_arguments(&arguments) => {
+            let standalone_lexical = context.can_bind_standalone_lexical_repair()
+                && matches!(tool.as_str(), "search" | "airk_search")
+                && arguments.get("mode").and_then(Value::as_str) == Some("lexical")
+                && !["revision", "publication", "limit_per_index"]
+                    .iter()
+                    .any(|key| arguments.contains_key(*key));
             let arguments = match single_index_arguments(arguments) {
                 Ok(arguments) => arguments,
                 Err(refusal) => return Ok(refusal),
@@ -251,6 +257,14 @@ pub(super) async fn selection_read(
                 &grant.selection.index_ids,
             )
             .map_err(SelectionRead::Failed)?;
+            if standalone_lexical
+                && context.can_bind_standalone_lexical_repair()
+                && let Ok(id) = airk_kernel::service_broker::new_instance_id()
+            {
+                context = context
+                    .bind_standalone_lexical_repair(id, grant.selection_ref, *index_id)
+                    .map_err(SelectionRead::Failed)?;
+            }
             (
                 single_selection_backend(state, grant, *index_id, client).await?,
                 arguments,

@@ -13,9 +13,10 @@ use airk_core::{
     identity::{ArtifactId, Sha256Digest},
 };
 use anyhow::{Context, Result, ensure};
+use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeSet, VecDeque},
-    sync::Arc,
+    sync::{Arc, Mutex, Weak},
     time::{Duration, Instant},
 };
 
@@ -33,6 +34,7 @@ pub enum LexicalAuditArm {
 
 /// Request-derived identity only. Independent Verify must authenticate the
 /// retained chunk and controls before using it as evidence of a defect.
+#[derive(Clone, PartialEq, Eq)]
 pub struct LexicalSearchNomination {
     head: CurrentToken,
     artifact: ArtifactId,
@@ -57,6 +59,93 @@ impl LexicalSearchNomination {
     }
 }
 
+/// A notification binds the verified old and new snapshots and the exact row.
+/// The ordinary request still has to replay against the new snapshot and match
+/// the cited identity under its own scope, budgets and filters.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VerifiedLexicalRepair {
+    pub old: CurrentToken,
+    pub new: CurrentToken,
+    pub artifact: ArtifactId,
+    pub ordinal: u32,
+    pub stable_id: Sha256Digest,
+    pub citation_sha256: Sha256Digest,
+    pub settings_sha256: Sha256Digest,
+    /// Observation only, from first live enqueue through verified closure.
+    pub elapsed: Duration,
+}
+
+type SearchRepairCallback = Box<dyn FnOnce(VerifiedLexicalRepair) + Send>;
+
+struct SearchWaiter {
+    callback: Mutex<Option<SearchRepairCallback>>,
+}
+
+/// Keep this handle only for the lifetime of a refreshable request's wait.
+/// Dropping it releases the callback and leaves the deferred repair eligible.
+#[must_use]
+pub struct LexicalAuditWaiter {
+    waiter: Arc<SearchWaiter>,
+}
+
+impl Drop for LexicalAuditWaiter {
+    fn drop(&mut self) {
+        let callback = self
+            .waiter
+            .callback
+            .lock()
+            .ok()
+            .and_then(|mut value| value.take());
+        drop(callback);
+    }
+}
+
+struct RegisteredSearchWaiter {
+    nomination: LexicalSearchNomination,
+    deadline: Instant,
+    waiter: Weak<SearchWaiter>,
+}
+
+impl RegisteredSearchWaiter {
+    fn live(&self, now: Instant) -> bool {
+        now < self.deadline && self.waiter.strong_count() != 0
+    }
+}
+
+/// Take under the cursor lock and deliver after releasing it. The callback
+/// must only signal the waiting request and must return promptly.
+#[must_use]
+pub struct LexicalAuditDelivery {
+    repair: VerifiedLexicalRepair,
+    listeners: Vec<RegisteredSearchWaiter>,
+}
+
+impl LexicalAuditDelivery {
+    pub fn notice(&self) -> VerifiedLexicalRepair {
+        self.repair
+    }
+
+    pub fn notify(self) {
+        for listener in self.listeners {
+            if Instant::now() < listener.deadline
+                && let Some(waiter) = listener.waiter.upgrade()
+                && let Some(callback) = waiter
+                    .callback
+                    .lock()
+                    .ok()
+                    .and_then(|mut value| value.take())
+            {
+                callback(self.repair);
+            }
+        }
+    }
+}
+
+struct QueuedSearchNomination {
+    nomination: LexicalSearchNomination,
+    enqueued: Instant,
+}
+
 /// Cursor stays with this live worker. A replacement starts its own sweep.
 #[derive(Default)]
 pub struct LexicalAuditCursor {
@@ -64,9 +153,11 @@ pub struct LexicalAuditCursor {
     after: Option<String>,
     recent: BTreeSet<String>,
     search_head: Option<CurrentToken>,
-    search: VecDeque<LexicalSearchNomination>,
+    search: VecDeque<QueuedSearchNomination>,
     seen_search: BTreeSet<ArtifactId>,
     search_arm_pending: bool,
+    search_waiters: Vec<RegisteredSearchWaiter>,
+    search_completion: Option<LexicalAuditDelivery>,
 }
 
 impl LexicalAuditCursor {
@@ -125,9 +216,77 @@ impl LexicalAuditCursor {
         {
             return false;
         }
-        self.search.push_back(nomination);
+        self.search.push_back(QueuedSearchNomination {
+            nomination,
+            enqueued: Instant::now(),
+        });
         self.search_arm_pending = true;
         true
+    }
+
+    /// In addition to ordinary deferred enqueue, accept one listener from a
+    /// refreshable request. Explicit publication pins use note_search_miss.
+    pub fn note_search_miss_with_waiter(
+        &mut self,
+        nomination: LexicalSearchNomination,
+        deadline: Instant,
+        notify: impl FnOnce(VerifiedLexicalRepair) + Send + 'static,
+    ) -> Option<LexicalAuditWaiter> {
+        if !self
+            .search
+            .iter()
+            .any(|queued| queued.nomination == nomination)
+            && !self.note_search_miss(nomination.clone())
+        {
+            return None;
+        }
+        let now = Instant::now();
+        self.search_waiters.retain(|listener| listener.live(now));
+        if now >= deadline || self.search_waiters.len() >= MAX_RECENT_PATHS {
+            return None;
+        }
+        let waiter = Arc::new(SearchWaiter {
+            callback: Mutex::new(Some(Box::new(notify))),
+        });
+        self.search_waiters.push(RegisteredSearchWaiter {
+            nomination,
+            deadline,
+            waiter: Arc::downgrade(&waiter),
+        });
+        Some(LexicalAuditWaiter { waiter })
+    }
+
+    pub fn take_verified_search_completion(&mut self) -> Option<LexicalAuditDelivery> {
+        self.search_completion.take()
+    }
+
+    fn verified_search_completion(
+        &mut self,
+        queued: &QueuedSearchNomination,
+        new: CurrentToken,
+        citation_sha256: Sha256Digest,
+        settings_sha256: Sha256Digest,
+    ) -> LexicalAuditDelivery {
+        let now = Instant::now();
+        let nomination = &queued.nomination;
+        self.search_waiters.retain(|listener| listener.live(now));
+        let listeners: Vec<_> = self
+            .search_waiters
+            .extract_if(.., |listener| &listener.nomination == nomination)
+            .collect();
+        LexicalAuditDelivery {
+            repair: VerifiedLexicalRepair {
+                old: nomination.head,
+                new,
+                artifact: nomination.artifact,
+                ordinal: nomination.ordinal,
+                stable_id: nomination.stable_id,
+                citation_sha256,
+                settings_sha256,
+                elapsed: now.saturating_duration_since(queued.enqueued),
+            },
+            listeners,
+        }
     }
 
     pub fn pending_search_arm(&self) -> Option<CurrentToken> {
@@ -147,6 +306,7 @@ impl LexicalAuditCursor {
             LexicalAuditArm::Deferred => {}
             LexicalAuditArm::Stale => {
                 self.search.clear();
+                self.search_waiters.clear();
                 self.search_arm_pending = false;
             }
         }
@@ -159,13 +319,21 @@ impl LexicalAuditCursor {
             })
         {
             self.search_head = Some(head);
+            if self
+                .search_completion
+                .as_ref()
+                .is_some_and(|completion| completion.repair.new != head)
+            {
+                self.search_completion = None;
+            }
             self.search.clear();
+            self.search_waiters.clear();
             self.seen_search.clear();
             self.search_arm_pending = false;
         }
     }
 
-    fn take_search(&mut self, head: CurrentToken) -> Option<LexicalSearchNomination> {
+    fn take_search(&mut self, head: CurrentToken) -> Option<QueuedSearchNomination> {
         if self.search_head != Some(head) {
             return None;
         }
@@ -260,7 +428,7 @@ impl IntegrityOwner<'_> {
             cursor.rebind(head);
             let nomination = cursor.take_search(head);
             let nominated_path = match &nomination {
-                Some(nomination) => nomination.resolve(&read)?,
+                Some(queued) => queued.nomination.resolve(&read)?,
                 None => None,
             };
             let nominated = nominated_path.is_some();
@@ -296,7 +464,7 @@ impl IntegrityOwner<'_> {
                     continue;
                 };
                 if nominated
-                    && let Some(nomination) = &nomination
+                    && let Some(nomination) = nomination.as_ref().map(|queued| &queued.nomination)
                     && !candidate.matches_row(
                         nomination.source_hash,
                         nomination.payload_digest,
@@ -347,7 +515,7 @@ impl IntegrityOwner<'_> {
                 };
                 let paths = BTreeSet::from([target.to_owned()]);
                 let replay = repaired.lexical_search_paths(&query, Some(&paths))?;
-                candidate.with_restore(|proposal| {
+                let citation_sha256 = candidate.with_restore(|proposal| {
                     let (_, _, expected) = proposal
                         .missing
                         .expected
@@ -360,14 +528,32 @@ impl IntegrityOwner<'_> {
                                     && serde_json::to_vec(&hit.citation)? == expected),
                         "published lexical repair did not recover its cited witness"
                     );
-                    Ok(())
+                    Ok(Sha256Digest::from_bytes(Sha256::digest(expected).into()))
                 })?;
+                let mut completion = if nominated {
+                    nomination.as_ref().map(|queued| {
+                        cursor.verified_search_completion(
+                            queued,
+                            committed,
+                            citation_sha256,
+                            settings,
+                        )
+                    })
+                } else {
+                    None
+                };
                 if !nominated {
                     cursor.advance(path, recent);
                 }
                 cursor.rebind(committed);
                 self.registry
                     .retain_lexical_repair_head(self.lease, cohort, head, committed)?;
+                if let Some(delivery) = &mut completion
+                    && let Some(queued) = &nomination
+                {
+                    delivery.repair.elapsed = queued.enqueued.elapsed();
+                }
+                cursor.search_completion = completion;
                 return Ok(());
             }
             if !nominated && !recent {
@@ -417,6 +603,106 @@ mod tests {
             stable_id: Sha256Digest::from_bytes([4; 32]),
             policy: None,
         }
+    }
+
+    #[test]
+    fn verified_search_completion_is_exact_one_shot_and_waiter_drop_preserves_queue() {
+        use std::sync::mpsc::{TryRecvError, channel};
+
+        let mut cursor = LexicalAuditCursor::default();
+        let nominee = ticket(1, 3);
+        let head = nominee.head;
+        let new = ticket(2, 3).head;
+        let citation = Sha256Digest::from_bytes([9; 32]);
+        let deadline = Instant::now() + Duration::from_secs(10);
+
+        let (events, observed) = channel();
+        let waiter = cursor
+            .note_search_miss_with_waiter(nominee.clone(), deadline, move |event| {
+                let _ = events.send(event);
+            })
+            .expect("matching publication has a wait slot");
+        let (dropped_events, dropped_observed) = channel();
+        let abandoned = cursor
+            .note_search_miss_with_waiter(nominee.clone(), deadline, move |event| {
+                let _ = dropped_events.send(event);
+            })
+            .expect("duplicate attaches a listener but creates no second repair");
+        drop(abandoned);
+        assert_eq!(dropped_observed.try_recv(), Err(TryRecvError::Disconnected));
+        assert_eq!(cursor.pending_search_arm(), Some(head));
+
+        let settings = Sha256Digest::from_bytes([10; 32]);
+        let unrelated = QueuedSearchNomination {
+            nomination: ticket(1, 7),
+            enqueued: Instant::now(),
+        };
+        let unrelated_completion =
+            cursor.verified_search_completion(&unrelated, new, citation, settings);
+        assert!(unrelated_completion.listeners.is_empty());
+        unrelated_completion.notify();
+        let queued = cursor
+            .take_search(head)
+            .expect("deferred queue remains live");
+        assert!(cursor.take_search(head).is_none());
+        cursor.search_completion =
+            Some(cursor.verified_search_completion(&queued, new, citation, settings));
+        assert_eq!(observed.try_recv(), Err(TryRecvError::Empty));
+        let delivery = cursor
+            .take_verified_search_completion()
+            .expect("exact completion");
+        assert!(cursor.take_verified_search_completion().is_none());
+        let notice = delivery.notice();
+        delivery.notify();
+        let event = observed.try_recv().expect("one verified notification");
+        assert_eq!(notice, event);
+        assert_eq!(notice.settings_sha256, settings);
+        assert_eq!(
+            (
+                event.old,
+                event.new,
+                event.artifact,
+                event.ordinal,
+                event.stable_id,
+                event.citation_sha256
+            ),
+            (
+                head,
+                new,
+                nominee.artifact,
+                nominee.ordinal,
+                nominee.stable_id,
+                citation
+            )
+        );
+        assert!(
+            cursor
+                .verified_search_completion(&queued, new, citation, settings)
+                .listeners
+                .is_empty()
+        );
+        assert_eq!(observed.try_recv(), Err(TryRecvError::Disconnected));
+        drop(waiter);
+    }
+
+    #[test]
+    fn expired_search_wait_drops_callback_and_leaves_deferred_work() {
+        use std::sync::mpsc::{TryRecvError, channel};
+
+        let mut cursor = LexicalAuditCursor::default();
+        let nominee = ticket(1, 8);
+        let head = nominee.head;
+        let (events, observed) = channel::<VerifiedLexicalRepair>();
+        assert!(
+            cursor
+                .note_search_miss_with_waiter(nominee, Instant::now(), move |event| {
+                    let _ = events.send(event);
+                })
+                .is_none()
+        );
+        assert_eq!(observed.try_recv(), Err(TryRecvError::Disconnected));
+        assert_eq!(cursor.pending_search_arm(), Some(head));
+        assert!(cursor.take_search(head).is_some());
     }
 
     #[test]

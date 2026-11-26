@@ -865,6 +865,294 @@ fn current_assert_tool(
     }
 }
 
+#[cfg(windows)]
+#[test]
+fn first_window_search_returns_verified_fts_repair() -> anyhow::Result<()> {
+    use airk_core::{
+        DocumentLocation, SearchResponse,
+        scoped_reads::ScopeObservation,
+        service::{ControlMethod, ControlResponse, JobKind, JobOutcome, JobState},
+        service_events::{EventCursor, EventKind},
+    };
+    use airk_store::{
+        current::CurrentToken,
+        index::DATABASE_FILE,
+        service::{collection::Collection, registry::ServiceRegistry},
+    };
+    use anyhow::{Context, ensure};
+    use rusqlite::{Connection, OpenFlags};
+    use sha2::{Digest, Sha256};
+    use std::time::{Duration, Instant};
+
+    const COLLECTION: &str = "window-fts-repair";
+    const TARGET: &str = "target.txt";
+    const CONTROL: &str = "control.txt";
+    const TARGET_TEXT: &str = "repairneedle café 界";
+    const CONTROL_TEXT: &str = "controlneedle façade";
+    let root = tempfile::tempdir()?;
+    let state = tempfile::tempdir()?;
+    fs::write(root.path().join(TARGET), TARGET_TEXT)?;
+    fs::write(root.path().join(CONTROL), CONTROL_TEXT)?;
+    let service = common::Service::reviewed(root.path(), state.path(), COLLECTION);
+    let quiesce = || {
+        current_quiescent(
+            &service,
+            root.path(),
+            state.path(),
+            Instant::now() + Duration::from_secs(90),
+        )
+    };
+    quiesce()?;
+    let window = service.window()?;
+    let catalog = service.reviewed_scope();
+    assert_eq!(window.selection.index_ids, [catalog.index_id]);
+    let project = service.project.binding;
+    let store = Collection::existing(
+        Path::new(&service.project.data_root),
+        &service.project.root,
+        &service.project.collection,
+    )?
+    .selected_store()?;
+    let database = store.directory().join(DATABASE_FILE);
+
+    let worker = || -> anyhow::Result<_> {
+        let ControlResponse::Inspection {
+            observation: Some(observation),
+            ..
+        } = service.metadata(
+            ControlMethod::Inspection { project },
+            Instant::now() + Duration::from_secs(90),
+        )
+        else {
+            anyhow::bail!("native worker inspection missing");
+        };
+        assert_eq!(observation.worker.project, project);
+        assert_eq!(observation.worker.service, window.service_instance);
+        assert_eq!(
+            observation.worker.fencing_generation,
+            observation.current_fencing_generation
+        );
+        Ok(observation.worker)
+    };
+    let owner = worker()?;
+
+    let fts_count = |connection: &Connection, path: &str| -> anyhow::Result<i64> {
+        Ok(connection.query_row(
+            "SELECT count(*) FROM fts WHERE rowid IN (
+                SELECT c.id FROM chunks c JOIN files f ON c.file_id=f.id WHERE f.path=?1
+            )",
+            [path],
+            |row| row.get(0),
+        )?)
+    };
+    let inject = || -> anyhow::Result<()> {
+        let connection = Connection::open_with_flags(&database, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+        assert_eq!(fts_count(&connection, TARGET)?, 1);
+        assert_eq!(fts_count(&connection, CONTROL)?, 1);
+        assert_eq!(
+            connection.execute(
+                "DELETE FROM fts WHERE rowid IN (
+                    SELECT c.id FROM chunks c JOIN files f ON c.file_id=f.id WHERE f.path=?1
+                )",
+                [TARGET],
+            )?,
+            1
+        );
+        assert_eq!(fts_count(&connection, TARGET)?, 0);
+        assert_eq!(fts_count(&connection, CONTROL)?, 1);
+        Ok(())
+    };
+
+    let cursor_before = || -> anyhow::Result<EventCursor> {
+        let deadline = Instant::now() + Duration::from_secs(90);
+        let registry = ServiceRegistry::open_saved_before(&service.control, Some(deadline))?;
+        assert!(
+            !registry
+                .due_automatic_audits(current_unix_ms()?, 32)?
+                .iter()
+                .any(|(due, _)| *due == project)
+        );
+        let mut cursor = None;
+        loop {
+            ensure!(Instant::now() < deadline, "Verify baseline event deadline");
+            let page = registry.events(Some(project), cursor.as_ref(), 32)?;
+            if let Some(next) = page.next {
+                cursor = Some(next);
+            } else {
+                return Ok(page.tail);
+            }
+        }
+    };
+    let wait_for_verify = |mut cursor: EventCursor,
+                           old: CurrentToken|
+     -> anyhow::Result<CurrentToken> {
+        let deadline = Instant::now() + Duration::from_secs(90);
+        let mut pending = None;
+        loop {
+            ensure!(Instant::now() < deadline, "native Verify event deadline");
+            let registry = ServiceRegistry::open_saved_before(&service.control, Some(deadline))?;
+            let page = registry.events(Some(project), Some(&cursor), 32)?;
+            for event in &page.events {
+                if event.job_kind != Some(JobKind::Verify) {
+                    continue;
+                }
+                let id = event.job.context("Verify event job ID missing")?;
+                match event.kind {
+                    EventKind::JobPending => assert!(pending.replace(id).is_none()),
+                    EventKind::JobFailed | EventKind::JobCanceled => {
+                        anyhow::bail!("automatic Verify failed: {event:?}");
+                    }
+                    EventKind::JobSucceeded => {
+                        assert_eq!(pending, Some(id));
+                        assert_eq!(event.fencing_generation, Some(owner.fencing_generation));
+                        let job = registry.job(id)?;
+                        assert_eq!(job.state, JobState::Succeeded);
+                        let successor = store.plain_read()?.token();
+                        assert_eq!(successor.incarnation, old.incarnation);
+                        assert_eq!(successor.sequence, old.sequence + 1);
+                        let Some(JobOutcome::Succeeded {
+                            revision: Some(revision),
+                        }) = job.outcome
+                        else {
+                            anyhow::bail!("Verify completion did not retain a revision");
+                        };
+                        assert_eq!(revision.incarnation, successor.incarnation);
+                        assert_eq!(revision.generation, successor.sequence);
+                        assert_eq!(revision.revision, successor.digest);
+                        let connection = Connection::open_with_flags(
+                            &database,
+                            OpenFlags::SQLITE_OPEN_READ_ONLY,
+                        )?;
+                        assert_eq!(fts_count(&connection, TARGET)?, 1);
+                        assert_eq!(fts_count(&connection, CONTROL)?, 1);
+                        return Ok(successor);
+                    }
+                    _ => {}
+                }
+            }
+            cursor = page.next.unwrap_or(page.tail);
+            std::thread::yield_now();
+        }
+    };
+
+    let search = |literal: &str,
+                  path: &str|
+     -> anyhow::Result<(SearchResponse, ScopeObservation)> {
+        let started = Instant::now();
+        let (response, _) = current_tool(
+            &service.control,
+            window.tool_selection(),
+            "airk_search",
+            json!({
+                "query": literal, "mode": "lexical", "path_prefix": path,
+                "limit": 2, "max_bytes": 4096, "full_chunks": true, "verification": "require",
+            }),
+        )?;
+        assert!(started.elapsed() <= airk_core::read_attempt::MAX_READ_BUDGET);
+        let ControlResponse::ToolResult { result } = response else {
+            anyhow::bail!(
+                "external Window Search refused: {}",
+                serde_json::to_string(&response)?
+            );
+        };
+        assert_ne!(result["isError"], true, "{result}");
+        let body: Value = serde_json::from_str(
+            result["content"][0]["text"]
+                .as_str()
+                .context("full native Search body missing")?,
+        )?;
+        let scope: ScopeObservation = serde_json::from_value(body["scope_observation"].clone())?;
+        assert_eq!(scope.selection, window.source());
+        let [member] = scope.members.as_slice() else {
+            anyhow::bail!("Window Search did not retain exactly one index");
+        };
+        assert_eq!(member.index_id, catalog.index_id);
+        assert!(
+            member
+                .memberships
+                .iter()
+                .any(|membership| membership.project_id == catalog.project_id)
+        );
+        Ok((serde_json::from_value(body)?, scope))
+    };
+    let assert_revision = |reply: &SearchResponse, token: CurrentToken| {
+        let publication = reply
+            .publication
+            .as_ref()
+            .expect("Search publication missing");
+        assert_eq!(
+            (
+                publication.incarnation,
+                publication.generation,
+                publication.revision
+            ),
+            (token.incarnation, token.sequence, token.digest)
+        );
+        assert!(!reply.truncated);
+    };
+    let assert_hit = |reply: &SearchResponse, path: &str, text: &str| {
+        let [hit] = reply.hits.as_slice() else {
+            panic!("expected exactly one cited Search hit for {path}");
+        };
+        assert!(!hit.truncated);
+        assert_eq!(hit.text, text);
+        assert_eq!(hit.citation.path, path);
+        assert_eq!(
+            hit.citation.content_hash,
+            format!("{:x}", Sha256::digest(text.as_bytes()))
+        );
+        assert_eq!(
+            hit.citation.location,
+            DocumentLocation::Lines { start: 1, end: 1 }
+        );
+        assert_eq!((hit.citation.start_line, hit.citation.end_line), (1, 1));
+    };
+
+    let first_cursor = cursor_before()?;
+    let initial = store.plain_read()?.token();
+    inject()?;
+    let (deferred, scope) = search("repairneedle", TARGET)?;
+    assert_revision(&deferred, initial);
+    assert!(deferred.hits.is_empty());
+    let warm = wait_for_verify(first_cursor, initial)?;
+    let (sample, sample_scope) = search("repairneedle", TARGET)?;
+    assert_eq!(sample_scope, scope);
+    assert_revision(&sample, warm);
+    assert_hit(&sample, TARGET, TARGET_TEXT);
+
+    quiesce()?;
+    assert_eq!(worker()?, owner);
+    let final_cursor = cursor_before()?;
+    inject()?;
+    let pinned = store.plain_read()?;
+    assert_eq!(pinned.token(), warm);
+    // This is the only request between fault injection and the verified reply.
+    let (first_reply, actual_scope) = search("repairneedle", TARGET)?;
+    assert_eq!(actual_scope, scope);
+    let physical = store.plain_read()?.token();
+    assert_eq!(physical.sequence, warm.sequence + 1);
+    assert_revision(&first_reply, physical);
+    assert_hit(&first_reply, TARGET, TARGET_TEXT);
+    assert_eq!(pinned.token(), warm);
+    drop(pinned);
+    assert_eq!(wait_for_verify(final_cursor, warm)?, physical);
+
+    let (positive, _) = search("controlneedle", CONTROL)?;
+    assert_revision(&positive, physical);
+    assert_hit(&positive, CONTROL, CONTROL_TEXT);
+    let (negative, _) = search("unmatchedneedle", TARGET)?;
+    assert_revision(&negative, physical);
+    assert!(negative.hits.is_empty());
+    assert_eq!(fs::read(root.path().join(TARGET))?, TARGET_TEXT.as_bytes());
+    assert_eq!(
+        fs::read(root.path().join(CONTROL))?,
+        CONTROL_TEXT.as_bytes()
+    );
+    assert_eq!(worker()?, owner);
+    service.shutdown_reviewed()?;
+    Ok(())
+}
+
 #[test]
 fn control_tool_calls_answer_what_the_cli_printed() -> anyhow::Result<()> {
     use airk_core::service::ToolSelection;

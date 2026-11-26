@@ -7,7 +7,10 @@ use crate::service::{ProjectLease, data_scope::BoundDataRoot, registry::ServiceR
 
 pub mod census;
 mod lexical_repair;
-pub use lexical_repair::{LexicalAuditArm, LexicalAuditCursor, LexicalSearchNomination};
+pub use lexical_repair::{
+    LexicalAuditArm, LexicalAuditCursor, LexicalAuditDelivery, LexicalAuditWaiter,
+    LexicalSearchNomination, VerifiedLexicalRepair,
+};
 pub mod verify;
 
 const RECEIPT: &str = "integrity-observation.json";

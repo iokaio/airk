@@ -448,6 +448,7 @@ impl Kernel {
         read: Arc<CurrentRead>,
         presentation: SearchPresentation,
     ) -> Result<(super::SearchWithDefinitionsResponse, Vec<airk_core::Hit>)> {
+        let started = self.lexical_nomination_checkpoint.as_ref().map(|_| std::time::Instant::now());
         let disclose_readiness = !read.selected_scope_restricts_paths();
         if matches!(
             mode,
@@ -545,6 +546,9 @@ impl Kernel {
         } else {
             Vec::new()
         };
+        if let Some(started) = started {
+            self.observe_lexical_replay_time(query, filters, &response, started.elapsed());
+        }
         if definitions.is_empty() {
             let _ = self.nominate_lexical_search_miss(&read, query, filters, &response);
         }

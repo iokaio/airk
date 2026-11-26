@@ -21,6 +21,24 @@ ceiling. Cancellation, expiry, foreign clocks and identity rebinding refuse.
 This preserves the service ledger's exact cross-member parent identity without
 renewing time at a worker hop.
 
+## Same-process lexical repair timing
+
+For a standalone M3 Search with no carried parent, the service may capture
+arrival and the default allowance with the same monotonic sample. Only a
+selected singleton lexical Search can bind the provenance to an existing
+request ID. The frontend retains a bounded, process-local offer keyed by
+the actual emitted read-attempt scalars, selected worker and complete
+redeemed scope. The in-process worker may claim it once after its ordinary
+read admission. A child process or an unmatched, dropped, canceled, expired,
+carried or composed attempt cannot claim it. Nothing is added to the wire,
+persisted state, or digest inputs.
+
+Dropping the offer cancels the repair observation but leaves the normal
+read context and accepted capacity custody intact. A claim can only
+shorten its repair deadline to the decoded worker deadline. This supplies
+timing provenance, with no authority to repair or assertion that any
+measured repair fits. Existing delivery, cancellation, and reap limits apply.
+
 The feature-version gate preserves strict legacy query serialization. Existing
 native service/version, worker/grant and same-boot fences still apply; the gate
 alone does not authorize mixed-version runtime pairs. There is no new wire,

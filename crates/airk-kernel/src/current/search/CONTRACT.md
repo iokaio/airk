@@ -17,6 +17,20 @@ identities reach the in-memory queue. The existing Verify owner
 independently authenticates the retained text and controls before
 publishing. This path does not replay or extend the original read.
 
+## One verified same-request replay
+
+A standalone singleton Windows M3 Window Search can retain original
+admission timing through the in-process worker. If an exact-file lexical
+miss has a recent matching observed repair and ordinary cited-lookup
+duration, the MCP handler can wait for the existing Verify owner under
+the remaining original allowance. It keeps the ordinary reply, cancels
+the wait with the read, and holds one replay credit. The repair owner
+publishes and verifies the exact expected row before reporting a
+completion. The original query and filters run through canonical Search
+once on the named successor. A replay counts only if it includes the
+verified citation. An unavailable, unqualified or expired attempt
+leaves the ordinary reply available and the queued Verify path intact.
+
 ## Plain-store vector search (24 November 2026)
 
 The vector branch ranks the selected pipeline's committed rows by exact

@@ -3,10 +3,105 @@
 use airk_core::{
     identity::Incarnation,
     read_attempt::{MAX_ANSWER_READ_BUDGET, ReadAttemptBudget, ReadClock},
+    service::{ScopedReadRef, WorkerIdentity},
 };
-use airk_mcp::read_attempt::ReadAttemptContext;
+use airk_mcp::read_attempt::{LexicalRepairOrigin, ReadAttemptContext};
 use anyhow::Result;
-use std::time::Instant;
+use std::{
+    sync::{Arc, Mutex, Weak},
+    time::Instant,
+};
+
+// Candidate provenance never crosses IPC. Weak entries are usable only while
+// the submitting exchange still owns its offer; capacity or lock contention
+// simply keeps the ordinary Search path.
+const MAX_LEXICAL_REPAIR_OFFERS: usize = 64;
+static LEXICAL_REPAIR_OFFERS: Mutex<Vec<Weak<LexicalRepairRegistration>>> = Mutex::new(Vec::new());
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct LexicalRepairConsumer {
+    pub worker: WorkerIdentity,
+    pub scope: ScopedReadRef,
+}
+
+struct LexicalRepairRegistration {
+    emitted: ReadAttemptBudget,
+    consumer: LexicalRepairConsumer,
+    deadline: Instant,
+    origin: Mutex<Option<LexicalRepairOrigin>>,
+    cancellation: tokio_util::sync::CancellationToken,
+}
+
+impl LexicalRepairRegistration {
+    fn live(&self, now: Instant) -> bool {
+        now < self.deadline && !self.cancellation.is_cancelled()
+    }
+}
+
+#[must_use]
+pub struct LexicalRepairOffer(Arc<LexicalRepairRegistration>);
+
+impl Drop for LexicalRepairOffer {
+    fn drop(&mut self) {
+        self.0.cancellation.cancel();
+    }
+}
+
+fn same_attempt(left: ReadAttemptBudget, right: ReadAttemptBudget) -> bool {
+    left.schema == right.schema
+        && left.request_id == right.request_id
+        && left.clock == right.clock
+        && left.expires_monotonic_ns == right.expires_monotonic_ns
+        && left.remaining_ns == right.remaining_ns
+        && left.native_retry_expires_monotonic_ns == right.native_retry_expires_monotonic_ns
+}
+
+/// Called with the actual emitted frame after selected worker resolution.
+pub fn offer_lexical_repair(
+    context: &ReadAttemptContext,
+    emitted: ReadAttemptBudget,
+    consumer: LexicalRepairConsumer,
+) -> Option<LexicalRepairOffer> {
+    let now = Instant::now();
+    if now >= context.deadline()
+        || consumer.scope.validate().is_err()
+        || consumer.scope.selection.service_instance != consumer.worker.service
+    {
+        return None;
+    }
+    let mut offers = LEXICAL_REPAIR_OFFERS.try_lock().ok()?;
+    offers.retain(|offer| offer.upgrade().is_some_and(|offer| offer.live(now)));
+    if offers.len() >= MAX_LEXICAL_REPAIR_OFFERS {
+        return None;
+    }
+    let origin = context.take_lexical_repair_origin(emitted.request_id, consumer.scope)?;
+    let registration = Arc::new(LexicalRepairRegistration {
+        emitted,
+        consumer,
+        deadline: origin.hard_deadline(),
+        cancellation: origin.cancellation().clone(),
+        origin: Mutex::new(Some(origin)),
+    });
+    offers.push(Arc::downgrade(&registration));
+    Some(LexicalRepairOffer(registration))
+}
+
+/// A matching accepted worker may take exactly one original timing receipt.
+pub fn claim_lexical_repair(
+    emitted: ReadAttemptBudget,
+    consumer: LexicalRepairConsumer,
+) -> Option<LexicalRepairOrigin> {
+    let now = Instant::now();
+    let mut offers = LEXICAL_REPAIR_OFFERS.try_lock().ok()?;
+    let position = offers.iter().position(|offer| {
+        offer.upgrade().is_some_and(|offer| {
+            offer.live(now) && offer.consumer == consumer && same_attempt(offer.emitted, emitted)
+        })
+    })?;
+    let offer = offers.swap_remove(position).upgrade()?;
+    let origin = offer.origin.try_lock().ok()?.take()?;
+    offer.live(now).then_some(origin)
+}
 
 fn clock() -> ReadClock {
     #[cfg(unix)]
@@ -138,3 +233,93 @@ pub fn supported(version: &str) -> bool {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod lexical_repair_tests {
+    use super::*;
+    use airk_core::{
+        identity::Sha256Digest,
+        index_catalog::{CatalogRevision, IndexId},
+        scoped_reads::{SelectionOwnerKind, SelectionScopeRef},
+    };
+
+    fn consumer() -> LexicalRepairConsumer {
+        let service = Incarnation::from_bytes([1; 16]);
+        LexicalRepairConsumer {
+            worker: WorkerIdentity {
+                service,
+                worker: Incarnation::from_bytes([2; 16]),
+                project: Sha256Digest::from_bytes([3; 32]),
+                fencing_generation: 1,
+            },
+            scope: ScopedReadRef {
+                schema: 1,
+                lease_generation: 1,
+                index_id: IndexId::from_identity(Incarnation::from_bytes([4; 16])),
+                selection: SelectionScopeRef {
+                    owner: SelectionOwnerKind::Window,
+                    grant_nonce: Incarnation::from_bytes([5; 16]),
+                    service_instance: service,
+                    scope_identity: Sha256Digest::from_bytes([6; 32]),
+                    catalog_revision: CatalogRevision::INITIAL,
+                },
+                fingerprint: Sha256Digest::from_bytes([7; 32]),
+            },
+        }
+    }
+
+    #[test]
+    fn private_lexical_repair_claim_matches_exact_wire_and_consumer_once() -> Result<()> {
+        let consumer = consumer();
+        let request = Incarnation::from_bytes([8; 16]);
+        let context =
+            ReadAttemptContext::for_standalone_tools_call("airk_search", Default::default())
+                .bind_standalone_lexical_repair(
+                    request,
+                    consumer.scope.selection,
+                    consumer.scope.index_id,
+                )?;
+        let wire = encode(&context, request)?;
+        assert!(claim_lexical_repair(wire, consumer).is_none());
+        let mut substituted = consumer;
+        substituted.scope.selection.grant_nonce = Incarnation::from_bytes([9; 16]);
+        assert!(offer_lexical_repair(&context, wire, substituted).is_none());
+        let offer = offer_lexical_repair(&context, wire, consumer).expect("standalone origin");
+        assert!(offer_lexical_repair(&context, wire, consumer).is_none());
+        let changed = ReadAttemptBudget {
+            remaining_ns: wire.remaining_ns - 1,
+            ..wire
+        };
+        assert!(claim_lexical_repair(changed, consumer).is_none());
+        assert!(claim_lexical_repair(wire, substituted).is_none());
+        substituted = consumer;
+        substituted.worker.fencing_generation += 1;
+        assert!(claim_lexical_repair(wire, substituted).is_none());
+        let origin = claim_lexical_repair(wire, consumer).expect("exact same-process claim");
+        assert_eq!(origin.hard_deadline(), context.deadline());
+        assert!(claim_lexical_repair(wire, consumer).is_none());
+
+        // Dropping the exchange cancels its repair only. Normal caller
+        // cancellation continues to belong to the original read context.
+        drop(offer);
+        assert!(origin.cancellation().is_cancelled());
+        assert!(!context.cancellation().is_cancelled());
+
+        let carried = decode_for_tool(wire, "airk_search")?;
+        assert!(!carried.can_bind_standalone_lexical_repair());
+        assert!(offer_lexical_repair(&carried, wire, consumer).is_none());
+        let other = Incarnation::from_bytes([10; 16]);
+        let canceled =
+            ReadAttemptContext::for_standalone_tools_call("airk_search", Default::default())
+                .bind_standalone_lexical_repair(
+                    other,
+                    consumer.scope.selection,
+                    consumer.scope.index_id,
+                )?;
+        let canceled_wire = encode(&canceled, other)?;
+        let _canceled_offer = offer_lexical_repair(&canceled, canceled_wire, consumer).unwrap();
+        canceled.cancellation().cancel();
+        assert!(claim_lexical_repair(canceled_wire, consumer).is_none());
+        Ok(())
+    }
+}

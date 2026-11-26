@@ -512,6 +512,27 @@ impl Connection {
                 "an Answer /3 partition requires its canonical Answer purpose"
             );
         }
+        let _lexical_repair_offer = if query.native.is_none()
+            && query.context_partition.is_none()
+            && query.answer_partition.is_none()
+            && matches!(query.tool.as_str(), "search" | "airk_search")
+        {
+            query
+                .read_attempt
+                .zip(self.read_scope)
+                .and_then(|(wire, scope)| {
+                    airk_host::read_attempt::offer_lexical_repair(
+                        &context,
+                        wire,
+                        airk_host::read_attempt::LexicalRepairConsumer {
+                            worker: self.identity,
+                            scope,
+                        },
+                    )
+                })
+        } else {
+            None
+        };
         loop {
             ensure!(
                 !context.cancellation().is_cancelled() && Instant::now() < context.deadline(),
@@ -1493,14 +1514,15 @@ mod tests {
         use airk_supervisor::project_supervisor::ConnectionSetupPending;
         let failed_start = anyhow::anyhow!("channel is empty and sending half is closed")
             .context("project startup failed or timed out");
-        let backoff =
-            anyhow::Error::new(ConnectionSetupPending::RestartBackoff).context("selection admission");
+        let backoff = anyhow::Error::new(ConnectionSetupPending::RestartBackoff)
+            .context("selection admission");
         assert!(!setup_retryable(&failed_start));
         assert!(!setup_retryable(&backoff));
         assert_eq!(setup_retryable(&failed_start), setup_retryable(&backoff));
         assert!(setup_rejection(&backoff).is_none());
         assert!(setup_retryable(
-            &anyhow::Error::new(ConnectionSetupPending::ResidentCapacity).context("selection admission")
+            &anyhow::Error::new(ConnectionSetupPending::ResidentCapacity)
+                .context("selection admission")
         ));
     }
 
