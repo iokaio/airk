@@ -1127,6 +1127,12 @@ export type GatheringReport = {
 export type GatheringRule = "search_lanes" | "standing_needs" | "project_guidance" | "cited_files" | "structure_following" | "every_passage_to_every_need" | "delivery_by_need";
 
 /**
+ * Why a gathering stage admitted no read (kernel CONTRACT "Gathering
+ * rules", rule 7).
+ */
+export type GatheringSkip = "rule_off" | "stopped" | "no_calls" | "no_bytes" | "no_passages" | "nothing_found";
+
+/**
  * What one gathering stage did and how long it took.
  */
 export type GatheringStage = {
@@ -1159,6 +1165,11 @@ export type GatheringStage = {
      * Evidence reads admitted in this stage, by operation.
      */
     reads: Array<GatheringReads>;
+    /**
+     * Why the stage admitted no read, when it admitted none. Omitted when
+     * the stage read something, or for a stage that gives no reason.
+     */
+    skipped?: GatheringSkip | null;
     stage: GatheringStageKind;
 };
 

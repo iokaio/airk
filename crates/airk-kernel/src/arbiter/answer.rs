@@ -315,6 +315,9 @@ impl crate::Kernel {
             lookups: BTreeMap::new(),
             gathered: vec![],
             extension: 0,
+            stage_floor: 0,
+            starved: None,
+            idle: v3::GatheringSkip::NothingFound,
         };
         run.begin_stage(v3::GatheringStageKind::Retrieve);
         run.split()?;
@@ -381,6 +384,12 @@ struct Loop<'a> {
     gathered: Vec<usize>,
     /// The next gathering phase of round one (`extend`).
     extension: u8,
+    /// Retention bytes the open gathering stage leaves free (its share).
+    stage_floor: usize,
+    /// What refused the open gathering stage a lookup or read, if anything.
+    starved: Option<v3::GatheringSkip>,
+    /// The open stage's reason if it reads nothing and was not starved.
+    idle: v3::GatheringSkip,
 }
 
 struct Assessed {
@@ -547,6 +556,12 @@ impl Loop<'_> {
         if self.parts.len() == 1 && (caller || (standing && wanted.standing)) {
             self.rules = wanted;
         }
+        // Rules 3 and 4 plan from what round one retained: its recipe reads
+        // leave them, and the later rounds, half the retention bytes.
+        if self.rules.guidance || self.rules.cited || self.rules.structure {
+            self.gather.recipe_floor =
+                Some(self.request.budget.max_bytes / extend::ROUND_ONE_KEEPS);
+        }
         self.report.set_rules(self.rules.wire());
     }
 
@@ -629,6 +644,9 @@ impl Loop<'_> {
                 .collect();
             self.add_standing(index);
             self.progress(index, v3::LoopStage::Plan);
+        }
+        if self.gather.recipe_floor.is_some() {
+            self.gather.recipe_calls = extend::reserved_calls(self.request, &self.parts);
         }
         Ok(())
     }
@@ -815,10 +833,20 @@ impl Loop<'_> {
                     observed.clone()
                 }
                 None => {
-                    if self.nominations.len() >= PROBES_PER_ANSWER || room < 2 || part_calls < 2 {
+                    if self.nominations.len() >= PROBES_PER_ANSWER
+                        || room < 2
+                        || part_calls < 2
+                        || !self.gather.recipe_call_left()
+                    {
                         continue;
                     }
-                    let byte_allowance = (self.gather.remaining_bytes() / 4).min(24_576);
+                    // Under rules 3 and 4 a nomination, like a recipe read,
+                    // leaves the recipe floor free.
+                    let free = self
+                        .gather
+                        .remaining_bytes()
+                        .saturating_sub(self.gather.recipe_floor.unwrap_or(0));
+                    let byte_allowance = (free / 4).min(24_576);
                     if byte_allowance < 512 || !self.gather.reserve_nomination() {
                         continue;
                     }
@@ -1813,6 +1841,7 @@ impl Loop<'_> {
         for part in 0..self.parts.len() {
             self.progress(part, v3::LoopStage::Compose);
         }
+        self.report_unbegun();
         self.begin_stage(v3::GatheringStageKind::Delivery);
         (self.env.require_live)()?;
         self.kernel

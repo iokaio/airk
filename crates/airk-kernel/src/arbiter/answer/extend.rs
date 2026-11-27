@@ -20,7 +20,19 @@ pub(crate) const GUIDANCE: [&str; 4] = ["CLAUDE.md", "AGENTS.md", "CONTRIBUTING.
 const GUIDANCE_FOLDERS: usize = 6;
 /// Guidance files read in one Answer.
 const GUIDANCE_FILES: usize = 8;
-/// Paths one folder listing returns.
+/// Existence probes (`file_info`) of guidance names in one Answer: each
+/// name in each guidance folder.
+const GUIDANCE_PROBES: usize = GUIDANCE_FOLDERS * GUIDANCE.len();
+/// Sections read of one guidance file, and of all of them in one Answer.
+const SECTIONS_PER_FILE: usize = 3;
+const GUIDANCE_SECTIONS: usize = 12;
+/// Section facts one guidance file's lookup returns, and their bytes.
+const SECTION_ROWS: usize = 64;
+const SECTION_FACT_BYTES: usize = 4096;
+/// One guidance section is read with `context` from its heading, at most
+/// `HEAD_AFTER` lines after it.
+const SECTION_BYTES: usize = 4096;
+/// Paths one code-fact page returns.
 const LISTING_LIMIT: usize = 200;
 const LISTING_BYTES: usize = 16_384;
 /// A guidance or cited file is read from its first line: `context` after 100
@@ -56,6 +68,38 @@ const USERS: usize = 3;
 const USER_MARGIN: usize = 15;
 /// Retention bytes left for later rounds after the gathering reads.
 const RETENTION_RESERVE_SHARE: usize = 4;
+/// Round one's recipe reads (whole chunks, outlines, excerpts) leave
+/// `max_bytes / ROUND_ONE_KEEPS` free for these rules and the later rounds
+/// (`Gathering::recipe_floor`); its searches are never held back.
+pub(super) const ROUND_ONE_KEEPS: usize = 2;
+/// The same reads leave these rules `min(calls, candidates) / 4` (at most
+/// `GATHERING_READS_PER_PART`) beside one follow-up read per sub-need and
+/// later round.
+const GATHERING_CALL_SHARE: usize = 4;
+
+/// Calls and candidates round one's recipe reads and nominations leave for
+/// rules 3 and 4 and the later rounds' follow-up reads.
+pub(super) fn reserved_calls(request: &v3::ContextRequestV3, parts: &[PartState]) -> usize {
+    let budget = &request.budget;
+    let needs: usize = parts.iter().map(|part| part.needs.len()).sum();
+    let follow_ups =
+        needs * budget.rounds.saturating_sub(1) * v3::FOLLOW_UP_READS_PER_SUB_NEED_ROUND;
+    let gathering = v3::GATHERING_READS_PER_PART
+        .min(budget.calls.min(budget.candidates) / GATHERING_CALL_SHARE);
+    follow_ups + gathering
+}
+
+/// The share of the bytes above the later rounds' reserve a stage may
+/// plan, of what is left when it begins: a third for guidance, half the
+/// rest for cited files, and all that remains for structure, so no stage
+/// can spend another's.
+fn stage_share(kind: Kind, available: usize) -> usize {
+    match kind {
+        Kind::Guidance => available / 3,
+        Kind::Cited => available / 2,
+        _ => available,
+    }
+}
 
 /// One code fact of a lookup: its name, kind and citable lines.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -218,6 +262,94 @@ pub(crate) fn guidance_folders(paths: &[&str], limit: usize) -> Vec<String> {
     out
 }
 
+/// Words that say little about which section holds a rule.
+const COMMON: [&str; 16] = [
+    "that", "this", "with", "what", "which", "where", "from", "into", "they", "their", "there",
+    "when", "each", "have", "does", "done",
+];
+
+/// The distinct lower-case words of four or more letters of a text.
+pub(crate) fn words(text: &str) -> BTreeSet<String> {
+    text.split(|ch: char| !ch.is_alphanumeric())
+        .filter(|word| word.chars().count() >= 4)
+        .map(str::to_lowercase)
+        .filter(|word| !COMMON.contains(&word.as_str()))
+        .collect()
+}
+
+/// The sections of a guidance file of `lines` lines, from its section facts:
+/// each runs from its heading to the line before the next (the last to the
+/// file's end), and lines before the first heading are a section without
+/// one. Without facts the file is one section.
+pub(crate) fn section_spans(
+    path: &str,
+    facts: &[Fact],
+    lines: usize,
+) -> Vec<(usize, usize, String)> {
+    let mut headings: Vec<(usize, String)> = facts
+        .iter()
+        .filter(|fact| {
+            fact.path == path
+                && fact.start <= lines
+                && matches!(fact.kind.as_str(), "section" | "heading" | "")
+        })
+        .map(|fact| (fact.start, fact.name.clone()))
+        .collect();
+    headings.sort();
+    headings.dedup_by_key(|(start, _)| *start);
+    if headings.first().is_none_or(|(start, _)| *start > 1) {
+        headings.insert(0, (1, String::new()));
+    }
+    let ends: Vec<usize> = headings
+        .iter()
+        .skip(1)
+        .map(|(start, _)| start - 1)
+        .chain([lines.max(1)])
+        .collect();
+    headings
+        .into_iter()
+        .zip(ends)
+        .map(|((start, name), end)| (start, end.max(start), name))
+        .collect()
+}
+
+/// Up to `SECTIONS_PER_FILE` sections to read, each with the sub-need it
+/// is for: first those whose heading shares most words with a sub-need
+/// (that sub-need), then the rest in document order (`owner`).
+pub(crate) fn choose_sections(
+    spans: &[(usize, usize, String)],
+    needs: &[(u8, BTreeSet<String>)],
+    owner: u8,
+) -> Vec<(usize, usize, u8)> {
+    let mut scored: Vec<(usize, usize, usize, u8)> = spans
+        .iter()
+        .filter_map(|(start, end, name)| {
+            let heading = words(name);
+            needs
+                .iter()
+                .map(|(need, wanted)| (heading.intersection(wanted).count(), *need))
+                .filter(|(score, _)| *score > 0)
+                .max_by(|left, right| left.0.cmp(&right.0).then(right.1.cmp(&left.1)))
+                .map(|(score, need)| (score, *start, *end, need))
+        })
+        .collect();
+    scored.sort_by(|left, right| right.0.cmp(&left.0).then(left.1.cmp(&right.1)));
+    let mut out: Vec<(usize, usize, u8)> = scored
+        .into_iter()
+        .take(SECTIONS_PER_FILE)
+        .map(|(_, start, end, need)| (start, end, need))
+        .collect();
+    for (start, end, _) in spans {
+        if out.len() >= SECTIONS_PER_FILE {
+            break;
+        }
+        if !out.iter().any(|(known, _, _)| known == start) {
+            out.push((*start, *end, owner));
+        }
+    }
+    out
+}
+
 /// Line ranges of one file merged where closer than `MERGE_GAP`, each at
 /// most `READ_LINES` long; the owning sub-need is the first range's.
 fn merge(mut ranges: Vec<(usize, usize, u8)>) -> Vec<(usize, usize, u8)> {
@@ -284,11 +416,28 @@ impl Loop<'_> {
             .min(v3::GATHERING_READS_PER_PART.saturating_sub(self.gathered[part]))
     }
 
-    /// Whether `bytes` more can be planned and still leave later rounds a
-    /// quarter of the retention budget.
-    fn bytes_fit(&self, planned: usize, bytes: usize) -> bool {
-        self.gather.remaining_bytes()
-            >= planned + bytes + self.request.budget.max_bytes / RETENTION_RESERVE_SHARE
+    /// Whether `bytes` more can be planned within the stage's own allowance,
+    /// which always leaves later rounds a quarter of the retention budget.
+    /// A refusal is noted as the stage's reason if it reads nothing.
+    fn bytes_fit(&mut self, planned: usize, bytes: usize) -> bool {
+        let floor = self
+            .stage_floor
+            .max(self.request.budget.max_bytes / RETENTION_RESERVE_SHARE);
+        let fits = self.gather.remaining_bytes() >= planned + bytes + floor;
+        if !fits {
+            self.starved.get_or_insert(v3::GatheringSkip::NoBytes);
+        }
+        fits
+    }
+
+    /// The part's gathering room; none left is noted as the stage's reason
+    /// if it reads nothing.
+    fn room_left(&mut self, part: usize) -> bool {
+        let left = self.gathering_room(part) > 0;
+        if !left {
+            self.starved.get_or_insert(v3::GatheringSkip::NoCalls);
+        }
+        left
     }
 
     /// One private lookup through the canonical reader, charged as a call of
@@ -309,14 +458,18 @@ impl Loop<'_> {
         if let Some(known) = self.lookups.get(&key) {
             return Ok(known.outcome.get("body").cloned());
         }
-        if self.gather.stop.is_some() || self.stop_due() || self.gathering_room(part) == 0 {
+        if self.gather.stop.is_some() || self.stop_due() || !self.room_left(part) {
             return Ok(None);
         }
         let max_bytes = arguments
             .get("max_bytes")
             .and_then(Value::as_u64)
             .unwrap_or(4096) as usize;
-        if !self.bytes_fit(0, max_bytes) || !self.gather.reserve_nomination() {
+        if !self.bytes_fit(0, max_bytes) {
+            return Ok(None);
+        }
+        if !self.gather.reserve_nomination() {
+            self.starved.get_or_insert(v3::GatheringSkip::NoCalls);
             return Ok(None);
         }
         self.used_calls[part] += 1;
@@ -348,7 +501,7 @@ impl Loop<'_> {
     /// Offer a gathering read outside its sub-need's round-one recipe cap,
     /// counted against the part's gathering room instead.
     fn offer_gathered(&mut self, part: usize, dispatch: gather::Dispatch) -> Result<bool> {
-        if self.gathering_room(part) == 0 || self.gather.known(&dispatch.key) {
+        if self.gather.known(&dispatch.key) || !self.room_left(part) {
             return Ok(false);
         }
         self.gathered[part] += 1;
@@ -413,39 +566,87 @@ impl Loop<'_> {
     /// Round one's queue is empty: run the next gathering phase that has
     /// work. True when a phase queued a read.
     pub(super) fn extend(&mut self) -> Result<bool> {
+        // A request the rules do not apply to has no such stage at all.
+        if self.rules == GatheringRules::none() {
+            return Ok(false);
+        }
         while self.extension < 3 {
             let phase = self.extension;
             self.extension += 1;
             if self.gather.stop.is_some() || self.stop_due() {
                 return Ok(false);
             }
-            let queued = match phase {
-                0 if self.rules.guidance => {
-                    self.begin_stage(Kind::Guidance);
-                    self.guidance()?
-                }
-                1 if self.rules.cited => {
-                    self.begin_stage(Kind::Cited);
-                    self.cited()?
-                }
-                2 if self.rules.structure => {
-                    self.begin_stage(Kind::Structure);
-                    self.structure()?
-                }
-                _ => false,
+            let (kind, on) = match phase {
+                0 => (Kind::Guidance, self.rules.guidance),
+                1 => (Kind::Cited, self.rules.cited),
+                _ => (Kind::Structure, self.rules.structure),
+            };
+            if !on {
+                self.report.skip(kind, v3::GatheringSkip::RuleOff);
+                continue;
+            }
+            self.begin_stage(kind);
+            // The stage's own share of the bytes above the later rounds'
+            // reserve, taken from what is left as it begins.
+            let remaining = self.gather.remaining_bytes();
+            let later = self.request.budget.max_bytes / RETENTION_RESERVE_SHARE;
+            self.stage_floor = remaining - stage_share(kind, remaining.saturating_sub(later));
+            self.starved = None;
+            self.idle = v3::GatheringSkip::NothingFound;
+            let queued = match kind {
+                Kind::Guidance => self.guidance()?,
+                Kind::Cited => self.cited()?,
+                _ => self.structure()?,
             };
             if queued {
                 return Ok(true);
             }
+            let reason = self.starved.unwrap_or(self.idle);
+            self.report.skip(kind, reason);
         }
         Ok(false)
     }
 
-    /// Rule 3a: one listing per guidance folder, then a head read of each
-    /// guidance file found directly in it.
+    /// At delivery: each stage of rules 3 and 4 that never began says why,
+    /// for a request the rules apply to.
+    pub(super) fn report_unbegun(&mut self) {
+        if self.rules == GatheringRules::none() {
+            return;
+        }
+        for (kind, on) in [
+            (Kind::Guidance, self.rules.guidance),
+            (Kind::Cited, self.rules.cited),
+            (Kind::Structure, self.rules.structure),
+        ] {
+            if !self.report.has(kind) {
+                let reason = if on {
+                    v3::GatheringSkip::Stopped
+                } else {
+                    v3::GatheringSkip::RuleOff
+                };
+                self.report.skip(kind, reason);
+            }
+        }
+    }
+
+    /// The indexed lines of `path` at this publication, by the same
+    /// uncharged `file_info` probe that governing documents take. A missing
+    /// or unindexed file is an ordinary `None`, never a failure.
+    fn indexed_lines(&mut self, path: &str) -> Option<usize> {
+        let arguments = json!({"path":path}).as_object().cloned()?;
+        let info = (self.env.reader)("file_info", &arguments, Some(&self.gather.revision)).ok()?;
+        let lines = info.get("indexed_lines").and_then(Value::as_u64)? as usize;
+        (token(&info) == Some(self.gather.revision.as_str()) && lines > 0).then_some(lines)
+    }
+
+    /// Rule 3a: an existence probe of each guidance name in each guidance
+    /// folder, then up to three sections of each file found, read from their
+    /// headings.
     fn guidance(&mut self) -> Result<bool> {
         let mut queued = false;
         let mut read = 0usize;
+        let mut sections = 0usize;
+        let mut probes = 0usize;
         for part in 0..self.parts.len() {
             if !self.parts[part].active() {
                 continue;
@@ -468,42 +669,69 @@ impl Loop<'_> {
                 .next()
                 .unwrap_or_else(|| Sha256Digest::from_bytes([0; 32]));
             let rules_need = self.rules_need(part);
-            let mut found: Vec<(String, u8)> = Vec::new();
+            let mut found: Vec<(String, u8, usize)> = Vec::new();
             for folder in folders {
                 let prefix = if folder.is_empty() {
                     String::new()
                 } else {
                     format!("{folder}/")
                 };
-                let Some(body) = self.lookup(
-                    part,
-                    basis,
-                    "list_files",
-                    json!({"prefix":prefix,"limit":LISTING_LIMIT,"max_bytes":LISTING_BYTES}),
-                )?
-                else {
-                    continue;
-                };
                 let owner = owners.get(&folder).copied().unwrap_or(rules_need);
                 for name in GUIDANCE {
                     let path = format!("{prefix}{name}");
-                    let listed = body["paths"]
-                        .as_array()
-                        .is_some_and(|paths| paths.iter().any(|item| item.as_str() == Some(&path)));
-                    if listed && !found.iter().any(|(known, _)| *known == path) {
-                        found.push((path, owner));
+                    if probes >= GUIDANCE_PROBES || found.iter().any(|(known, _, _)| *known == path)
+                    {
+                        continue;
+                    }
+                    probes += 1;
+                    if let Some(lines) = self.indexed_lines(&path) {
+                        found.push((path, owner, lines));
                     }
                 }
             }
+            let words: Vec<(u8, BTreeSet<String>)> = self.parts[part]
+                .needs
+                .iter()
+                .map(|state| (state.need.id, words(&state.need.query)))
+                .collect();
+            let id = self.parts[part].id;
             let mut planned = 0usize;
-            for (path, need) in found {
-                if read >= GUIDANCE_FILES || !self.bytes_fit(planned, HEAD_BYTES) {
+            for (path, owner, lines) in found {
+                if read >= GUIDANCE_FILES || sections >= GUIDANCE_SECTIONS {
                     break;
                 }
-                if self.head(part, need, &path)? {
-                    planned += HEAD_BYTES;
-                    read += 1;
-                    queued = true;
+                read += 1;
+                let facts = self
+                    .lookup(
+                        part,
+                        basis,
+                        "document_facts",
+                        json!({"path":path,"kind":"section","compact":false,
+                            "limit":SECTION_ROWS,"max_bytes":SECTION_FACT_BYTES}),
+                    )?
+                    .map(|body| facts(&body))
+                    .unwrap_or_default();
+                let chosen = choose_sections(&section_spans(&path, &facts, lines), &words, owner);
+                for (start, end, need) in chosen {
+                    if sections >= GUIDANCE_SECTIONS || !self.bytes_fit(planned, SECTION_BYTES) {
+                        break;
+                    }
+                    let after = (end - start).min(HEAD_AFTER);
+                    let dispatch = self.gather.dispatch(
+                        ("context", v3::LoopRead::Context),
+                        json!({"path":path,"line":start,"before":0,"after":after,
+                            "max_bytes":SECTION_BYTES}),
+                        (id, Some(need), 1),
+                        Cause::Structural,
+                        FollowUp::Governing,
+                        Step::Leaf,
+                        &path,
+                    )?;
+                    if self.offer_gathered(part, dispatch)? {
+                        planned += SECTION_BYTES;
+                        sections += 1;
+                        queued = true;
+                    }
                 }
             }
         }
@@ -534,6 +762,9 @@ impl Loop<'_> {
                 .collect();
             for (need, spans) in self.best_passages(part, BEST_PASSAGES) {
                 texts.extend(spans.into_iter().map(|span| (span.hit.text, need)));
+            }
+            if texts.is_empty() {
+                self.idle = v3::GatheringSkip::NoPassages;
             }
             let read: BTreeSet<String> = self
                 .gather
@@ -599,6 +830,9 @@ impl Loop<'_> {
                         files.push(path.clone());
                     }
                 }
+            }
+            if files.is_empty() {
+                self.idle = v3::GatheringSkip::NoPassages;
             }
             let mut wanted = Wanted::default();
             let mut definitions: BTreeMap<String, Vec<Fact>> = BTreeMap::new();

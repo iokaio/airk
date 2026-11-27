@@ -16,6 +16,7 @@ struct Stage {
     offered: usize,
     judgments: usize,
     elapsed: Duration,
+    skipped: Option<v3::GatheringSkip>,
 }
 
 /// The accumulator the loop updates as it moves between stages.
@@ -55,6 +56,19 @@ impl Report {
             stage.elapsed += now.saturating_duration_since(started);
             stage.judgments += judgments.saturating_sub(before);
         }
+    }
+
+    /// Why `kind` admits no read; the stage is reported even if it never
+    /// began. A stage that did read reports no reason.
+    pub(crate) fn skip(&mut self, kind: Kind, reason: v3::GatheringSkip) {
+        let stage = self.stages.entry(kind).or_default();
+        stage.ran = true;
+        stage.skipped = Some(reason);
+    }
+
+    /// Whether `kind` began or was given a reason.
+    pub(crate) fn has(&self, kind: Kind) -> bool {
+        self.stages.get(&kind).is_some_and(|stage| stage.ran)
     }
 
     /// One private lookup charged as a call in `kind`.
@@ -108,17 +122,19 @@ impl Report {
             .into_iter()
             .map(|kind| {
                 let stage = self.stages.get(&kind).cloned().unwrap_or_default();
+                let reads: Vec<v3::GatheringReads> = gather
+                    .taken
+                    .iter()
+                    .filter(|((stage, _), count)| *stage == kind && **count > 0)
+                    .map(|((_, operation), count)| v3::GatheringReads {
+                        operation: *operation,
+                        count: *count,
+                    })
+                    .collect();
                 v3::GatheringStage {
                     stage: kind,
-                    reads: gather
-                        .taken
-                        .iter()
-                        .filter(|((stage, _), count)| *stage == kind && **count > 0)
-                        .map(|((_, operation), count)| v3::GatheringReads {
-                            operation: *operation,
-                            count: *count,
-                        })
-                        .collect(),
+                    skipped: stage.skipped.filter(|_| reads.is_empty()),
+                    reads,
                     lookups: stage.lookups,
                     passages_fetched: fetched.get(&kind).copied().unwrap_or(0),
                     passages_offered: stage.offered,

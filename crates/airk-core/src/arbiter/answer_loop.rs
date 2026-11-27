@@ -1008,6 +1008,44 @@ pub struct GatheringStage {
     pub model_judgments: usize,
     /// Wall-clock time spent in this stage.
     pub elapsed_ms: u64,
+    /// Why the stage admitted no read, when it admitted none. Omitted when
+    /// the stage read something, or for a stage that gives no reason.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skipped: Option<GatheringSkip>,
+}
+
+/// Why a gathering stage admitted no read (kernel CONTRACT "Gathering
+/// rules", rule 7).
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum GatheringSkip {
+    /// The stage's rule is off for this request; it made no lookup.
+    RuleOff,
+    /// The Answer stopped (budget, deadline or a stale publication) before
+    /// the stage began; it made no lookup.
+    Stopped,
+    /// No calls or candidates were left within the stage's room.
+    NoCalls,
+    /// No retention bytes were left within the stage's allowance.
+    NoBytes,
+    /// There was no located passage to plan from.
+    NoPassages,
+    /// Its lookups found nothing new to read.
+    NothingFound,
+}
+
+impl GatheringStageKind {
+    /// The rule a stage of rules 3 and 4 belongs to.
+    fn rule(self) -> Option<GatheringRule> {
+        match self {
+            Self::Guidance => Some(GatheringRule::ProjectGuidance),
+            Self::Cited => Some(GatheringRule::CitedFiles),
+            Self::Structure => Some(GatheringRule::StructureFollowing),
+            _ => None,
+        }
+    }
 }
 
 /// Per-stage counts and timings of one Answer's gathering. Disclosure only:
@@ -2162,6 +2200,25 @@ impl ContextResponseV3 {
                     && stage.reads.iter().all(|reads| reads.count > 0),
                 "Answer gathering stage reads are not one count per operation"
             );
+            if let Some(skipped) = stage.skipped {
+                ensure!(
+                    stage.reads.is_empty(),
+                    "Answer gathering stage is skipped but read"
+                );
+                let quiet = matches!(skipped, GatheringSkip::RuleOff | GatheringSkip::Stopped);
+                ensure!(
+                    !quiet || stage.lookups == 0,
+                    "Answer gathering stage that did not run made lookups"
+                );
+                ensure!(
+                    skipped != GatheringSkip::RuleOff
+                        || stage
+                            .stage
+                            .rule()
+                            .is_some_and(|rule| !report.rules.contains(&rule)),
+                    "Answer gathering stage names its rule off, but it is on"
+                );
+            }
             elapsed = elapsed.saturating_add(stage.elapsed_ms);
             calls = stage
                 .reads

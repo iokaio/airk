@@ -4374,3 +4374,144 @@ tool's description still says `deliverable` does not change gathering; it
 belongs to the public tool surface and was left to that change. The rules
 were run only on canned reads in kernel tests, not on the real indexes, and
 nothing was measured on the four tasks.
+
+### 76. Round one leaves half the retention for the gathering rules
+
+**Measured fault it closes.** First kernel baseline (27 November 2026, real
+indexes, no model, caller needs, anchors and a deliverable, every rule on):
+at the default retention budget (262,144 bytes) every request stopped with
+part stop `budget` at stage `retrieve` in round one, after 40 calls that
+retained 257,684 bytes. Guidance, cited and structure never ran and 1 of 21
+required passages was delivered.
+
+**Cause.** Nothing bounded round one's retention when rules 3 and 4 follow
+it. Each sub-need's overview recipe (a search, whole chunks of its kept hits
+and their outlines) and its code lane (whole chunks, `full_chunks: true`)
+were retained in full; a read that no longer fit stopped the whole Answer
+on `budget` (`Gathering::retain`), and when the budget held, the gathering
+stages' own check (`bytes_fit`, a quarter of the budget free beyond each
+planned read) left them nothing.
+
+**Change.** (1) When rule 3 or 4 is on, round one's recipe reads leave half
+the retention bytes free (`ROUND_ONE_KEEPS` 2, `Gathering::recipe_floor`):
+a recipe read whose `max_bytes` bound, with the bounds of the reads in
+flight and what is already retained, would leave less is not dispatched.
+Its nominations' byte allowance comes from above the same floor. Searches
+are never held back. (2) Lane searches return bounded snippets
+(`full_chunks: false`, `max_bytes` 4,096, was whole chunks at 4,608); whole
+text comes from the recipe's whole chunks and rule 4's definition reads,
+which serves the small-reply goal. The default and maximum budgets are
+unchanged, and a request without caller inputs makes the same reads.
+
+**Arithmetic** (test
+`the_default_retention_leaves_round_one_room_for_guidance_cited_and_structure`:
+six caller needs and four standing ones, two anchors, default budget, every
+evidence read filled to nine tenths of its bound and a snippet search to
+512 bytes a hit). Before: retrieve 47 reads, 188,632 bytes; guidance 0,
+cited 0, structure 0 reads (6 lookups, 3,325 bytes); the stages found under
+a quarter of the budget free and made no read. After: retrieve 33 reads,
+129,357 bytes; guidance 3 reads, 16,593 bytes (2,354 lookup bytes); cited 2
+reads, 11,062 bytes; structure 3 reads, 20,279 bytes (9,147 lookup bytes);
+177,291 bytes in all.
+[Kernel contract](../../crates/airk-kernel/src/arbiter/CONTRACT.md#gathering-rules-user-decision-26-november-2026)
+
+**Not measured.** Canned reads only; the real indexes were not rerun.
+
+### 77. Each later gathering stage has its own share and says why it read nothing
+
+**Measured fault it closes.** First kernel baseline (27 November 2026),
+Munarium (1,023 files) at the largest retention budget (524,288 bytes):
+retrieve made 69 to 71 reads (search 30, outline 18, context 23), and the
+guidance, cited and structure stages each made no read and no lookup in
+about 20 ms, while on Bookbuilder they ran. The reply could not say why.
+
+**Cause** (found by reading `Loop::rounds` into `extend`; not reproduced
+on the real index). Every lookup and read of rules 3 and 4 passed one
+check, `bytes_fit` (`answer/extend.rs`): a quarter of the retention budget
+must stay free beyond the planned read, and lookups plan at their
+`max_bytes` (16,384 for a folder listing or a file's definitions). Round
+one's recipe reads were bounded by nothing; once less than 147,456 bytes
+(a quarter plus 16,384) stayed free, every lookup returned nothing and
+every stage queued nothing. Munarium's 71 reads at their bounds come to
+an estimated 370,000 bytes or more, which leaves less than that; the
+retained bytes of that run were not recorded. The round-one read bounds,
+the fanout window and the stop decisions were read and are not the cause
+by the reply's counts: 71 reads of 132 candidates leave the gathering room
+(calls and candidates less the follow-up reserve) above zero. The stages also shared one pool, so the first could
+spend it all: with eight guidance files found, guidance took 44,248 bytes
+and structure read nothing (test below, before this change).
+
+**Change.** (1) Round one's recipe reads and nominations also leave the
+gathering stages and the later rounds' follow-ups calls and candidates:
+`extend::reserved_calls`, one follow-up read per sub-need and later round
+plus `min(calls, candidates) / 4` (at most `GATHERING_READS_PER_PART`).
+(2) Each stage plans within its own share of the bytes above the later
+rounds' quarter, from what is left when it begins: guidance a third, cited
+files half the rest, structure the remainder. (3) The reply says why:
+Core `GatheringStage` gains the optional `skipped` (`GatheringSkip`:
+`rule_off`, `stopped`, `no_calls`, `no_bytes`, `no_passages`,
+`nothing_found`). For a request the rules apply to, the three stages are
+always reported; one that never began is `stopped` or `rule_off`. The
+validator refuses a skipped stage that read, a `rule_off` or `stopped`
+stage with lookups, and `rule_off` on a stage whose rule is on.
+
+**Tests.** Kernel
+`many_first_stage_reads_and_guidance_files_leave_each_later_stage_its_share`
+(twelve sub-needs, every evidence read at its bound, all four guidance
+files in each folder): before, structure 0 reads; after, guidance 3,
+cited 2, structure 3. `a_stage_that_reads_nothing_says_why`: no guidance
+file and no named path gives `nothing_found`, a rule off `rule_off`, a
+stale publication in round one `stopped` for all three, a stage that read
+no reason, and a request without caller inputs none of these stages. Core
+`a_gathering_report_accounts_for_every_call_and_names_each_stage_once` and
+the refusal case `skipped_gathering_stage_read` (76 refusals, was 75).
+
+**Generated.** `packages/contracts-gen/arbiter.schema.json` (46 lines
+added), `arbiter.ts` and `arbiter.d.ts` (11 lines each: the
+`GatheringSkip` union and the optional field), and
+`fixtures/split/arbiter/answer_loop_cases.json` (one refusal, 34 lines).
+[Core contract](../../crates/airk-core/src/arbiter/CONTRACT.md#gathering-rules-on-the-wire-user-decision-26-november-2026)
+
+**Not measured.** Canned reads only; the real indexes were not rerun.
+
+### 78. Guidance files are probed by name and read by section
+
+**Measured fault it closes.** First kernel baseline (27 November 2026),
+Bookbuilder (8,116 files): the guidance stage made 6 lookups, read nothing
+and fetched 0 passages, although `CLAUDE.md` and `AGENTS.md` sit at the
+repository root.
+
+**Cause.** Guidance listed each folder with one `list_files` page of 200
+paths and looked for the four names in it (`answer/extend.rs`,
+`Loop::guidance`). The listing is recursive and sorted, so in a large
+repository the root page fills with deeper paths before it reaches the
+root's own files. A file that was found was read only from line 1 (101
+lines), so a rule deep in it could not be delivered.
+
+**Change.** Each guidance name is probed directly in each guidance folder
+(the root, the top-level folders and the folders of each sub-need's best
+passages; at most 24 probes) with the uncharged `file_info` read the loop
+already uses for governing documents. A missing file is an ordinary empty
+result, not a failure and not a degradation. Each found file (still at most
+eight) gets one charged `document_facts` lookup of its sections; up to three
+sections a file and twelve an Answer are read with `context` from their
+headings (at most 100 lines and 4,096 bytes each), first those whose
+heading shares most words with a sub-need, then the rest in document
+order. The listing lookup is gone, so a guidance stage spends one lookup a
+file found instead of one a folder.
+[Kernel contract](../../crates/airk-kernel/src/arbiter/CONTRACT.md#gathering-rules-user-decision-26-november-2026)
+
+**Tests.** Kernel
+`a_root_guidance_file_past_a_listing_page_is_found_and_its_late_rule_delivered`
+(a root listing of 250 other paths, `CLAUDE.md` of 420 lines with its rule
+in the section at line 380): before, no probe and no read of `CLAUDE.md`;
+after, the section at line 380 is read (40 lines) and delivered to the
+standing rules need (`CLAUDE.md:380-389` in its paragraph).
+`guidance_is_probed_per_folder_read_and_the_files_it_names_are_read`
+replaces the listing test, and the pure helpers have
+`guidance_sections_run_heading_to_heading_and_the_matching_ones_are_read_first`.
+
+**Not measured.** Canned reads only. The real `document_facts` rows of a
+Markdown file were not inspected; the reader accepts section facts in the
+rich or minimal row form `extend::facts` parses, and a file without them
+is read as one section from line 1.

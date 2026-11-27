@@ -32,16 +32,39 @@ fn project(
             "provenance":[]});
         body
     };
+    let files: &[&str] = &[
+        "AGENTS.md",
+        "CLAUDE.md",
+        "Cargo.toml",
+        GUARD,
+        "crates/README.md",
+        "crates/k/src/CONTRACT.md",
+    ];
     Ok(match tool {
         "list_files" => {
-            let paths: &[&str] = match text("prefix").unwrap_or("") {
-                "" => &["AGENTS.md", "CLAUDE.md", "Cargo.toml", GUARD],
-                "crates/" => &["crates/README.md", GUARD],
-                "crates/k/src/" => &[GUARD, "crates/k/src/CONTRACT.md"],
-                _ => &[],
-            };
+            let prefix = text("prefix").unwrap_or("");
             let mut body = base.clone();
-            body["paths"] = json!(paths);
+            body["paths"] = json!(
+                files
+                    .iter()
+                    .filter(|path| path.starts_with(prefix))
+                    .collect::<Vec<_>>()
+            );
+            body
+        }
+        // The project's guidance files exist, 120 lines each; any other path
+        // is the shared canned answer (none indexed, but one contract).
+        "file_info"
+            if files.contains(&text("path").unwrap_or(""))
+                && super::super::extend::GUIDANCE
+                    .iter()
+                    .any(|name| text("path").is_some_and(|path| path.ends_with(name))) =>
+        {
+            json!({"publication":publication,"path":text("path"),"indexed_lines":120})
+        }
+        "document_facts" => {
+            let mut body = base.clone();
+            body["facts"] = json!([]);
             body
         }
         "code_facts" => match (text("path"), text("name"), text("kind").unwrap_or("")) {
@@ -238,7 +261,9 @@ fn each_need_searches_code_and_standing_build_needs_search_configuration() -> Re
             &[&query(&need.text), "\"evidence_kind\":\"code\""],
         );
         assert_eq!(code.len(), 1, "one code lane for {}", need.text);
-        assert!(code[0].contains("\"full_chunks\":true"));
+        // Bounded snippets, not whole chunks (change-log entry 76).
+        assert!(code[0].contains("\"full_chunks\":false"));
+        assert!(code[0].contains("\"max_bytes\":4096"));
         let configuration = reads_of(
             &reads,
             "search",
@@ -265,27 +290,27 @@ fn each_need_searches_code_and_standing_build_needs_search_configuration() -> Re
 }
 
 #[test]
-fn guidance_is_listed_per_folder_read_and_the_files_it_names_are_read() -> Result<()> {
+fn guidance_is_probed_per_folder_read_and_the_files_it_names_are_read() -> Result<()> {
     let (outcome, reads) = run_ruled(&fixture()?, asked(None), rules("guidance,cited"), &same)?;
-    // One listing per folder: the root, the top-level folders, then the
-    // passages' own folders.
-    let listings: Vec<&String> = reads_of(&reads, "list_files", &[]);
-    for prefix in [
-        "\"prefix\":\"\"",
-        "\"prefix\":\"crates/\"",
-        "\"prefix\":\"crates/k/src/\"",
-    ] {
-        assert_eq!(
-            listings.iter().filter(|read| read.contains(prefix)).count(),
-            1,
-            "{prefix}: {listings:?}"
-        );
+    // One existence probe per name and folder: the root, the top-level
+    // folders, then the passages' own folders; no listing.
+    assert!(reads_of(&reads, "list_files", &[]).is_empty());
+    for folder in ["", "crates/", "crates/k/src/"] {
+        for name in ["CLAUDE.md", "AGENTS.md", "CONTRIBUTING.md", "README.md"] {
+            assert_eq!(
+                reads_of(
+                    &reads,
+                    "file_info",
+                    &[&format!("\"path\":\"{folder}{name}\"")]
+                )
+                .len(),
+                1,
+                "{folder}{name}"
+            );
+        }
     }
-    assert!(
-        reads_of(&reads, "file_info", &["CLAUDE.md"]).is_empty(),
-        "no existence checks"
-    );
-    // The guidance files the listings show, each read from its first line.
+    // The guidance files found, each without section facts read whole from
+    // its first line.
     for path in ["CLAUDE.md", "AGENTS.md", "crates/README.md"] {
         let head = reads_of(
             &reads,
@@ -310,7 +335,12 @@ fn guidance_is_listed_per_folder_read_and_the_files_it_names_are_read() -> Resul
     let report = outcome.response.gathering.as_ref().context("report")?;
     let stage = |kind| report.stages.iter().find(|stage| stage.stage == kind);
     let guidance = stage(v3::GatheringStageKind::Guidance).context("guidance stage")?;
-    assert_eq!(guidance.lookups, listings.len());
+    // One section-fact lookup per file found; the probes are not charged.
+    assert_eq!(
+        guidance.lookups,
+        reads_of(&reads, "document_facts", &[]).len()
+    );
+    assert_eq!(guidance.lookups, 3);
     assert_eq!(
         guidance.reads,
         [v3::GatheringReads {
@@ -522,6 +552,103 @@ fn a_project_rule_fetched_for_the_rules_need_is_delivered_to_it() -> Result<()> 
 }
 
 #[test]
+fn a_root_guidance_file_past_a_listing_page_is_found_and_its_late_rule_delivered() -> Result<()> {
+    // A large repository: its recursive, sorted root listing fills a page of
+    // 200 paths before it reaches `CLAUDE.md`. The file has 420 lines and
+    // states the project rule in its last section, at line 380.
+    let rule = "Project rules: a change of this kind must include required tests, run the test commands, update logs or documents, and pass review before it is done.";
+    let large = |tool: &str, arguments: &Map<String, Value>, mut body: Value| {
+        let path = arguments.get("path").and_then(Value::as_str);
+        match tool {
+            "list_files" => {
+                let paths: Vec<String> = (0..250)
+                    .map(|index| format!(".github/workflows/w{index:03}.yml"))
+                    .collect();
+                body["paths"] = json!(paths);
+                body["truncated"] = json!(true);
+            }
+            "file_info" => {
+                let lines = if path == Some("CLAUDE.md") { 420 } else { 0 };
+                body["indexed_lines"] = json!(lines);
+            }
+            "document_facts" if path == Some("CLAUDE.md") => {
+                let section = |name: &str, start: usize| {
+                    json!({"text":name,"kind":"section","citation":{"path":"CLAUDE.md",
+                        "start_line":start,"end_line":start,"content_hash":"claude-hash"}})
+                };
+                body["facts"] = json!([
+                    section("Working on the project", 1),
+                    section("Execution identity", 40),
+                    section("Source and architecture", 200),
+                    section("Required tests and review", 380),
+                ]);
+            }
+            "context" if path == Some("CLAUDE.md") => {
+                let line = arguments["line"].as_u64().unwrap_or(1) as usize;
+                let text = if line == 380 {
+                    rule.to_owned()
+                } else {
+                    format!("Section of CLAUDE.md at line {line}.")
+                };
+                body["hits"] = json!([hit("CLAUDE.md", line, line + 9, &text)]);
+            }
+            _ => {}
+        }
+        Ok(body)
+    };
+    let (outcome, reads) = run_ruled(
+        &fixture()?,
+        asked(Some(v3::Deliverable::Test)),
+        rules("standing,guidance,delivery"),
+        &large,
+    )?;
+    // The file is found by its existence probe and read at its late
+    // section, not only from line 1.
+    assert_eq!(
+        reads_of(&reads, "file_info", &["\"path\":\"CLAUDE.md\""]).len(),
+        1
+    );
+    let late = reads_of(
+        &reads,
+        "context",
+        &["\"path\":\"CLAUDE.md\"", "\"line\":380", "\"after\":40"],
+    );
+    assert_eq!(late.len(), 1, "{reads:?}");
+    // The rule reaches the standing rules need (sub-need 3).
+    let response = &outcome.response;
+    assert_eq!(
+        response.parts[0].sub_needs[2].origin,
+        v3::SubNeedOrigin::Standing
+    );
+    let paragraph = response
+        .paragraphs
+        .iter()
+        .find(|paragraph| paragraph.text.starts_with("Part 1 sub-need 3 "))
+        .context("rules paragraph")?;
+    assert!(
+        paragraph.text.contains("CLAUDE.md:380-389"),
+        "{}",
+        paragraph.text
+    );
+    // A missing guidance file is no failure and no degradation.
+    let report = response.gathering.as_ref().context("report")?;
+    let guidance = report
+        .stages
+        .iter()
+        .find(|stage| stage.stage == v3::GatheringStageKind::Guidance)
+        .context("guidance stage")?;
+    assert!(guidance.passages_delivered >= 1, "{guidance:?}");
+    assert!(guidance.skipped.is_none());
+    assert!(
+        !response
+            .degradations
+            .iter()
+            .any(|degradation| format!("{degradation:?}").contains("Guidance"))
+    );
+    Ok(())
+}
+
+#[test]
 fn the_report_counts_every_call_by_stage_and_names_the_rules_on() -> Result<()> {
     let (outcome, reads) = run_ruled(
         &fixture()?,
@@ -604,6 +731,274 @@ fn a_request_without_caller_inputs_keeps_its_reads_whatever_the_rules() -> Resul
             .flat_map(|part| &part.sub_needs)
             .all(|need| need.origin == v3::SubNeedOrigin::Derived)
     );
+    Ok(())
+}
+
+/// Evidence reads whose replies fill their own `max_bytes` bound, the most
+/// a canonical read returns: whole chunks, contexts, excerpts and outlines
+/// at nine tenths of it; a snippet search at 512 bytes a hit at most.
+/// Private lookups (listings, file information, facts, references) keep
+/// their natural size. Each search finds the guard and files of its own
+/// query, so different sub-needs read different whole chunks and outlines.
+fn sized(tool: &str, arguments: &Map<String, Value>, mut body: Value) -> Result<Value> {
+    if tool == "search" {
+        let query = arguments["query"].as_str().unwrap_or("");
+        let limit = arguments["limit"].as_u64().unwrap_or(8) as usize;
+        let tag = framed_digest(b"sized-search", &[query.as_bytes()]).to_string()[..8].to_owned();
+        let mut hits = vec![hit(
+            GUARD,
+            10,
+            40,
+            &format!("pub fn restart_guard() {{}} // {query}"),
+        )];
+        for index in 1..limit {
+            hits.push(hit(
+                &format!("crates/q{tag}/src/m{index}.rs"),
+                1,
+                30,
+                &format!("fn m{index}() {{}} // {query}"),
+            ));
+        }
+        body["hits"] = json!(hits);
+    }
+    if !matches!(
+        tool,
+        "search" | "context" | "read_file" | "outline" | "symbols" | "imports"
+    ) {
+        return Ok(body);
+    }
+    let bound = arguments
+        .get("max_bytes")
+        .and_then(Value::as_u64)
+        .unwrap_or(4096) as usize
+        * 9
+        / 10;
+    let hits = body["hits"].as_array().map_or(0, Vec::len);
+    let bound = if tool == "search" && arguments["full_chunks"] == false {
+        bound.min(hits * 512)
+    } else {
+        bound
+    };
+    let size = serde_json::to_vec(&body)?.len();
+    let pad = bound.saturating_sub(size);
+    if let Some(each) = pad.checked_div(hits) {
+        for item in body["hits"].as_array_mut().context("hits")? {
+            let text = item["text"].as_str().unwrap_or("").to_owned();
+            item["text"] = json!(format!("{text}\n{}", "~".repeat(each)));
+        }
+    } else {
+        body["padding"] = json!("~".repeat(pad));
+    }
+    Ok(body)
+}
+
+/// Bytes retained by each gathering stage, from the custody records and
+/// private lookups in dispatch order: (stage, reads, read bytes, lookup bytes).
+fn retained_by_stage(
+    outcome: &AnswerOutcome,
+) -> Vec<(v3::GatheringStageKind, usize, usize, usize)> {
+    let Some(report) = &outcome.response.gathering else {
+        return vec![];
+    };
+    let mut records = outcome.custody.records.iter();
+    let mut lookups = outcome.custody.nominations.iter();
+    report
+        .stages
+        .iter()
+        .map(|stage| {
+            let reads: usize = stage.reads.iter().map(|reads| reads.count).sum();
+            let bytes = records
+                .by_ref()
+                .take(reads)
+                .map(|record| {
+                    serde_json::to_vec(&super::super::volatile::stable(&record.canonical_result))
+                        .map_or(0, |bytes| bytes.len())
+                })
+                .sum();
+            let charged = lookups
+                .by_ref()
+                .take(stage.lookups)
+                .map(|row| row["outcome"]["charged_bytes"].as_u64().unwrap_or(0) as usize)
+                .sum();
+            (stage.stage, reads, bytes, charged)
+        })
+        .collect()
+}
+
+#[test]
+fn the_default_retention_leaves_round_one_room_for_guidance_cited_and_structure() -> Result<()> {
+    // Six caller needs and the four standing ones of a code change, two
+    // anchors, the default budget: the shape of the first kernel baseline.
+    let mut request = request("Fix the restart guard so it refuses a stale replay");
+    request.needs = (1..=6)
+        .map(|case| format!("Where the restart guard handles replay case {case}"))
+        .collect();
+    request.anchors = vec!["restart_guard".into(), "stale replay".into()];
+    request.deliverable = Some(v3::Deliverable::CodeChange);
+    assert_eq!(request.budget.max_bytes, v3::DEFAULT_RETENTION_BYTES);
+    let (outcome, _) = run_ruled(&fixture()?, request, rules("all"), &sized)?;
+    let response = &outcome.response;
+    for (stage, reads, bytes, lookups) in retained_by_stage(&outcome) {
+        println!("{stage:?}: {reads} reads, {bytes} bytes retained, {lookups} lookup bytes");
+    }
+    println!(
+        "work: calls {}, candidates {}, bytes {}; stop {:?}",
+        response.work.calls, response.work.candidates, response.work.bytes, response.parts[0].stop
+    );
+    assert_ne!(response.parts[0].stop, v3::PartStop::Budget);
+    assert!(response.work.bytes <= v3::DEFAULT_RETENTION_BYTES);
+    let report = response.gathering.as_ref().context("report")?;
+    for kind in [
+        v3::GatheringStageKind::Guidance,
+        v3::GatheringStageKind::Cited,
+        v3::GatheringStageKind::Structure,
+    ] {
+        let reads: usize = report
+            .stages
+            .iter()
+            .filter(|stage| stage.stage == kind)
+            .flat_map(|stage| &stage.reads)
+            .map(|reads| reads.count)
+            .sum();
+        assert!(reads > 0, "{kind:?} made no read: {report:?}");
+    }
+    Ok(())
+}
+
+/// Reads of each stage of rules 3 and 4, by stage.
+fn stage_reads(outcome: &AnswerOutcome) -> Vec<(v3::GatheringStageKind, usize)> {
+    use v3::GatheringStageKind::{Cited, Guidance, Structure};
+    let report = outcome.response.gathering.as_ref();
+    [Guidance, Cited, Structure]
+        .into_iter()
+        .map(|kind| {
+            let reads = report
+                .into_iter()
+                .flat_map(|report| &report.stages)
+                .filter(|stage| stage.stage == kind)
+                .flat_map(|stage| &stage.reads)
+                .map(|reads| reads.count)
+                .sum();
+            (kind, reads)
+        })
+        .collect()
+}
+
+#[test]
+fn many_first_stage_reads_and_guidance_files_leave_each_later_stage_its_share() -> Result<()> {
+    // The shape of the index whose later stages did nothing: eight caller
+    // needs and four standing ones, every evidence read at its bound, and
+    // all four guidance files in each guidance folder.
+    let mut request = request("Fix the restart guard so it refuses a stale replay");
+    request.needs = (1..=8)
+        .map(|case| format!("Where the restart guard handles replay case {case}"))
+        .collect();
+    request.deliverable = Some(v3::Deliverable::CodeChange);
+    let crowded = |tool: &str, arguments: &Map<String, Value>, mut body: Value| {
+        if tool == "list_files" {
+            let prefix = arguments["prefix"].as_str().unwrap_or("");
+            if ["", "crates/", "crates/k/src/"].contains(&prefix) {
+                let mut paths: Vec<String> = super::super::extend::GUIDANCE
+                    .iter()
+                    .map(|name| format!("{prefix}{name}"))
+                    .collect();
+                paths.push(GUARD.into());
+                body["paths"] = json!(paths);
+            }
+        }
+        if tool == "file_info" {
+            let path = arguments["path"].as_str().unwrap_or("");
+            let (folder, name) = path.rsplit_once('/').unwrap_or(("", path));
+            if ["", "crates", "crates/k/src"].contains(&folder)
+                && super::super::extend::GUIDANCE.contains(&name)
+            {
+                body["indexed_lines"] = json!(120);
+            }
+        }
+        sized(tool, arguments, body)
+    };
+    let (outcome, _) = run_ruled(&fixture()?, request, rules("all"), &crowded)?;
+    for (stage, reads, bytes, lookups) in retained_by_stage(&outcome) {
+        println!("{stage:?}: {reads} reads, {bytes} bytes retained, {lookups} lookup bytes");
+    }
+    for (kind, reads) in stage_reads(&outcome) {
+        assert!(
+            reads > 0,
+            "{kind:?} made no read: {:?}",
+            outcome.response.gathering
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_stage_that_reads_nothing_says_why() -> Result<()> {
+    use v3::GatheringSkip::{NothingFound, RuleOff, Stopped};
+    use v3::GatheringStageKind::{Cited, Guidance, Structure};
+    let skipped = |outcome: &AnswerOutcome, kind| {
+        let stage = outcome
+            .response
+            .gathering
+            .as_ref()
+            .and_then(|report| report.stages.iter().find(|stage| stage.stage == kind))
+            .cloned();
+        stage.map(|stage| (stage.skipped, stage.reads.is_empty(), stage.lookups))
+    };
+    // No guidance file anywhere and no path in any passage; structure off.
+    let bare = |tool: &str, _: &Map<String, Value>, mut body: Value| {
+        if tool == "list_files" {
+            body["paths"] = json!([GUARD]);
+        }
+        if tool == "file_info" {
+            body["indexed_lines"] = json!(0);
+        }
+        Ok(body)
+    };
+    let (outcome, _) = run_ruled(&fixture()?, asked(None), rules("all,-structure"), &bare)?;
+    assert_eq!(
+        skipped(&outcome, Guidance).map(|(reason, empty, _)| (reason, empty)),
+        Some((Some(NothingFound), true))
+    );
+    assert_eq!(
+        skipped(&outcome, Cited).map(|(reason, empty, _)| (reason, empty)),
+        Some((Some(NothingFound), true))
+    );
+    assert_eq!(skipped(&outcome, Structure), Some((Some(RuleOff), true, 0)));
+    // A stage that read gives no reason.
+    let (outcome, _) = run_ruled(&fixture()?, asked(None), rules("all"), &same)?;
+    for kind in [Guidance, Cited, Structure] {
+        assert_eq!(
+            skipped(&outcome, kind).map(|(reason, _, _)| reason),
+            Some(None)
+        );
+    }
+    // Round one stops on a stale publication: the stages never began.
+    let stale = |tool: &str, arguments: &Map<String, Value>, body: Value| {
+        if tool == "search" && arguments.contains_key("evidence_kind") {
+            let mut moved = body;
+            moved["publication"]["token"] = json!("another-publication");
+            return Ok(moved);
+        }
+        Ok(body)
+    };
+    let (outcome, _) = run_ruled(&fixture()?, asked(None), rules("all"), &stale)?;
+    for kind in [Guidance, Cited, Structure] {
+        assert_eq!(
+            skipped(&outcome, kind),
+            Some((Some(Stopped), true, 0)),
+            "{kind:?}"
+        );
+    }
+    // A request without caller inputs reports no such stage.
+    let (outcome, _) = run_ruled(
+        &fixture()?,
+        request("Where is `restart_guard` defined?"),
+        rules("all"),
+        &same,
+    )?;
+    for kind in [Guidance, Cited, Structure] {
+        assert!(skipped(&outcome, kind).is_none());
+    }
     Ok(())
 }
 

@@ -886,9 +886,12 @@ The private evaluation fixture (service `evaluation_fixture_tests`,
 Tests pass the rules directly (`answer_with_rules`, test builds only).
 
 1. **Search lanes** (`lanes`). Each sub-need's round-one search also runs
-   with `evidence_kind: code` (whole chunks, six hits), and a standing
-   sub-need about the test command or the build file also with
-   `evidence_kind: configuration` (four hits). The lanes are beside the
+   with `evidence_kind: code` (six hits), and a standing sub-need about the
+   test command or the build file also with `evidence_kind: configuration`
+   (four hits). A lane returns bounded snippets (`full_chunks: false`,
+   `max_bytes` 4,096), not whole chunks: whole text comes from the
+   sub-need's recipe (whole chunks of its kept hits) and from rule 4's
+   definition reads (change-log entry 76). The lanes are beside the
    sub-need's recipe and outside its six-read cap; Core bounds them with
    `SEARCH_LANES_PER_SUB_NEED` (2).
 2. **Standing sub-needs** (`standing`). The deliverable adds, after the
@@ -900,15 +903,29 @@ Tests pass the rules directly (`answer_with_rules`, test builds only).
    its own words, with `origin: standing` on the wire (Core
    `SubNeedOrigin::Standing`, at most `MAX_STANDING_NEEDS`).
 3. **Project guidance and cited files** (`guidance`, `cited`). When round
-   one's searches and recipes have run, one `list_files` lookup per folder
-   (the root, the top-level folders and the folders of each sub-need's three
-   best passages, at most six) finds `CLAUDE.md`, `AGENTS.md`,
-   `CONTRIBUTING.md` and `README.md` directly in it; each found file (at
-   most eight) is read from line 1 (`context`, 101 lines). Then the
-   repository paths named in those files and in the best passages (a folder,
-   a file name with an extension, safe and relative), most cited first, at
-   most six not already read, are read the same way. A root listing is one
-   page of 200 paths; a guidance file past it is not found.
+   one's searches and recipes have run, each of `CLAUDE.md`, `AGENTS.md`,
+   `CONTRIBUTING.md` and `README.md` is probed directly in each guidance
+   folder (the root, the top-level folders and the folders of each
+   sub-need's three best passages, at most six; at most 24 probes) with the
+   same uncharged `file_info` read that governing documents take: a file
+   with indexed lines at this publication exists. A missing file is an
+   ordinary empty result, not a failure and not a degradation. Each found
+   file (at most eight) gets one charged `document_facts` lookup of its
+   sections (`kind: section`, 64 rows, 4,096 bytes); a section runs from its
+   heading to the line before the next, the last to the file's end, and
+   lines before the first heading are a section of their own (a file
+   without section facts is one section). Up to three sections of a file
+   are read, at most twelve in the Answer: first those whose heading shares
+   most words (four letters or more) with a sub-need, for that sub-need,
+   then the rest in document order for the folder's owner; each is a
+   `context` read from its heading, at most 100 lines after it and 4,096
+   bytes. So a rule deep in the file can be delivered (change-log entry 78).
+   Then the repository paths named in those files and in the best passages
+   (a folder, a file name with an extension, safe and relative), most cited
+   first, at most six not already read, are read from line 1 (`context`,
+   101 lines). Before 27 November guidance listed each folder with one
+   `list_files` page of 200 paths, which a large repository's recursive,
+   sorted root listing filled before reaching its guidance files.
 4. **Structure following** (`structure`). For each sub-need's two best code
    passages (at most six files), from the index's code facts with minimal
    rows: the file's definitions (one lookup) and the innermost definitions
@@ -945,7 +962,15 @@ Tests pass the rules directly (`answer_with_rules`, test builds only).
    operation, the private lookups charged as calls, passages fetched,
    offered (per showing to a ranking) and delivered, model judgments (Focus
    pairs and model-scored card decisions) and elapsed milliseconds. Reads
-   plus lookups equal `work.calls`. The delivery stage ends before the
+   plus lookups equal `work.calls`. For a request the rules apply to, the
+   guidance, cited and structure stages are always reported, and one that
+   admitted no read says why in `skipped` (Core `GatheringSkip`):
+   `rule_off` (its switch is off), `stopped` (the Answer stopped before it
+   began), `no_calls` (its gathering room or the Answer's calls and
+   candidates ran out), `no_bytes` (its byte share ran out), `no_passages`
+   (no located passage to plan from) or `nothing_found` (its lookups found
+   nothing new to read). A stage that read carries no reason; a request the
+   rules do not apply to has none of these stages (change-log entry 77). The delivery stage ends before the
    kernel takes the reply's `elapsed_ms`, so Union's packing is not in it.
    A service job reply re-attached by a later call carries that call's
    wait as `elapsed_ms`, while the stages keep the run's own times.
@@ -954,6 +979,32 @@ Tests pass the rules directly (`answer_with_rules`, test builds only).
 stop at `GATHERING_READS_PER_PART` (48), within the part's call share and
 the Answer's calls and candidates, after one follow-up read per sub-need for
 each later round, and while a quarter of the retention bytes stays free.
+When rule 3 or 4 is on, round one's recipe reads (every round-one read
+that is not a search: whole chunks, outlines, excerpts, governing reads)
+leave half the retention bytes free for them and the later rounds
+(`ROUND_ONE_KEEPS`, `Gathering::recipe_floor`): a recipe read whose
+`max_bytes` bound, with the bounds of the reads in flight and what is
+retained, would leave less is not dispatched and is forgotten as if never
+offered. Its nominations' byte allowance is taken from above the same
+floor. Searches (the part search, anchors, sub-need searches and lanes)
+are never held back. Measured fault it closes (first kernel baseline, 27
+November 2026): at the default 262,144 bytes round one retained 257,684
+bytes in 40 calls and the request stopped on `budget` inside `retrieve`;
+guidance, cited and structure never ran (change-log entry 76).
+The same recipe reads and nominations also leave the Answer's calls and
+candidates `extend::reserved_calls`: one follow-up read per sub-need and
+later round plus `min(calls, candidates) / 4`, at most
+`GATHERING_READS_PER_PART` (33 at the default budget). Each of rules 3 and
+4's stages then plans only within its own share of the bytes above the
+later rounds' quarter, taken from what is left when it begins: a third for
+guidance, half the rest for cited files and all that remains for
+structure (`stage_share`), so no stage spends another's. Measured fault it
+closes (first kernel baseline, Munarium, `max_bytes` 524,288): retrieve
+made 69 to 71 reads and guidance, cited and structure each made no read
+and no lookup in about 20 ms; the cause, found by reading the code, is
+the single shared check that a planned read leave a quarter of the
+budget free beyond its bound, with lookups planned at 16,384 bytes,
+after round one had spent the rest (change-log entry 77).
 Lookups are charged as nominations are (a call, a candidate, their bytes)
 and kept in custody beside them; they are never evidence. Every passage
 these rules add is an ordinary canonical read on the Answer's revision.
@@ -961,4 +1012,5 @@ these rules add is an ordinary canonical read on the Answer's revision.
 Tests: `arbiter::answer::rules::tests`, `answer::deliver::tests`,
 `answer::extend::tests` (pure rules, expectations by hand) and
 `answer::tests::gathering` (the real loop on canned reads, no model and with
-synthetic Focus).
+synthetic Focus); `the_default_retention_leaves_round_one_room_for_guidance_cited_and_structure`
+fills every evidence read to its bound at the default budget.

@@ -190,6 +190,7 @@ fn a_gathering_report_accounts_for_every_call_and_names_each_stage_once() -> Res
         passages_delivered: 1,
         model_judgments: 0,
         elapsed_ms: 100,
+        skipped: None,
     };
     // The valid reply makes six calls: four searches and two lookups.
     let mut packet = response();
@@ -239,6 +240,59 @@ fn a_gathering_report_accounts_for_every_call_and_names_each_stage_once() -> Res
     refuse(
         &|report| report.stages[1].lookups = 3,
         "differ from the reply's calls",
+    );
+    // A stage that admitted no read may say why; the reason is omitted
+    // when absent.
+    assert!(raw["gathering"]["stages"][0].get("skipped").is_none());
+    let mut skipped = packet.clone();
+    skipped
+        .gathering
+        .as_mut()
+        .unwrap()
+        .stages
+        .push(GatheringStage {
+            stage: GatheringStageKind::Guidance,
+            reads: vec![],
+            lookups: 0,
+            passages_fetched: 0,
+            passages_offered: 0,
+            passages_delivered: 0,
+            model_judgments: 0,
+            elapsed_ms: 0,
+            skipped: Some(GatheringSkip::RuleOff),
+        });
+    skipped.validate(&budget())?;
+    assert_eq!(
+        serde_json::to_value(&skipped)?["gathering"]["stages"][2]["skipped"],
+        "rule_off"
+    );
+    let refuse_skipped = |change: &dyn Fn(&mut GatheringReport), error: &str| {
+        let mut wrong = skipped.clone();
+        change(wrong.gathering.as_mut().unwrap());
+        let found = wrong.validate(&budget()).unwrap_err().to_string();
+        assert!(found.contains(error), "{found}");
+    };
+    // A skipped stage made no read.
+    refuse_skipped(
+        &|report| report.stages[1].skipped = Some(GatheringSkip::NothingFound),
+        "skipped but read",
+    );
+    // A stage whose rule is off, or that never began, made no lookup.
+    refuse_skipped(
+        &|report| {
+            report.stages[2].lookups = 1;
+            report.stages[1].lookups = 1;
+        },
+        "did not run made lookups",
+    );
+    // Its rule is named off only when it is off.
+    refuse_skipped(
+        &|report| report.rules.push(GatheringRule::ProjectGuidance),
+        "names its rule off, but it is on",
+    );
+    refuse_skipped(
+        &|report| report.stages[2].stage = GatheringStageKind::Coverage,
+        "names its rule off, but it is on",
     );
     Ok(())
 }
@@ -994,10 +1048,34 @@ fn refusals() -> Vec<(&'static str, Mutation, &'static str)> {
                         passages_delivered: 2,
                         model_judgments: 0,
                         elapsed_ms: 10,
+                        skipped: None,
                     }],
                 })
             },
             "Answer gathering reads and lookups differ from the reply's calls",
+        ),
+        (
+            "skipped_gathering_stage_read",
+            |r| {
+                r.gathering = Some(GatheringReport {
+                    rules: vec![GatheringRule::SearchLanes],
+                    stages: vec![GatheringStage {
+                        stage: GatheringStageKind::Guidance,
+                        reads: vec![GatheringReads {
+                            operation: LoopRead::Context,
+                            count: 5,
+                        }],
+                        lookups: 0,
+                        passages_fetched: 1,
+                        passages_offered: 1,
+                        passages_delivered: 0,
+                        model_judgments: 0,
+                        elapsed_ms: 10,
+                        skipped: Some(GatheringSkip::NothingFound),
+                    }],
+                })
+            },
+            "Answer gathering stage is skipped but read",
         ),
         (
             "fanout_over_budget",
@@ -1434,7 +1512,8 @@ fn valid_two_part_response_and_ticket_are_accepted() -> Result<()> {
 #[test]
 fn each_rule_refuses_only_its_own_violation() -> Result<()> {
     let cases = refusals();
-    assert_eq!(cases.len(), 75);
+    // 76 with `skipped_gathering_stage_read` (change-log entry 77).
+    assert_eq!(cases.len(), 76);
     for (id, mutate, expected) in cases {
         let mut packet = response();
         mutate(&mut packet);
