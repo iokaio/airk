@@ -740,6 +740,131 @@ fn the_default_retention_leaves_round_one_room_for_guidance_cited_and_structure(
     Ok(())
 }
 
+/// Reads of each stage of rules 3 and 4, by stage.
+fn stage_reads(outcome: &AnswerOutcome) -> Vec<(v3::GatheringStageKind, usize)> {
+    use v3::GatheringStageKind::{Cited, Guidance, Structure};
+    let report = outcome.response.gathering.as_ref();
+    [Guidance, Cited, Structure]
+        .into_iter()
+        .map(|kind| {
+            let reads = report
+                .into_iter()
+                .flat_map(|report| &report.stages)
+                .filter(|stage| stage.stage == kind)
+                .flat_map(|stage| &stage.reads)
+                .map(|reads| reads.count)
+                .sum();
+            (kind, reads)
+        })
+        .collect()
+}
+
+#[test]
+fn many_first_stage_reads_and_guidance_files_leave_each_later_stage_its_share() -> Result<()> {
+    // The shape of the index whose later stages did nothing: eight caller
+    // needs and four standing ones, every evidence read at its bound, and
+    // all four guidance files in each guidance folder.
+    let mut request = request("Fix the restart guard so it refuses a stale replay");
+    request.needs = (1..=8)
+        .map(|case| format!("Where the restart guard handles replay case {case}"))
+        .collect();
+    request.deliverable = Some(v3::Deliverable::CodeChange);
+    let crowded = |tool: &str, arguments: &Map<String, Value>, mut body: Value| {
+        if tool == "list_files" {
+            let prefix = arguments["prefix"].as_str().unwrap_or("");
+            if ["", "crates/", "crates/k/src/"].contains(&prefix) {
+                let mut paths: Vec<String> = super::super::extend::GUIDANCE
+                    .iter()
+                    .map(|name| format!("{prefix}{name}"))
+                    .collect();
+                paths.push(GUARD.into());
+                body["paths"] = json!(paths);
+            }
+        }
+        sized(tool, arguments, body)
+    };
+    let (outcome, _) = run_ruled(&fixture()?, request, rules("all"), &crowded)?;
+    for (stage, reads, bytes, lookups) in retained_by_stage(&outcome) {
+        println!("{stage:?}: {reads} reads, {bytes} bytes retained, {lookups} lookup bytes");
+    }
+    for (kind, reads) in stage_reads(&outcome) {
+        assert!(
+            reads > 0,
+            "{kind:?} made no read: {:?}",
+            outcome.response.gathering
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_stage_that_reads_nothing_says_why() -> Result<()> {
+    use v3::GatheringSkip::{NothingFound, RuleOff, Stopped};
+    use v3::GatheringStageKind::{Cited, Guidance, Structure};
+    let skipped = |outcome: &AnswerOutcome, kind| {
+        let stage = outcome
+            .response
+            .gathering
+            .as_ref()
+            .and_then(|report| report.stages.iter().find(|stage| stage.stage == kind))
+            .cloned();
+        stage.map(|stage| (stage.skipped, stage.reads.is_empty(), stage.lookups))
+    };
+    // No guidance file anywhere and no path in any passage; structure off.
+    let bare = |tool: &str, _: &Map<String, Value>, mut body: Value| {
+        if tool == "list_files" {
+            body["paths"] = json!([GUARD]);
+        }
+        Ok(body)
+    };
+    let (outcome, _) = run_ruled(&fixture()?, asked(None), rules("all,-structure"), &bare)?;
+    assert_eq!(
+        skipped(&outcome, Guidance).map(|(reason, empty, _)| (reason, empty)),
+        Some((Some(NothingFound), true))
+    );
+    assert_eq!(
+        skipped(&outcome, Cited).map(|(reason, empty, _)| (reason, empty)),
+        Some((Some(NothingFound), true))
+    );
+    assert_eq!(skipped(&outcome, Structure), Some((Some(RuleOff), true, 0)));
+    // A stage that read gives no reason.
+    let (outcome, _) = run_ruled(&fixture()?, asked(None), rules("all"), &same)?;
+    for kind in [Guidance, Cited, Structure] {
+        assert_eq!(
+            skipped(&outcome, kind).map(|(reason, _, _)| reason),
+            Some(None)
+        );
+    }
+    // Round one stops on a stale publication: the stages never began.
+    let stale = |tool: &str, arguments: &Map<String, Value>, body: Value| {
+        if tool == "search" && arguments.contains_key("evidence_kind") {
+            let mut moved = body;
+            moved["publication"]["token"] = json!("another-publication");
+            return Ok(moved);
+        }
+        Ok(body)
+    };
+    let (outcome, _) = run_ruled(&fixture()?, asked(None), rules("all"), &stale)?;
+    for kind in [Guidance, Cited, Structure] {
+        assert_eq!(
+            skipped(&outcome, kind),
+            Some((Some(Stopped), true, 0)),
+            "{kind:?}"
+        );
+    }
+    // A request without caller inputs reports no such stage.
+    let (outcome, _) = run_ruled(
+        &fixture()?,
+        request("Where is `restart_guard` defined?"),
+        rules("all"),
+        &same,
+    )?;
+    for kind in [Guidance, Cited, Structure] {
+        assert!(skipped(&outcome, kind).is_none());
+    }
+    Ok(())
+}
+
 #[test]
 fn the_rules_keep_working_with_focus_enabled() -> Result<()> {
     let (fixture, focused) = super::focused(false)?;

@@ -4416,3 +4416,60 @@ reads, 11,062 bytes; structure 3 reads, 20,279 bytes (9,147 lookup bytes);
 [Kernel contract](../../crates/airk-kernel/src/arbiter/CONTRACT.md#gathering-rules-user-decision-26-november-2026)
 
 **Not measured.** Canned reads only; the real indexes were not rerun.
+
+### 77. Each later gathering stage has its own share and says why it read nothing
+
+**Measured fault it closes.** First kernel baseline (27 November 2026),
+Munarium (1,023 files) at the largest retention budget (524,288 bytes):
+retrieve made 69 to 71 reads (search 30, outline 18, context 23), and the
+guidance, cited and structure stages each made no read and no lookup in
+about 20 ms, while on Bookbuilder they ran. The reply could not say why.
+
+**Cause** (found by reading `Loop::rounds` into `extend`; not reproduced
+on the real index). Every lookup and read of rules 3 and 4 passed one
+check, `bytes_fit` (`answer/extend.rs`): a quarter of the retention budget
+must stay free beyond the planned read, and lookups plan at their
+`max_bytes` (16,384 for a folder listing or a file's definitions). Round
+one's recipe reads were bounded by nothing; once less than 147,456 bytes
+(a quarter plus 16,384) stayed free, every lookup returned nothing and
+every stage queued nothing. Munarium's 71 reads at their bounds come to
+an estimated 370,000 bytes or more, which leaves less than that; the
+retained bytes of that run were not recorded. The round-one read bounds,
+the fanout window and the stop decisions were read and are not the cause
+by the reply's counts: 71 reads of 132 candidates leave the gathering room
+(calls and candidates less the follow-up reserve) above zero. The stages also shared one pool, so the first could
+spend it all: with eight guidance files found, guidance took 44,248 bytes
+and structure read nothing (test below, before this change).
+
+**Change.** (1) Round one's recipe reads and nominations also leave the
+gathering stages and the later rounds' follow-ups calls and candidates:
+`extend::reserved_calls`, one follow-up read per sub-need and later round
+plus `min(calls, candidates) / 4` (at most `GATHERING_READS_PER_PART`).
+(2) Each stage plans within its own share of the bytes above the later
+rounds' quarter, from what is left when it begins: guidance a third, cited
+files half the rest, structure the remainder. (3) The reply says why:
+Core `GatheringStage` gains the optional `skipped` (`GatheringSkip`:
+`rule_off`, `stopped`, `no_calls`, `no_bytes`, `no_passages`,
+`nothing_found`). For a request the rules apply to, the three stages are
+always reported; one that never began is `stopped` or `rule_off`. The
+validator refuses a skipped stage that read, a `rule_off` or `stopped`
+stage with lookups, and `rule_off` on a stage whose rule is on.
+
+**Tests.** Kernel
+`many_first_stage_reads_and_guidance_files_leave_each_later_stage_its_share`
+(twelve sub-needs, every evidence read at its bound, all four guidance
+files in each folder): before, structure 0 reads; after, guidance 3,
+cited 2, structure 3. `a_stage_that_reads_nothing_says_why`: no guidance
+file and no named path gives `nothing_found`, a rule off `rule_off`, a
+stale publication in round one `stopped` for all three, a stage that read
+no reason, and a request without caller inputs none of these stages. Core
+`a_gathering_report_accounts_for_every_call_and_names_each_stage_once` and
+the refusal case `skipped_gathering_stage_read` (76 refusals, was 75).
+
+**Generated.** `packages/contracts-gen/arbiter.schema.json` (46 lines
+added), `arbiter.ts` and `arbiter.d.ts` (11 lines each: the
+`GatheringSkip` union and the optional field), and
+`fixtures/split/arbiter/answer_loop_cases.json` (one refusal, 34 lines).
+[Core contract](../../crates/airk-core/src/arbiter/CONTRACT.md#gathering-rules-on-the-wire-user-decision-26-november-2026)
+
+**Not measured.** Canned reads only; the real indexes were not rerun.

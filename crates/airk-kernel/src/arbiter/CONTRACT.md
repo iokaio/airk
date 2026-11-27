@@ -948,7 +948,15 @@ Tests pass the rules directly (`answer_with_rules`, test builds only).
    operation, the private lookups charged as calls, passages fetched,
    offered (per showing to a ranking) and delivered, model judgments (Focus
    pairs and model-scored card decisions) and elapsed milliseconds. Reads
-   plus lookups equal `work.calls`. The delivery stage ends before the
+   plus lookups equal `work.calls`. For a request the rules apply to, the
+   guidance, cited and structure stages are always reported, and one that
+   admitted no read says why in `skipped` (Core `GatheringSkip`):
+   `rule_off` (its switch is off), `stopped` (the Answer stopped before it
+   began), `no_calls` (its gathering room or the Answer's calls and
+   candidates ran out), `no_bytes` (its byte share ran out), `no_passages`
+   (no located passage to plan from) or `nothing_found` (its lookups found
+   nothing new to read). A stage that read carries no reason; a request the
+   rules do not apply to has none of these stages (change-log entry 77). The delivery stage ends before the
    kernel takes the reply's `elapsed_ms`, so Union's packing is not in it.
    A service job reply re-attached by a later call carries that call's
    wait as `elapsed_ms`, while the stages keep the run's own times.
@@ -969,6 +977,20 @@ are never held back. Measured fault it closes (first kernel baseline, 27
 November 2026): at the default 262,144 bytes round one retained 257,684
 bytes in 40 calls and the request stopped on `budget` inside `retrieve`;
 guidance, cited and structure never ran (change-log entry 76).
+The same recipe reads and nominations also leave the Answer's calls and
+candidates `extend::reserved_calls`: one follow-up read per sub-need and
+later round plus `min(calls, candidates) / 4`, at most
+`GATHERING_READS_PER_PART` (33 at the default budget). Each of rules 3 and
+4's stages then plans only within its own share of the bytes above the
+later rounds' quarter, taken from what is left when it begins: a third for
+guidance, half the rest for cited files and all that remains for
+structure (`stage_share`), so no stage spends another's. Measured fault it
+closes (first kernel baseline, Munarium, `max_bytes` 524,288): retrieve
+made 69 to 71 reads and guidance, cited and structure each made no read
+and no lookup in about 20 ms; the cause, found by reading the code, is
+the single shared check that a planned read leave a quarter of the
+budget free beyond its bound, with lookups planned at 16,384 bytes,
+after round one had spent the rest (change-log entry 77).
 Lookups are charged as nominations are (a call, a candidate, their bytes)
 and kept in custody beside them; they are never evidence. Every passage
 these rules add is an ordinary canonical read on the Answer's revision.

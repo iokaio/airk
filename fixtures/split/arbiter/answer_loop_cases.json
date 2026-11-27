@@ -1310,6 +1310,40 @@
     {
       "accepted": false,
       "base": "two_parts_valid",
+      "error": "Answer gathering stage is skipped but read",
+      "id": "skipped_gathering_stage_read",
+      "replace": [
+        {
+          "pointer": "/gathering",
+          "value": {
+            "rules": [
+              "search_lanes"
+            ],
+            "stages": [
+              {
+                "elapsed_ms": 10,
+                "lookups": 0,
+                "model_judgments": 0,
+                "passages_delivered": 0,
+                "passages_fetched": 1,
+                "passages_offered": 1,
+                "reads": [
+                  {
+                    "count": 5,
+                    "operation": "context"
+                  }
+                ],
+                "skipped": "nothing_found",
+                "stage": "guidance"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
       "error": "Answer round fanout exceeds its reads or budget",
       "id": "fanout_over_budget",
       "replace": [

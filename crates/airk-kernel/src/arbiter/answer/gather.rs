@@ -275,6 +275,9 @@ pub(crate) struct Gathering {
     /// gathering rules 3 and 4 follow them (kernel CONTRACT "Gathering
     /// rules", "Budgets"); `None` for every other request.
     pub(crate) recipe_floor: Option<usize>,
+    /// Calls and candidates the same reads leave for those rules and one
+    /// follow-up read per sub-need and later round (with `recipe_floor`).
+    pub(crate) recipe_calls: usize,
 }
 
 /// The most a read may retain: its own `max_bytes` bound.
@@ -308,7 +311,24 @@ impl Gathering {
             stage: v3::GatheringStageKind::Retrieve,
             taken: BTreeMap::new(),
             recipe_floor: None,
+            recipe_calls: 0,
         })
+    }
+
+    /// Calls and candidates left beyond the reads in flight.
+    fn admissions_left(&self) -> usize {
+        self.budget.calls.saturating_sub(self.calls).min(
+            self.budget
+                .candidates
+                .saturating_sub(self.admitted_candidates()),
+        )
+    }
+
+    /// Whether a round-one recipe read or nomination may still spend a call
+    /// and a candidate: always, unless rules 3 and 4 follow and only their
+    /// reserve is left.
+    pub(crate) fn recipe_call_left(&self) -> bool {
+        self.recipe_floor.is_none() || self.admissions_left() > self.recipe_calls
     }
 
     /// Whether a queued read is a round-one recipe read the floor holds back:
@@ -330,6 +350,7 @@ impl Gathering {
             .map(|pending| bound(&pending.arguments))
             .sum();
         self.remaining_bytes() < in_flight + bound(&dispatch.arguments) + floor
+            || !self.recipe_call_left()
     }
 
     /// Reads the Answer may still admit beyond those already queued: the

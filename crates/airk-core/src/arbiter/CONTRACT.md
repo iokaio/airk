@@ -1412,11 +1412,23 @@ reply changes three ways.
   and lookups of all stages equal `work.calls`. It is disclosure only: no record id,
   digest or decision binds it, and it is outside the loop semantics digest
   (`answer_loop.rs` is not one of its sources).
+- **`skipped`** (27 November 2026, additive, change-log entry 77): an
+  optional `GatheringSkip` on a stage that admitted no read, omitted when
+  absent, so a reply without it keeps its bytes: `rule_off`, `stopped`,
+  `no_calls`, `no_bytes`, `no_passages`, `nothing_found`. The validator
+  refuses a skipped stage with reads ("Answer gathering stage is skipped
+  but read"), a `rule_off` or `stopped` stage with lookups ("Answer
+  gathering stage that did not run made lookups"), and `rule_off` on a
+  stage other than guidance, cited or structure or whose rule
+  (`project_guidance`, `cited_files`, `structure_following`) is named on
+  ("Answer gathering stage names its rule off, but it is on"). Measured
+  fault it answers: on one index those three stages did nothing and the
+  reply could not say why.
 
 Tests: `a_gathering_report_accounts_for_every_call_and_names_each_stage_once`
 and the refusal cases `standing_need_in_a_two_part_reply`,
-`gathering_calls_differ_from_the_work` and `round_reads_over_structure`
-(now at 74) in `answer_loop::tests`; regenerated
+`gathering_calls_differ_from_the_work`, `skipped_gathering_stage_read` and
+`round_reads_over_structure` (now at 74) in `answer_loop::tests`; regenerated
 `packages/contracts-gen/arbiter.schema.json`, the TypeScript views and
 `fixtures/split/arbiter/answer_loop_cases.json`.
 

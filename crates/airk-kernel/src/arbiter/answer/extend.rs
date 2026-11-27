@@ -60,6 +60,34 @@ const RETENTION_RESERVE_SHARE: usize = 4;
 /// `max_bytes / ROUND_ONE_KEEPS` free for these rules and the later rounds
 /// (`Gathering::recipe_floor`); its searches are never held back.
 pub(super) const ROUND_ONE_KEEPS: usize = 2;
+/// The same reads leave these rules `min(calls, candidates) / 4` (at most
+/// `GATHERING_READS_PER_PART`) beside one follow-up read per sub-need and
+/// later round.
+const GATHERING_CALL_SHARE: usize = 4;
+
+/// Calls and candidates round one's recipe reads and nominations leave for
+/// rules 3 and 4 and the later rounds' follow-up reads.
+pub(super) fn reserved_calls(request: &v3::ContextRequestV3, parts: &[PartState]) -> usize {
+    let budget = &request.budget;
+    let needs: usize = parts.iter().map(|part| part.needs.len()).sum();
+    let follow_ups =
+        needs * budget.rounds.saturating_sub(1) * v3::FOLLOW_UP_READS_PER_SUB_NEED_ROUND;
+    let gathering = v3::GATHERING_READS_PER_PART
+        .min(budget.calls.min(budget.candidates) / GATHERING_CALL_SHARE);
+    follow_ups + gathering
+}
+
+/// The share of the bytes above the later rounds' reserve a stage may
+/// plan, of what is left when it begins: a third for guidance, half the
+/// rest for cited files, and all that remains for structure, so no stage
+/// can spend another's.
+fn stage_share(kind: Kind, available: usize) -> usize {
+    match kind {
+        Kind::Guidance => available / 3,
+        Kind::Cited => available / 2,
+        _ => available,
+    }
+}
 
 /// One code fact of a lookup: its name, kind and citable lines.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -288,11 +316,28 @@ impl Loop<'_> {
             .min(v3::GATHERING_READS_PER_PART.saturating_sub(self.gathered[part]))
     }
 
-    /// Whether `bytes` more can be planned and still leave later rounds a
-    /// quarter of the retention budget.
-    fn bytes_fit(&self, planned: usize, bytes: usize) -> bool {
-        self.gather.remaining_bytes()
-            >= planned + bytes + self.request.budget.max_bytes / RETENTION_RESERVE_SHARE
+    /// Whether `bytes` more can be planned within the stage's own allowance,
+    /// which always leaves later rounds a quarter of the retention budget.
+    /// A refusal is noted as the stage's reason if it reads nothing.
+    fn bytes_fit(&mut self, planned: usize, bytes: usize) -> bool {
+        let floor = self
+            .stage_floor
+            .max(self.request.budget.max_bytes / RETENTION_RESERVE_SHARE);
+        let fits = self.gather.remaining_bytes() >= planned + bytes + floor;
+        if !fits {
+            self.starved.get_or_insert(v3::GatheringSkip::NoBytes);
+        }
+        fits
+    }
+
+    /// The part's gathering room; none left is noted as the stage's reason
+    /// if it reads nothing.
+    fn room_left(&mut self, part: usize) -> bool {
+        let left = self.gathering_room(part) > 0;
+        if !left {
+            self.starved.get_or_insert(v3::GatheringSkip::NoCalls);
+        }
+        left
     }
 
     /// One private lookup through the canonical reader, charged as a call of
@@ -313,14 +358,18 @@ impl Loop<'_> {
         if let Some(known) = self.lookups.get(&key) {
             return Ok(known.outcome.get("body").cloned());
         }
-        if self.gather.stop.is_some() || self.stop_due() || self.gathering_room(part) == 0 {
+        if self.gather.stop.is_some() || self.stop_due() || !self.room_left(part) {
             return Ok(None);
         }
         let max_bytes = arguments
             .get("max_bytes")
             .and_then(Value::as_u64)
             .unwrap_or(4096) as usize;
-        if !self.bytes_fit(0, max_bytes) || !self.gather.reserve_nomination() {
+        if !self.bytes_fit(0, max_bytes) {
+            return Ok(None);
+        }
+        if !self.gather.reserve_nomination() {
+            self.starved.get_or_insert(v3::GatheringSkip::NoCalls);
             return Ok(None);
         }
         self.used_calls[part] += 1;
@@ -352,7 +401,7 @@ impl Loop<'_> {
     /// Offer a gathering read outside its sub-need's round-one recipe cap,
     /// counted against the part's gathering room instead.
     fn offer_gathered(&mut self, part: usize, dispatch: gather::Dispatch) -> Result<bool> {
-        if self.gathering_room(part) == 0 || self.gather.known(&dispatch.key) {
+        if self.gather.known(&dispatch.key) || !self.room_left(part) {
             return Ok(false);
         }
         self.gathered[part] += 1;
@@ -417,32 +466,67 @@ impl Loop<'_> {
     /// Round one's queue is empty: run the next gathering phase that has
     /// work. True when a phase queued a read.
     pub(super) fn extend(&mut self) -> Result<bool> {
+        // A request the rules do not apply to has no such stage at all.
+        if self.rules == GatheringRules::none() {
+            return Ok(false);
+        }
         while self.extension < 3 {
             let phase = self.extension;
             self.extension += 1;
             if self.gather.stop.is_some() || self.stop_due() {
                 return Ok(false);
             }
-            let queued = match phase {
-                0 if self.rules.guidance => {
-                    self.begin_stage(Kind::Guidance);
-                    self.guidance()?
-                }
-                1 if self.rules.cited => {
-                    self.begin_stage(Kind::Cited);
-                    self.cited()?
-                }
-                2 if self.rules.structure => {
-                    self.begin_stage(Kind::Structure);
-                    self.structure()?
-                }
-                _ => false,
+            let (kind, on) = match phase {
+                0 => (Kind::Guidance, self.rules.guidance),
+                1 => (Kind::Cited, self.rules.cited),
+                _ => (Kind::Structure, self.rules.structure),
+            };
+            if !on {
+                self.report.skip(kind, v3::GatheringSkip::RuleOff);
+                continue;
+            }
+            self.begin_stage(kind);
+            // The stage's own share of the bytes above the later rounds'
+            // reserve, taken from what is left as it begins.
+            let remaining = self.gather.remaining_bytes();
+            let later = self.request.budget.max_bytes / RETENTION_RESERVE_SHARE;
+            self.stage_floor = remaining - stage_share(kind, remaining.saturating_sub(later));
+            self.starved = None;
+            self.idle = v3::GatheringSkip::NothingFound;
+            let queued = match kind {
+                Kind::Guidance => self.guidance()?,
+                Kind::Cited => self.cited()?,
+                _ => self.structure()?,
             };
             if queued {
                 return Ok(true);
             }
+            let reason = self.starved.unwrap_or(self.idle);
+            self.report.skip(kind, reason);
         }
         Ok(false)
+    }
+
+    /// At delivery: each stage of rules 3 and 4 that never began says why,
+    /// for a request the rules apply to.
+    pub(super) fn report_unbegun(&mut self) {
+        if self.rules == GatheringRules::none() {
+            return;
+        }
+        for (kind, on) in [
+            (Kind::Guidance, self.rules.guidance),
+            (Kind::Cited, self.rules.cited),
+            (Kind::Structure, self.rules.structure),
+        ] {
+            if !self.report.has(kind) {
+                let reason = if on {
+                    v3::GatheringSkip::Stopped
+                } else {
+                    v3::GatheringSkip::RuleOff
+                };
+                self.report.skip(kind, reason);
+            }
+        }
     }
 
     /// Rule 3a: one listing per guidance folder, then a head read of each
@@ -539,6 +623,9 @@ impl Loop<'_> {
             for (need, spans) in self.best_passages(part, BEST_PASSAGES) {
                 texts.extend(spans.into_iter().map(|span| (span.hit.text, need)));
             }
+            if texts.is_empty() {
+                self.idle = v3::GatheringSkip::NoPassages;
+            }
             let read: BTreeSet<String> = self
                 .gather
                 .records
@@ -603,6 +690,9 @@ impl Loop<'_> {
                         files.push(path.clone());
                     }
                 }
+            }
+            if files.is_empty() {
+                self.idle = v3::GatheringSkip::NoPassages;
             }
             let mut wanted = Wanted::default();
             let mut definitions: BTreeMap<String, Vec<Fact>> = BTreeMap::new();

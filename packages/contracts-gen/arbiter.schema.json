@@ -4041,6 +4041,41 @@
       ],
       "type": "string"
     },
+    "GatheringSkip": {
+      "description": "Why a gathering stage admitted no read (kernel CONTRACT \"Gathering\nrules\", rule 7).",
+      "oneOf": [
+        {
+          "const": "rule_off",
+          "description": "The stage's rule is off for this request; it made no lookup.",
+          "type": "string"
+        },
+        {
+          "const": "stopped",
+          "description": "The Answer stopped (budget, deadline or a stale publication) before\nthe stage began; it made no lookup.",
+          "type": "string"
+        },
+        {
+          "const": "no_calls",
+          "description": "No calls or candidates were left within the stage's room.",
+          "type": "string"
+        },
+        {
+          "const": "no_bytes",
+          "description": "No retention bytes were left within the stage's allowance.",
+          "type": "string"
+        },
+        {
+          "const": "no_passages",
+          "description": "There was no located passage to plan from.",
+          "type": "string"
+        },
+        {
+          "const": "nothing_found",
+          "description": "Its lookups found nothing new to read.",
+          "type": "string"
+        }
+      ]
+    },
     "GatheringStage": {
       "additionalProperties": false,
       "description": "What one gathering stage did and how long it took.",
@@ -4087,6 +4122,17 @@
             "$ref": "#/$defs/GatheringReads"
           },
           "type": "array"
+        },
+        "skipped": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GatheringSkip"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Why the stage admitted no read, when it admitted none. Omitted when\nthe stage read something, or for a stage that gives no reason."
         },
         "stage": {
           "$ref": "#/$defs/GatheringStageKind"
