@@ -34,6 +34,15 @@ class PassageAssurance(unittest.TestCase):
         keys = list(brief)
         self.assertLess(keys.index("use"), keys.index("passages"))
 
+    def test_the_completeness_line_is_an_explicit_switch_and_only_true_replies_carry_it(self) -> None:
+        line = "These passages cover every need listed; there is no need to search for more."
+        plain = gather_context_oracle.brief(self.task, self.snapshot, {"task": "change alpha"})
+        self.assertNotIn(line, plain["use"])
+        complete = gather_context_oracle.brief(self.task, self.snapshot, {"task": "change alpha"}, complete=True)
+        self.assertEqual(complete["use"], f"{ASSURANCE} {line}")
+        self.assertEqual(complete["result"], "complete")
+        self.assertTrue(all(need["status"] == "covered" for need in complete["needs"]))
+
     def test_a_reply_without_passages_carries_no_assurance(self) -> None:
         brief = gather_context_oracle.brief(self.task, self.snapshot, {"task": "change alpha"}, layout="ranges")
         self.assertFalse(brief["passages"])

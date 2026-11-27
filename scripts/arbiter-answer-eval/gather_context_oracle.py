@@ -49,7 +49,8 @@ def lines_of(snapshot: pathlib.Path, note: dict) -> str:
     return "\n".join(text[first - 1:last]) + "\n"
 
 
-def brief(task: dict, snapshot: pathlib.Path, arguments: dict, layout: str = "passages", trust: bool = False) -> dict:
+def brief(task: dict, snapshot: pathlib.Path, arguments: dict, layout: str = "passages", trust: bool = False,
+          complete: bool = False) -> dict:
     """The oracle brief for ``task``; ``arguments`` is what the agent sent."""
     located = [note for note in task.get("notes") or [] if note.get("path") and not note.get("absence")]
     essential = [note for note in located if note.get("mark") == "essential"]
@@ -83,6 +84,9 @@ def brief(task: dict, snapshot: pathlib.Path, arguments: dict, layout: str = "pa
     # As the build does, a reply with passages says they are exact text; the ranges layout's own
     # instruction is the experiment's ``trust`` switch.
     note = gather_context_dose.PASSAGE_ASSURANCE if passages else USE[layout] if trust and layout in USE else None
+    # ``complete`` (experiment ``--oracle-complete``): the completeness line, only when it is true.
+    if complete and passages and out["result"] == "complete" and all(need["status"] == "covered" for need in out["needs"]):
+        note = f"{note} {gather_context_dose.COMPLETENESS}"
     if note:
         rest = {key: value for key, value in out.items() if key != "passages"}
         out = {**rest, "use": note, "passages": passages}

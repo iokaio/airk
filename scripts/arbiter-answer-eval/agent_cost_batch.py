@@ -85,6 +85,7 @@ def run(args) -> int:
                         command += ["--judge", str(args.judge), "--dose", str(args.dose)]
                 if arm == "oracle":
                     command += ["--oracle-layout", args.oracle_layout] + (["--oracle-trust"] if args.oracle_trust else [])
+                    command += ["--oracle-complete"] if args.oracle_complete else []
                 if arm == "live":
                     command += ["--live-map", str(args.maps / f"{row['snapshot'].name}.map.json"), "--live-layout", args.live_layout]
                 jobs.append((out.name, command))
@@ -258,6 +259,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--live-layout", default="full", help="live arm: full or focus")
     parser.add_argument("--oracle-layout", default="passages", help="oracle arm: passages or ranges")
     parser.add_argument("--oracle-trust", action="store_true", help="oracle arm: add the line saying what need not be read again")
+    parser.add_argument("--oracle-complete", action="store_true", help="oracle arm: add the completeness line when every need is covered")
     parser.add_argument("--baseline", help="report: take the plain arm from this series when this one has none")
     parser.add_argument("--max-round-trips", type=int, default=0,
                         help="stop each session after this many round trips (to collect first calls cheaply)")
