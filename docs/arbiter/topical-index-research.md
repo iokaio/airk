@@ -225,6 +225,86 @@ ranges. So the layout that pays needs a precise short list, and the
 prototype's list is not precise. Ranking is the next thing to improve,
 and it is the reranker's natural place.
 
+**Set 2: what the agent is told about the reply** (munarium-T1, five
+repeats each, one price; guidance confirmed as served in each session's
+record).
+
+| Guidance served | Perfect passages | Prototype, focused layout |
+| --- | --- | --- |
+| Build's guidance with "Untrusted index; verify live bytes before edits" | 9.4% lower (0.47 to 0.85) | 5.9% lower (0.59 to 0.72) |
+| Build's guidance without that sentence | 17.9% lower (0.45 to 0.68) | 10.2% higher (0.64 to 0.82) |
+| No guidance | 28.6% and 20.0% lower (two sets; 0.43 to 0.88) | 1.8% higher (0.58 to 0.85) |
+| No guidance, reply says its passages need not be read again | 40.8% lower (0.36 to 0.49) | not run |
+
+Findings:
+
+1. Two identical five-run sets differ by about nine points on this task,
+   so neighbouring cells are not distinguishable.
+2. With perfect passages the order is the one the user expected: the
+   distrust sentence worst, its removal better, no guidance better
+   still, a trust line in the reply best. Only the ends (9 against 41
+   percent) are clearly apart.
+3. With the prototype's content the sentence makes no visible
+   difference: all three cells sit within noise of the unaided cost. A
+   reply that carries two of five truth items is not rescued by what the
+   agent is told about it.
+4. The build's guidance without the sentence does no better than no
+   guidance. Its other lines ("gather_context first", tools this harness
+   does not offer) are candidates for the selective description test.
+
+**Decline rule, free check (step 2).** `gather_decline.py check` on the 20
+recorded calls: the first rule declined none. Two faults in the rule,
+neither in the idea: the wide-intent words match needs the agent wrote
+("every", "everywhere", "across" appear in 11 of 20 calls, including
+the cheap tasks), and the file count is taken from the census of terms
+the agent's own text names, which are common names spread over 11 to 34
+files even on one-file tasks. Next version to try: judge width from the
+task text alone, not the needs; count the files that *define* the named
+symbols (from the map) rather than every file that mentions them; and
+treat a task that names a test target and an example to copy as narrow.
+The tasks it must decline are munarium-N-C2 and bookbuilder-N-C4; the
+tasks it must let through are munarium-T1, munarium-N-W1, bookbuilder-N-C3,
+bookbuilder-C3 and munarium-C2.
+
+### Resume point (27 November 2026)
+
+Work can be picked up from here by another session.
+
+- *State.* Branch `feat/arbiter-final`, nothing pushed. Background agent
+  on branch `agent/remove-untrusted-message` is removing the distrust
+  sentence from the Rust guidance and Workbench warning; review, merge,
+  regenerate and validate when it reports, then rebuild the fixture
+  image only when the real service is next needed.
+- *Round 1, munarium-T1, where it stands.* Layout kept: passages with a
+  trust line. With perfect content it saves 41 percent; the prototype's
+  focused layout is at break-even because its ranking puts only two of
+  five truth items in the reply.
+- *Next actions, in order.* (1) Improve the prototype's ranking of files
+  and ranges, deterministic rules first, then the Qwen 4B reranker
+  through `arbiter_judge_service.py` and `gather_context_dose.py`; check
+  each change with `live_gather.py replay --layout focus` before paying
+  for a series. (2) Add the trust line to the focused layout's `use` text
+  only once the content justifies it. (3) Fix the decline rule as above,
+  re-run the free check, then serve it on munarium-N-C2 and
+  bookbuilder-N-C4. (4) Run `d1-selective` on the same two tasks and on
+  munarium-T1, recording how often the tool is called. (5) Run the
+  round's spot checks (bookbuilder-N-C3, munarium-N-C2) with the kept
+  condition. (6) Judge correctness of every kept condition's sessions
+  with `agent_cost_judge.py`. (7) Move to bookbuilder-N-C3.
+- *How to run a condition.* The private helper
+  `passes/arbiter-brief-image-r1/series.ps1` under the campaign folder:
+  `-Series <name> -Arm plain|oracle|live -Tasks <id> -Repeats 5 -Variant
+  none|d0-build|d0b-no-untrusted|d1-selective [-Maps topical|topical-v3]
+  [-Extra '--live-layout,focus']`. Compare with `agent_cost_task.py`.
+  Oracle and live arms need no fixture.
+- *Rules that cost a day to learn.* Compare only at one price
+  (`agent_cost_batch.py report`, `agent_cost_task.py`). Five repeats a
+  condition; nine points between identical sets is noise on this task.
+  Do not edit `live_gather.py`, `topical_index.py`, the runner or the
+  server while a series runs. Name a variant on every series and check
+  `gather_context.advertised` in a session before trusting a guidance
+  result.
+
 ### Where the tool costs more
 
 Started from the three 20-task series already run, at one price, medians
