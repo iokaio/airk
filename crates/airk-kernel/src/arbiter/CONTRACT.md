@@ -880,8 +880,9 @@ in a product build. A test-support build may bind another set for its
 process once (`bind_gathering_rules`, the private evaluation pattern of
 `software::bind_evaluation_layers`); `GatheringRules::parse` takes `all`,
 `none` or a comma list, with `-name` turning one off (`all,-structure`).
-The private evaluation fixture is to read it from
-`AIRK_ARBITER_EVALUATION_ANSWER_GATHERING`; that wiring is not built yet.
+The private evaluation fixture (service `evaluation_fixture_tests`,
+`restart/change_set.rs`) binds it from
+`AIRK_ARBITER_EVALUATION_ANSWER_GATHERING` when that is set and not empty.
 Tests pass the rules directly (`answer_with_rules`, test builds only).
 
 1. **Search lanes** (`lanes`). Each sub-need's round-one search also runs
