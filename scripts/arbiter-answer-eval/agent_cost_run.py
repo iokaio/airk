@@ -169,6 +169,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo")
     parser.add_argument("--instructions-file", type=Path, help="server guidance the build gives an MCP client")
     parser.add_argument("--description-file", type=Path, help="serve this tool description in place of the build's own")
+    parser.add_argument("--tool-file", type=Path, help="a saved tool listing, in place of asking a running fixture")
     parser.add_argument("--judge", type=Path, help="state file of a running arbiter_judge_service.py (model-dose experiment)")
     parser.add_argument("--dose", type=int, default=0, help="judgments a call the model spends choosing passages")
     parser.add_argument("--max-round-trips", type=int, default=80)
@@ -182,18 +183,25 @@ def main(argv: list[str] | None = None) -> int:
     servers: dict = {}
     tool = None
     if args.arm in ("tool", "oracle", "live"):
-        common.require(args.handle is not None and args.repo, "the tool and oracle arms need --handle and --repo")
-        handle = common.load_handle(args.handle.resolve(strict=True))
-        tool = advertised_tool(handle)
-        tool["description_source"] = "build"
+        common.require(bool(args.repo) and (args.handle is not None or (args.tool_file is not None and args.arm != "tool")),
+                       "the tool arm needs --handle and --repo; the oracle and live arms need --repo and --handle or --tool-file")
+        if args.tool_file is not None:
+            # A saved listing: the oracle and live arms then need no running fixture.
+            tool = json.loads(args.tool_file.read_text(encoding="utf-8"))
+            tool["description_source"] = args.tool_file.name
+        else:
+            tool = advertised_tool(common.load_handle(args.handle.resolve(strict=True)))
+            tool["description_source"] = "build"
         if args.description_file:
             # A description under test replaces the build's own (tool_descriptions/README.md).
             tool["description"] = args.description_file.read_text(encoding="utf-8").strip()
             tool["description_source"] = args.description_file.name
         tool_file = args.output / "tool.json"
         tool_file.write_text(json.dumps(tool, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
-        server = [sys.executable, "-B", str(HERE / "gather_context_mcp.py"), "--handle", str(args.handle.resolve()),
+        server = [sys.executable, "-B", str(HERE / "gather_context_mcp.py"),
                   "--repo", args.repo, "--tool-file", str(tool_file), "--log-dir", str(args.output / "gather")]
+        if args.handle is not None:
+            server += ["--handle", str(args.handle.resolve())]
         if args.instructions_file:
             server += ["--instructions-file", str(args.instructions_file.resolve(strict=True))]
         if args.dose > 0:

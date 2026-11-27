@@ -161,7 +161,7 @@ def live_backend(source: Path, map_file: Path, layout: str = "full"):
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--handle", type=Path, required=True)
+    parser.add_argument("--handle", type=Path, help="fixture lifetime; not needed when the oracle or live files answer")
     parser.add_argument("--repo", required=True)
     parser.add_argument("--tool-file", type=Path, required=True)
     parser.add_argument("--log-dir", type=Path, required=True)
@@ -183,7 +183,9 @@ def main(argv: list[str] | None = None) -> int:
         common.require(args.judge is not None, "--dose needs --judge")
         address = json.loads(args.judge.read_text(encoding="utf-8"))["address"]
         score = lambda instruction, pairs: arbiter_judge_service.score(address, instruction, pairs)  # noqa: E731
-    handle = common.load_handle(args.handle.resolve(strict=True))
+    common.require(args.handle is not None or args.oracle_task is not None or args.live_source is not None,
+                   "--handle is needed unless --oracle-task or --live-source answers the calls")
+    handle = common.load_handle(args.handle.resolve(strict=True)) if args.handle is not None else None
     tool = json.loads(args.tool_file.read_text(encoding="utf-8"))
     instructions = args.instructions_file.read_text(encoding="utf-8").strip() if args.instructions_file else None
     server = Server(tool=tool, repo=args.repo, log_dir=args.log_dir, instructions=instructions,

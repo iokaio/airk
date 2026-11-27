@@ -69,17 +69,24 @@ def run(args) -> int:
                 if args.max_round_trips:
                     command += ["--max-round-trips", str(args.max_round_trips)]
                 if arm in ("tool", "oracle", "live"):
-                    command += ["--handle", str(args.handle), "--repo", row["index"]]
-                if arm == "oracle":
-                    command += ["--oracle-layout", args.oracle_layout] + (["--oracle-trust"] if args.oracle_trust else [])
-                if arm == "live":
-                    command += ["--live-map", str(args.maps / f"{row['snapshot'].name}.map.json"), "--live-layout", args.live_layout]
+                    # Every arm that offers the tool gets the same description and guidance options. Until
+                    # 27 November 2026 these were passed to the live arm only, so oracle sessions ran with no
+                    # server guidance while live sessions ran with the build's.
+                    command += ["--repo", row["index"]]
+                    if args.handle:
+                        command += ["--handle", str(args.handle)]
+                    if args.tool_file:
+                        command += ["--tool-file", str(args.tool_file)]
                     if args.instructions_file:
                         command += ["--instructions-file", str(args.instructions_file)]
                     if args.description_file:
                         command += ["--description-file", str(args.description_file)]
                     if args.dose > 0:
                         command += ["--judge", str(args.judge), "--dose", str(args.dose)]
+                if arm == "oracle":
+                    command += ["--oracle-layout", args.oracle_layout] + (["--oracle-trust"] if args.oracle_trust else [])
+                if arm == "live":
+                    command += ["--live-map", str(args.maps / f"{row['snapshot'].name}.map.json"), "--live-layout", args.live_layout]
                 jobs.append((out.name, command))
     print(f"{len(jobs)} session(s) to run", flush=True)
 
@@ -244,6 +251,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--handle", type=pathlib.Path)
     parser.add_argument("--instructions-file", type=pathlib.Path)
     parser.add_argument("--description-file", type=pathlib.Path, help="serve this tool description in place of the build's own")
+    parser.add_argument("--tool-file", type=pathlib.Path,
+                        help="a saved tool listing (name, description, inputSchema), so the oracle and live arms need no fixture")
     parser.add_argument("--tasks", nargs="*")
     parser.add_argument("--maps", type=pathlib.Path, help="folder of <snapshot>.map.json topical maps, for the live arm")
     parser.add_argument("--live-layout", default="full", help="live arm: full or focus")
@@ -257,7 +266,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "report":
         return report(args)
-    if not args.model or (set(args.arms) & {"tool", "oracle", "live"} and args.handle is None):
+    if not args.model or ("tool" in args.arms and args.handle is None) or (
+            set(args.arms) & {"oracle", "live"} and args.handle is None and args.tool_file is None):
         parser.error("run needs --model, and --handle for the tool arm")
     if args.dose > 0 and args.judge is None:
         parser.error("--dose needs --judge")

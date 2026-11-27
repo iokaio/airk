@@ -1,0 +1,310 @@
+{
+  "description": "Use first for a task that needs evidence from several places in the index, then again as you learn more, with narrower needs and the known ranges you already hold. For one known identifier or path, call find_definition or read_indexed_range instead. Pass the task text as task. Fill needs (up to 8 short statements of what you must learn, each at most 400 bytes); add anchors (up to 16 exact strings from the task: identifiers, routes, quoted text, numbers with units; each at most 200 bytes), deliverable (code_change, test, document or analysis) and known (ranges you already hold; checked, not yet used). Needs or a code_change or test deliverable also bring the project's rules, test command and build file. Omit budget for the service default. The default reply is a short map: where each need is answered, the best passages, what was not found and what to ask next; read omitted ranges with read_indexed_range. response_mode=full returns every record, for provenance/coverage audits; verification report/require checks returned saved sources.",
+  "inputSchema": {
+    "$defs": {
+      "BudgetV3": {
+        "additionalProperties": false,
+        "properties": {
+          "calls": {
+            "description": "Canonical reads over the whole Answer.",
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "candidates": {
+            "description": "Candidate records over the whole Answer, before dedup.",
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "context_calls": {
+            "description": "Context card calls (slots).",
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "deadline_ms": {
+            "description": "Whole Answer, Answer only.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "fanout": {
+            "description": "Peak concurrent reads in one round of one part.",
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "focus_calls": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "focus_pairs": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "input_tokens": {
+            "description": "Model input token pool of the whole attempt.",
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_bytes": {
+            "description": "Bytes retained while gathering; the reply takes at most the smaller\nof this and 131,072 bytes.",
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_parts": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_sub_needs": {
+            "description": "Per part.",
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "round_input_tokens": {
+            "description": "Model input tokens of one round of one part.",
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "rounds": {
+            "description": "Per part.",
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "deadline_ms",
+          "max_bytes",
+          "max_parts",
+          "max_sub_needs",
+          "rounds",
+          "calls",
+          "fanout",
+          "candidates",
+          "input_tokens",
+          "round_input_tokens",
+          "context_calls",
+          "focus_calls",
+          "focus_pairs"
+        ],
+        "type": "object"
+      },
+      "Deliverable": {
+        "description": "What the caller will produce from the gathered context.",
+        "enum": [
+          "code_change",
+          "test",
+          "document",
+          "analysis"
+        ],
+        "type": "string"
+      },
+      "KnownRange": {
+        "additionalProperties": false,
+        "description": "A repository-relative path, whole or with inclusive one-based lines.",
+        "properties": {
+          "end_line": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "start_line": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "ResponseMode": {
+        "enum": [
+          "terse",
+          "full"
+        ],
+        "type": "string"
+      },
+      "Sha256Digest": {
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "anchors": {
+        "description": "Up to 16 exact strings from the task (identifiers, routes, quoted\ntext, numbers with units), at most 200 bytes each.",
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "budget": {
+        "$ref": "#/$defs/BudgetV3",
+        "description": "Optional with task: omitted uses the service default, a valid budget\nis used as sent. Required with question."
+      },
+      "continuation": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "A ticket or continuation id, to attach to an existing job."
+      },
+      "deliverable": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/Deliverable"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "What you will produce. It selects standing needs the reply also\ncovers: project rules, how tests run, the build file."
+      },
+      "fresh": {
+        "description": "Start an independent run; never reuse a job by digest.",
+        "type": "boolean"
+      },
+      "include_status": {
+        "default": false,
+        "description": "Include current freshness/readiness even when unchanged on this connection.",
+        "type": "boolean"
+      },
+      "interactive": {
+        "description": "The job may run to completion with no caller waiting. It never ranks\na job ahead of an attended one.",
+        "type": "boolean"
+      },
+      "invocation_key": {
+        "description": "Exact retry recovery within the caller's own scope.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "known": {
+        "description": "Up to 32 path ranges you already read. Checked; does not change\ngathering yet.",
+        "items": {
+          "$ref": "#/$defs/KnownRange"
+        },
+        "type": "array"
+      },
+      "needs": {
+        "description": "Up to 8 statements of what you must learn, one each, at most 400\nbytes. Stating needs improves the result.",
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "project": {
+        "description": "Configured source scope from projects. Required when this connection has no single default; never follows the Explorer dropdown.",
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "question": {
+        "description": "Existing full request only, with schema and budget; never with task.",
+        "type": "string"
+      },
+      "reply_detail": {
+        "description": "Lean/Rich changes available fact projection, never retention. Reads without an alternate projection keep their existing payload. Omission preserves legacy defaults; conflicts with compact reject. Search full_chunks is independent.",
+        "enum": [
+          "lean",
+          "rich",
+          null
+        ],
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "response_mode": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ResponseMode"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results; it does not resolve calls or verify live source."
+      },
+      "schema": {
+        "description": "Existing full request only; supplied by the service for task.",
+        "type": "string"
+      },
+      "task": {
+        "description": "The whole task in your words; it becomes the question.",
+        "type": "string"
+      },
+      "verification": {
+        "default": "report",
+        "description": "Report is the default: bounded dated saved-byte outcomes. Off skips source checks; require fails unless every returned file reference matches. No extraction, completeness or unsaved-buffer certification.",
+        "enum": [
+          "off",
+          "report",
+          "require"
+        ],
+        "type": "string"
+      },
+      "verification_deadline_ms": {
+        "default": 2000,
+        "description": "Cooperative deadline, 1..120000 ms; default 2000. Blocking filesystem calls retain capacity until they return.",
+        "maximum": 120000,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "verification_max_bytes": {
+        "default": 16777216,
+        "description": "Aggregate raw-byte budget, 1..1073741824; default 16777216 (16 MiB).",
+        "maximum": 1073741824,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "verification_max_sources": {
+        "default": 8,
+        "description": "Maximum whole-source checks, 1..256; default 8.",
+        "maximum": 256,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "wait_ms": {
+        "description": "How long this call waits; never shortens the job.",
+        "format": "uint64",
+        "minimum": 0,
+        "type": [
+          "integer",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "task"
+    ],
+    "type": "object"
+  },
+  "listed_name": "gather_context",
+  "name": "gather_context"
+}
