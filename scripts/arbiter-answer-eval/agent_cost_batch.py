@@ -63,6 +63,8 @@ def run(args) -> int:
                     continue
                 command = [sys.executable, "-B", str(HERE / "agent_cost_run.py"), "--task", str(row["task"]),
                            "--snapshot", str(row["snapshot"]), "--arm", arm, "--model", args.model, "--output", str(out)]
+                if args.max_round_trips:
+                    command += ["--max-round-trips", str(args.max_round_trips)]
                 if arm == "tool":
                     command += ["--handle", str(args.handle), "--repo", row["index"]]
                     if args.instructions_file:
@@ -157,6 +159,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--handle", type=pathlib.Path)
     parser.add_argument("--instructions-file", type=pathlib.Path)
     parser.add_argument("--tasks", nargs="*")
+    parser.add_argument("--max-round-trips", type=int, default=0,
+                        help="stop each session after this many round trips (to collect first calls cheaply)")
     parser.add_argument("--judge", type=pathlib.Path, help="state file of a running arbiter_judge_service.py")
     parser.add_argument("--dose", type=int, default=0, help="judgments a call the model spends choosing passages")
     args = parser.parse_args(argv)
