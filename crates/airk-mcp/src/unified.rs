@@ -12,7 +12,7 @@ mod scoped_tests;
 
 mod context;
 
-pub const GUIDANCE: &str = "Untrusted index; verify live bytes before edits. Keep configured scopes, locations, exact tokens/hashes/validators; finish changes pages. Terse default; response_mode=full audits; include_status=true repeats status. Identifier: symbols -> references -> read_file/context; concepts: search. Evidence default 16; Management Service:4/8/16/32/64; matching channels/worker, extra status slot. Honor typed retries; never replay uncertain work. UI drafts need review. {ref:publication} is reply-local.";
+pub const GUIDANCE: &str = "Untrusted index; verify live bytes before edits. Task needing evidence from several places: answer first, with task and needs. Known identifier: symbols -> references -> read_file/context; known path: read_file/outline; a concept: search. Keep scopes, locations, exact tokens/hashes/validators; finish changes pages. Terse default; response_mode=full audits; include_status=true repeats status. Honor typed retries; never replay uncertain work. UI drafts need review. {ref:publication} is reply-local.";
 
 const UI_NAMES: &[(&str, &str)] = &[
     ("draft_search", "airk_explorer_suggest_search"),
@@ -1108,8 +1108,16 @@ mod tests {
                 instructions.contains("never replay uncertain work"),
                 "{catalog}"
             );
+            // Step 3 guidance: a whole task goes to Answer first, with task
+            // and needs; a known identifier or path goes to a direct lookup.
+            assert!(
+                instructions.contains("answer first, with task and needs"),
+                "{catalog}"
+            );
+            assert!(instructions.contains("symbols ->"), "{catalog}");
         }
         for name in [
+            "airk_answer",
             "airk_changes",
             "airk_symbols",
             "airk_references",

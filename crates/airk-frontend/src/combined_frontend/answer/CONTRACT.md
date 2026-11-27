@@ -13,7 +13,13 @@ here, so a call that names one is refused with the typed, non-submitted
 silently ignored.
 
 Parse the actual AnswerArgs once and preserve its requested Report, Require or
-Off semantics. Native Answer children and their canonical inner reads perform
+Off semantics. AnswerArgs decodes the public call (`task`, or the existing
+full `schema`, `question` and `budget` request) through Core's one
+conversion, `AnswerCallV3::into_request` (Core arbiter contract, "Public
+Answer call"), so a `task` call and its full request admit, allocate and
+compare member questions identically. Each member receives the caller's
+arguments with its clamped `budget` and decodes them through the same
+conversion. Native Answer children and their canonical inner reads perform
 no independent saved-source checks. A private Answer-reader marker covers
 standalone Answer too; Parse's explicit per-step verification is unchanged.
 Standalone Answer retains its existing outer verifier. Combined Answer reuses

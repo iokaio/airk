@@ -100,8 +100,19 @@ async fn public_answer_sdk_preserves_advertised_schema_full_utf8_question_and_bu
         .find(|tool| tool.name == "answer")
         .unwrap();
     let schema = serde_json::to_value(&tool.input_schema)?;
-    assert_eq!(schema["required"], json!(["schema", "question", "budget"]));
-    for field in ["schema", "question", "budget"] {
+    // The approved public call (25 November 2026): task alone is required;
+    // the existing full request stays accepted.
+    assert_eq!(schema["required"], json!(["task"]));
+    for field in [
+        "task",
+        "schema",
+        "question",
+        "budget",
+        "needs",
+        "anchors",
+        "deliverable",
+        "known",
+    ] {
         assert!(
             schema["properties"].get(field).is_some(),
             "advertised Answer lost {field}"
@@ -182,6 +193,60 @@ async fn public_answer_sdk_preserves_advertised_schema_full_utf8_question_and_bu
             "{refusal}"
         );
     }
+    // A task call through the real public tool: with the explicit budget it
+    // runs under that budget, and the arguments the native handler decodes
+    // (`AnswerArgs`, the type the SDK parameters use) are the full request.
+    let task_call = json!({"task":"amber_marker","budget":budget,"response_mode":"full"});
+    let mut arguments = task_call.as_object().unwrap().clone();
+    arguments.insert("project".into(), json!(project));
+    let reply = public.call("answer".into(), arguments).await?;
+    assert_ne!(reply["isError"], true, "{reply}");
+    let packet: Value = serde_json::from_str(reply["content"][0]["text"].as_str().unwrap())?;
+    assert_eq!(packet["question"], "amber_marker");
+    assert!(packet["work"]["calls"].as_u64().unwrap() <= 3);
+    let (tool, sent) = native.calls.lock().unwrap().last().cloned().unwrap();
+    assert_eq!(tool, "airk_answer");
+    let decoded: crate::AnswerArgs = serde_json::from_value(Value::Object(sent))?;
+    assert_eq!(
+        serde_json::to_vec(&decoded.request)?,
+        serde_json::to_vec(&short)?
+    );
+    // Without a budget, every field is the service's default, written out
+    // from the recorded decision rather than read from the implementation.
+    let decoded: crate::AnswerArgs = serde_json::from_value(json!({"task":"amber_marker"}))?;
+    assert_eq!(decoded.request.schema, REQUEST_SCHEMA);
+    assert_eq!(
+        serde_json::to_value(&decoded.request.budget)?,
+        json!({"deadline_ms":300000,"max_bytes":262144,"max_parts":4,"max_sub_needs":4,
+            "rounds":3,"calls":132,"fanout":8,"candidates":132,"input_tokens":380000,
+            "round_input_tokens":32768,"context_calls":48,"focus_calls":24,"focus_pairs":192})
+    );
+    // Caller inputs pass through the public call unchanged.
+    let inputs = json!({"needs":["who owns the request deadline"],"anchors":["amber_marker"],
+        "deliverable":"analysis","known":[{"path":"public/policy.txt","start_line":1,"end_line":1}]});
+    let mut with_inputs = inputs.clone();
+    with_inputs["task"] = json!("amber_marker");
+    let decoded: crate::AnswerArgs = serde_json::from_value(with_inputs)?;
+    decoded.request.validate()?;
+    let raw = serde_json::to_value(&decoded.request)?;
+    for field in ["needs", "anchors", "deliverable", "known"] {
+        assert_eq!(raw[field], inputs[field], "{field}");
+    }
+    // Both or neither of task and question: typed refusals, carried intact.
+    for (arguments, code) in [
+        (
+            json!({"task":"amber_marker","question":"amber_marker"}),
+            "answer_task_and_question",
+        ),
+        (json!({"needs":["who owns it"]}), "answer_task_required"),
+    ] {
+        let mut arguments = arguments.as_object().unwrap().clone();
+        arguments.insert("project".into(), json!(project));
+        let refusal = public.call("answer".into(), arguments).await?;
+        assert_eq!(refusal["isError"], true, "{refusal}");
+        let message = refusal["content"][0]["text"].as_str().unwrap();
+        assert!(message.contains(code), "{refusal}");
+    }
     let mut missing_schema = serde_json::to_value(&short)?;
     missing_schema.as_object_mut().unwrap().remove("schema");
     let value = json!({
@@ -189,7 +254,10 @@ async fn public_answer_sdk_preserves_advertised_schema_full_utf8_question_and_bu
         "public_tool":"answer", "native_tool":"airk_answer", "input_schema":schema,
         "maximum_question_utf8_bytes":16_384,
         "examples":[{"name":"complete_native_request","arguments":short,"accepted":true},
-                    {"name":"missing_required_schema","arguments":missing_schema,"accepted":false}]
+                    {"name":"missing_required_schema","arguments":missing_schema,"accepted":false},
+                    {"name":"task_with_budget","arguments":task_call,"accepted":true},
+                    {"name":"task_only","arguments":{"task":"amber_marker"},"accepted":true},
+                    {"name":"task_and_question","arguments":{"task":"amber_marker","question":"amber_marker"},"accepted":false}]
     });
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/split/arbiter/public_answer_cases.json");

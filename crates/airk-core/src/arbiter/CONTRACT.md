@@ -1366,9 +1366,50 @@ Not done yet, each with its owner: the kernel uses `needs` and `anchors`
 (kernel `arbiter/CONTRACT.md`); `deliverable` and `known` are accepted and
 validated and do not yet change gathering. The public Answer tool's schema is
 generated from this request type, so it now advertises the four fields
-(`fixtures/split/arbiter/public_answer_cases.json`, 70 lines added). Its
-description does not yet ask callers to fill them, and the `task` argument
-is not implemented (MCP).
+(`fixtures/split/arbiter/public_answer_cases.json`, 70 lines added). The
+description asking callers to fill them and the `task` argument followed in
+change-log entry 74 ("Public Answer call" below).
+
+### Public Answer call (user decision, 25 November 2026)
+
+The user chose option A of the completion plan ("Approved public Answer call
+for the Stage A baseline"). Owner: `answer_loop::AnswerCallV3`, a schema root
+beside `ContextRequestV3`. It is the advertised input of the public Answer
+tool (MCP `AnswerArgs` decodes it); the request type, its bytes and its
+digest are unchanged.
+
+- **`task` is the only required argument.** Its text becomes the request's
+  `question` verbatim, so it has the question's bounds. The service supplies
+  `schema` (`airk.arbiter.context.request/3`); a task call may still name it,
+  and `validate` refuses any other value.
+- **Budget.** Omitted with `task`, the request takes the complete default
+  budget (`BudgetV3::default()`, the table under "Budget"). An explicit budget
+  passes through with the caller's values and is validated as sent, never
+  replaced field by field.
+- **The existing full request** (`schema`, `question`, `budget`) is accepted
+  unchanged throughout the 1.9 line: it converts to the same
+  `ContextRequestV3`, with the same bytes and request digest, as before. It
+  still requires its `schema` and `budget` (`answer_request_incomplete`, with
+  the decoder's former `missing field` text).
+- **Refusals** (`AnswerCallError`, the code first in the message): `task` with
+  `question` is `answer_task_and_question`; neither is `answer_task_required`.
+- **Caller inputs** `needs`, `anchors`, `deliverable`, `known` and
+  `continuation` are advertised beside `task` and pass through unchanged.
+- **One conversion.** `AnswerCallV3::into_request` is the only mapping. MCP
+  `AnswerArgs` deserializes through it (`#[serde(try_from)]`), so the native
+  handler, the public and combined entries, the CLI/session path, the
+  supervisor's Admin partition check, the frontend combined Answer and the
+  service job's `request_digest` all see the canonical request. A `task`
+  call and its equivalent full request are one job.
+
+Tests: `a_task_alone_becomes_the_canonical_request_with_the_default_budget`,
+`a_task_keeps_an_explicit_valid_budget_field_by_field`,
+`the_existing_full_request_and_its_task_call_are_one_canonical_request`,
+`a_call_with_both_or_neither_of_task_and_question_is_refused`,
+`caller_inputs_pass_through_a_task_call_unchanged` and
+`the_public_call_schema_requires_task_alone` in `answer_loop::tests`; the
+public tool path in MCP
+`public_answer_sdk_preserves_advertised_schema_full_utf8_question_and_budget`.
 
 ### Reply frame: 128 KiB for Answer (user decision, 22 November 2026)
 
@@ -1433,7 +1474,9 @@ blank, at most 16,384 UTF-8 bytes), `budget` (`BudgetV3`) and an optional
 `continuation`, a ticket or continuation id used to attach to an existing job
 (behaviour in L2b; only the shape lands now). The request refuses a
 `max_bytes` smaller than the question plus `MIN_REPLY_SKELETON_BYTES` (4,096,
-the smallest reply around a question; a test measures it).
+the smallest reply around a question; a test measures it). The public tool
+also accepts `task` in place of `schema`, `question` and `budget` ("Public
+Answer call"); both convert to this request.
 
 ### Answer job options and delivery record (L2c, decided 23 November 2026)
 
@@ -2200,7 +2243,7 @@ same-version native supervisor sends them.
 `scripts/dev/contract_types.py arbiter --write` then renders `arbiter.ts` and
 `packages/vscode/src/generated/arbiter.d.ts`. New roots: ContextRequestV3,
 ContextResponseV3, DecisionLog, FocusBatchReceipt, LoopCalibration and
-LoopCalibrationSet. Rust-emitted semantic cases live in
+LoopCalibrationSet; AnswerCallV3 joined them with change-log entry 74. Rust-emitted semantic cases live in
 `fixtures/split/arbiter/answer_loop_cases.json`
 (`answer_loop_semantic_case_emitter`, written only with
 `AIRK_WRITE_ANSWER_LOOP_CASES=1`): the default budget, each field's minimum

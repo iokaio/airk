@@ -59,6 +59,75 @@
       ],
       "type": "object"
     },
+    "AnswerCallV3": {
+      "additionalProperties": false,
+      "description": "The public Answer call (CONTRACT \"Public Answer call\", user decision of\n25 November 2026): `task` alone, or the existing full request with\n`schema`, `question` and `budget`. Every reader converts it with\n[`AnswerCallV3::into_request`], so both forms give one canonical request.\nThe field comments are the advertised argument descriptions.",
+      "properties": {
+        "anchors": {
+          "description": "Up to 16 exact strings from the task (identifiers, routes, quoted\ntext, numbers with units), at most 200 bytes each.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "budget": {
+          "$ref": "#/$defs/BudgetV3",
+          "description": "Optional with task: omitted uses the service default, a valid budget\nis used as sent. Required with question."
+        },
+        "continuation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256Digest"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "A ticket or continuation id, to attach to an existing job."
+        },
+        "deliverable": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Deliverable"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What you will produce. Checked; does not change gathering yet."
+        },
+        "known": {
+          "description": "Up to 32 path ranges you already read. Checked; does not change\ngathering yet.",
+          "items": {
+            "$ref": "#/$defs/KnownRange"
+          },
+          "type": "array"
+        },
+        "needs": {
+          "description": "Up to 8 statements of what you must learn, one each, at most 400\nbytes. Stating needs improves the result.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "question": {
+          "description": "Existing full request only, with schema and budget; never with task.",
+          "type": "string"
+        },
+        "schema": {
+          "description": "Existing full request only; supplied by the service for task.",
+          "type": "string"
+        },
+        "task": {
+          "description": "The whole task in your words; it becomes the question.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task"
+      ],
+      "type": "object"
+    },
     "AnswerDeliveryRecord": {
       "additionalProperties": false,
       "description": "What one delivery of a service-owned Answer job was: beside the reply,\nnever inside it.",
@@ -6733,6 +6802,7 @@
     "ContextResponseV2",
     "ContextActionRoster",
     "ContextRequestV3",
+    "AnswerCallV3",
     "ContextResponseV3",
     "AnswerJobOptions",
     "AnswerDeliveryRecord",

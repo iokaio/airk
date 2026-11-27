@@ -242,6 +242,144 @@ fn caller_inputs_round_trip_and_keep_their_bounds() -> Result<()> {
     Ok(())
 }
 
+/// The public Answer call (user decision of 25 November 2026): `task` alone
+/// gets the request schema and the complete default budget, literal here.
+#[test]
+fn a_task_alone_becomes_the_canonical_request_with_the_default_budget() -> Result<()> {
+    let call: AnswerCallV3 = serde_json::from_value(json!({"task": QUESTION}))?;
+    let request = call.into_request()?;
+    request.validate()?;
+    assert_eq!(
+        serde_json::to_value(&request)?,
+        json!({
+            "schema":"airk.arbiter.context.request/3","question":QUESTION,
+            "budget":{"deadline_ms":300000,"max_bytes":262144,"max_parts":4,"max_sub_needs":4,
+                "rounds":3,"calls":132,"fanout":8,"candidates":132,"input_tokens":380000,
+                "round_input_tokens":32768,"context_calls":48,"focus_calls":24,"focus_pairs":192}
+        })
+    );
+    Ok(())
+}
+
+#[test]
+fn a_task_keeps_an_explicit_valid_budget_field_by_field() -> Result<()> {
+    let sent = json!({"deadline_ms":20000,"max_bytes":65536,"max_parts":1,"max_sub_needs":2,
+        "rounds":2,"calls":9,"fanout":3,"candidates":7,"input_tokens":4096,
+        "round_input_tokens":2048,"context_calls":5,"focus_calls":2,"focus_pairs":16});
+    let call: AnswerCallV3 = serde_json::from_value(json!({"task": QUESTION, "budget": sent}))?;
+    let request = call.into_request()?;
+    request.validate()?;
+    assert_eq!(serde_json::to_value(&request.budget)?, sent);
+    assert_eq!(request.schema, "airk.arbiter.context.request/3");
+    assert_eq!(request.question, QUESTION);
+    Ok(())
+}
+
+#[test]
+fn the_existing_full_request_and_its_task_call_are_one_canonical_request() -> Result<()> {
+    let legacy = json!({
+        "schema":"airk.arbiter.context.request/3","question":QUESTION,
+        "budget":{"deadline_ms":300000,"max_bytes":262144,"max_parts":4,"max_sub_needs":4,
+            "rounds":3,"calls":132,"fanout":8,"candidates":132,"input_tokens":380000,
+            "round_input_tokens":32768,"context_calls":48,"focus_calls":24,"focus_pairs":192},
+        "needs":["where the guard is defined"],"anchors":["restart guard"]
+    });
+    // The bytes the existing request had as a ContextRequestV3, before the
+    // public call existed.
+    let direct: ContextRequestV3 = serde_json::from_value(legacy.clone())?;
+    let through_call = serde_json::from_value::<AnswerCallV3>(legacy.clone())?.into_request()?;
+    let task = serde_json::from_value::<AnswerCallV3>(json!({
+        "task":QUESTION,"needs":["where the guard is defined"],"anchors":["restart guard"]
+    }))?
+    .into_request()?;
+    let bytes = serde_json::to_vec(&direct)?;
+    assert_eq!(serde_json::to_vec(&through_call)?, bytes);
+    assert_eq!(serde_json::to_vec(&task)?, bytes);
+    assert_eq!(serde_json::from_slice::<Value>(&bytes)?, legacy);
+    // A task call may also name the schema and the default budget.
+    let mut explicit = legacy.clone();
+    let question = explicit
+        .as_object_mut()
+        .unwrap()
+        .remove("question")
+        .unwrap();
+    explicit["task"] = question;
+    let explicit = serde_json::from_value::<AnswerCallV3>(explicit)?.into_request()?;
+    assert_eq!(serde_json::to_vec(&explicit)?, bytes);
+    Ok(())
+}
+
+#[test]
+fn a_call_with_both_or_neither_of_task_and_question_is_refused() -> Result<()> {
+    let refusal = |value: Value| {
+        serde_json::from_value::<AnswerCallV3>(value)
+            .expect("well-formed call")
+            .into_request()
+            .unwrap_err()
+    };
+    let both = refusal(json!({"task":"a","question":"a"}));
+    assert_eq!(both, AnswerCallError::TaskAndQuestion);
+    assert_eq!(both.code(), "answer_task_and_question");
+    assert!(both.to_string().starts_with("answer_task_and_question: "));
+    let neither = refusal(json!({"needs":["what owns the guard"]}));
+    assert_eq!(neither, AnswerCallError::TaskRequired);
+    assert!(neither.to_string().starts_with("answer_task_required: "));
+    // The existing full request keeps requiring its schema and budget.
+    let missing_schema = refusal(json!({"question":"a","budget":json!(budget())}));
+    assert_eq!(missing_schema, AnswerCallError::MissingSchema);
+    assert!(
+        missing_schema
+            .to_string()
+            .contains("missing field `schema`")
+    );
+    let missing_budget = refusal(json!({"question":"a","schema":REQUEST_SCHEMA_V3}));
+    assert!(
+        missing_budget
+            .to_string()
+            .contains("missing field `budget`")
+    );
+    assert!(serde_json::from_value::<AnswerCallV3>(json!({"task":"a","unknown":1})).is_err());
+    Ok(())
+}
+
+#[test]
+fn caller_inputs_pass_through_a_task_call_unchanged() -> Result<()> {
+    let inputs = json!({
+        "needs":["which function enforces the reply frame","which test covers it"],
+        "anchors":["MAX_ANSWER_RESPONSE_BYTES","128 KiB"],
+        "deliverable":"test",
+        "known":[{"path":"crates/airk-core/src/lib.rs","start_line":80,"end_line":95}]
+    });
+    let mut call = inputs.clone();
+    call["task"] = json!(QUESTION);
+    let request = serde_json::from_value::<AnswerCallV3>(call)?.into_request()?;
+    request.validate()?;
+    let raw = serde_json::to_value(&request)?;
+    for field in ["needs", "anchors", "deliverable", "known"] {
+        assert_eq!(raw[field], inputs[field], "{field}");
+    }
+    Ok(())
+}
+
+#[test]
+fn the_public_call_schema_requires_task_alone() -> Result<()> {
+    let schema = serde_json::to_value(schemars::schema_for!(AnswerCallV3))?;
+    assert_eq!(schema["required"], json!(["task"]));
+    assert_eq!(schema["properties"]["task"]["type"], "string");
+    for field in [
+        "schema",
+        "question",
+        "budget",
+        "needs",
+        "anchors",
+        "deliverable",
+        "known",
+    ] {
+        assert!(schema["properties"].get(field).is_some(), "{field}");
+    }
+    Ok(())
+}
+
 #[test]
 fn request_refuses_retention_too_small_for_question_and_skeleton() -> Result<()> {
     let mut request = request();

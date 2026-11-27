@@ -4252,4 +4252,61 @@ schema is generated from the request type and now advertises the four fields.
 public tool's description does not ask callers to fill the new fields, and
 `task` is not implemented. Needs do not yet run as
 separate jobs with a union by need, and no model judges against a need's own
-statement. Nothing here was run on the real indexes.
+statement. Nothing here was run on the real indexes. The `task` argument and
+the description followed in entry 74.
+
+### 74. The public Answer call takes `task`; guidance and descriptions say when to use each tool
+
+The user chose option A on 25 November 2026 (completion plan, "Approved
+public Answer call for the Stage A baseline"), and the guidance rewrite is
+the first row of Step 3 of the agent-facing tool surface, which needs no
+further decision.
+
+**Contract.** The public Answer tool advertises `task` as its only required
+argument. Its text becomes the canonical question verbatim, the service
+supplies the request schema, and an omitted budget is the complete default.
+An explicit valid budget passes through with the caller's values. The
+existing full `schema`, `question` and `budget` request is accepted unchanged
+through the 1.9 line, with the same request bytes and digest. `task` with
+`question` is refused as `answer_task_and_question`, neither as
+`answer_task_required`; a full request without its schema or budget keeps its
+former refusal text under `answer_request_incomplete`. `needs`, `anchors`,
+`deliverable` and `known` are advertised beside `task` and pass through.
+[Core contract](../../crates/airk-core/src/arbiter/CONTRACT.md#public-answer-call-user-decision-25-november-2026)
+
+**One conversion.** Core `answer_loop::AnswerCallV3::into_request` is the only
+mapping. MCP `AnswerArgs` deserializes through it (`#[serde(try_from)]`), so
+the native handler, the public and combined entries, the CLI/session path,
+the supervisor's Admin partition check and the frontend combined Answer all
+receive the canonical `ContextRequestV3`, and the service job's request
+digest is the same for a `task` call and its full request.
+[Frontend contract](../../crates/airk-frontend/src/combined_frontend/answer/CONTRACT.md)
+
+**Guidance and descriptions.** Both server guidance strings now send a task
+that needs evidence from several places to Answer first, with task and needs,
+a known identifier to Symbols, a known path to Read File and a concept to
+Search, inside the 512-byte instruction budget. The concurrency note
+("Evidence default 16; Management Service:4/8/16/32/64 ...") was dropped to
+fit; Status still reports the configured query concurrency. Each evidence
+tool's description says when to use it, what it returns and what to call
+next. Answer's asks for `task` and `needs`, describes `anchors`,
+`deliverable` and `known` with their bounds, and says that `deliverable` and
+`known` are checked but do not change gathering yet. Its statements about
+enrolled indexes and an admitted connection were removed.
+
+**Generated.** The reviewed schema capture gained the `AnswerCallV3` root (70
+lines added, none removed) and the TypeScript types were regenerated from it
+(50 lines each in `arbiter.ts` and `arbiter.d.ts`). The public Answer cases
+fixture changed 52 lines in and 8 out: `required` is `["task"]`, the new
+property descriptions, and three examples (`task_with_budget`, `task_only`,
+`task_and_question`). The native Help content changed 95 lines in and 20
+out: the new descriptions and the Answer schema, which had also not been
+regenerated after entry 73.
+
+**Not regenerated.** `packages/ui/generated/help-manifest.json` and the
+Admin bundle in `crates/airk-cli/admin-assets/` embed the Help content; they
+need `node scripts/build-explorer.cjs --write-help-manifest` in
+`packages/vscode` and `npm run build` in `packages/admin`, which need the
+packages' installed dependencies. The evaluation harness still supplies
+Answer's `schema` and `budget` and sends `question`; frozen offers and
+retained fixtures are unchanged.

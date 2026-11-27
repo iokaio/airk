@@ -19,6 +19,56 @@ export type Advice = {
 };
 
 /**
+ * The public Answer call (CONTRACT "Public Answer call", user decision of
+ * 25 November 2026): `task` alone, or the existing full request with
+ * `schema`, `question` and `budget`. Every reader converts it with
+ * [`AnswerCallV3::into_request`], so both forms give one canonical request.
+ * The field comments are the advertised argument descriptions.
+ */
+export type AnswerCallV3 = {
+    /**
+     * Up to 16 exact strings from the task (identifiers, routes, quoted
+     * text, numbers with units), at most 200 bytes each.
+     */
+    anchors?: Array<string>;
+    /**
+     * Optional with task: omitted uses the service default, a valid budget
+     * is used as sent. Required with question.
+     */
+    budget?: BudgetV3;
+    /**
+     * A ticket or continuation id, to attach to an existing job.
+     */
+    continuation?: Sha256Digest | null;
+    /**
+     * What you will produce. Checked; does not change gathering yet.
+     */
+    deliverable?: Deliverable | null;
+    /**
+     * Up to 32 path ranges you already read. Checked; does not change
+     * gathering yet.
+     */
+    known?: Array<KnownRange>;
+    /**
+     * Up to 8 statements of what you must learn, one each, at most 400
+     * bytes. Stating needs improves the result.
+     */
+    needs?: Array<string>;
+    /**
+     * Existing full request only, with schema and budget; never with task.
+     */
+    question?: string;
+    /**
+     * Existing full request only; supplied by the service for task.
+     */
+    schema?: string;
+    /**
+     * The whole task in your words; it becomes the question.
+     */
+    task: string;
+};
+
+/**
  * What one delivery of a service-owned Answer job was: beside the reply,
  * never inside it.
  */

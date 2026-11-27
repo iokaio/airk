@@ -339,6 +339,122 @@ impl ContextRequestV3 {
         Ok(())
     }
 }
+
+/// The public Answer call (CONTRACT "Public Answer call", user decision of
+/// 25 November 2026): `task` alone, or the existing full request with
+/// `schema`, `question` and `budget`. Every reader converts it with
+/// [`AnswerCallV3::into_request`], so both forms give one canonical request.
+/// The field comments are the advertised argument descriptions.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AnswerCallV3 {
+    /// The whole task in your words; it becomes the question.
+    // Absent is None without `default`, which would hide `required`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(required, with = "String")]
+    pub task: Option<String>,
+    /// Existing full request only; supplied by the service for task.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "String")]
+    pub schema: Option<String>,
+    /// Existing full request only, with schema and budget; never with task.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "String")]
+    pub question: Option<String>,
+    /// Optional with task: omitted uses the service default, a valid budget
+    /// is used as sent. Required with question.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "BudgetV3")]
+    pub budget: Option<BudgetV3>,
+    /// A ticket or continuation id, to attach to an existing job.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continuation: Option<Sha256Digest>,
+    /// Up to 8 statements of what you must learn, one each, at most 400
+    /// bytes. Stating needs improves the result.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub needs: Vec<String>,
+    /// Up to 16 exact strings from the task (identifiers, routes, quoted
+    /// text, numbers with units), at most 200 bytes each.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub anchors: Vec<String>,
+    /// What you will produce. Checked; does not change gathering yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deliverable: Option<Deliverable>,
+    /// Up to 32 path ranges you already read. Checked; does not change
+    /// gathering yet.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub known: Vec<KnownRange>,
+}
+
+/// Why a public Answer call has no canonical request. Each refusal carries a
+/// stable code at the start of its message.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AnswerCallError {
+    /// `task` and `question` together.
+    TaskAndQuestion,
+    /// Neither `task` nor `question`.
+    TaskRequired,
+    /// The existing full request without `schema`.
+    MissingSchema,
+    /// The existing full request without `budget`.
+    MissingBudget,
+}
+impl AnswerCallError {
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::TaskAndQuestion => "answer_task_and_question",
+            Self::TaskRequired => "answer_task_required",
+            Self::MissingSchema | Self::MissingBudget => "answer_request_incomplete",
+        }
+    }
+}
+impl std::fmt::Display for AnswerCallError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let detail = match self {
+            Self::TaskAndQuestion => "send task or question, not both",
+            Self::TaskRequired => "send task, or the full schema, question and budget request",
+            // The existing full request keeps its decoding refusal text.
+            Self::MissingSchema => "missing field `schema`",
+            Self::MissingBudget => "missing field `budget`",
+        };
+        write!(formatter, "{}: {detail}", self.code())
+    }
+}
+impl std::error::Error for AnswerCallError {}
+
+impl AnswerCallV3 {
+    /// The one conversion of a public Answer call to its canonical request.
+    /// A `task` becomes the question verbatim, with the request schema and,
+    /// when omitted, the complete default budget. The existing full request
+    /// passes through unchanged. Bounds are checked by
+    /// [`ContextRequestV3::validate`], as for every request.
+    pub fn into_request(self) -> std::result::Result<ContextRequestV3, AnswerCallError> {
+        let (schema, question, budget) = match (self.task, self.question) {
+            (Some(_), Some(_)) => return Err(AnswerCallError::TaskAndQuestion),
+            (None, None) => return Err(AnswerCallError::TaskRequired),
+            (Some(task), None) => (
+                self.schema.unwrap_or_else(|| REQUEST_SCHEMA_V3.into()),
+                task,
+                self.budget.unwrap_or_default(),
+            ),
+            (None, Some(question)) => (
+                self.schema.ok_or(AnswerCallError::MissingSchema)?,
+                question,
+                self.budget.ok_or(AnswerCallError::MissingBudget)?,
+            ),
+        };
+        Ok(ContextRequestV3 {
+            schema,
+            question,
+            budget,
+            continuation: self.continuation,
+            needs: self.needs,
+            anchors: self.anchors,
+            deliverable: self.deliverable,
+            known: self.known,
+        })
+    }
+}
 /// The longest Answer invocation key.
 pub const MAX_INVOCATION_KEY_BYTES: usize = 128;
 

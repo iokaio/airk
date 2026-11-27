@@ -44,6 +44,44 @@
         "question": "amber_marker"
       },
       "name": "missing_required_schema"
+    },
+    {
+      "accepted": true,
+      "arguments": {
+        "budget": {
+          "calls": 3,
+          "candidates": 4,
+          "context_calls": 1,
+          "deadline_ms": 20000,
+          "fanout": 2,
+          "focus_calls": 1,
+          "focus_pairs": 8,
+          "input_tokens": 1024,
+          "max_bytes": 65536,
+          "max_parts": 1,
+          "max_sub_needs": 1,
+          "round_input_tokens": 1024,
+          "rounds": 1
+        },
+        "response_mode": "full",
+        "task": "amber_marker"
+      },
+      "name": "task_with_budget"
+    },
+    {
+      "accepted": true,
+      "arguments": {
+        "task": "amber_marker"
+      },
+      "name": "task_only"
+    },
+    {
+      "accepted": false,
+      "arguments": {
+        "question": "amber_marker",
+        "task": "amber_marker"
+      },
+      "name": "task_and_question"
     }
   ],
   "input_schema": {
@@ -199,14 +237,15 @@
     "additionalProperties": false,
     "properties": {
       "anchors": {
-        "description": "Exact strings from the caller's task. Each gets an exact lookup in\nround one. An anchor is data, never a pattern.",
+        "description": "Up to 16 exact strings from the task (identifiers, routes, quoted\ntext, numbers with units), at most 200 bytes each.",
         "items": {
           "type": "string"
         },
         "type": "array"
       },
       "budget": {
-        "$ref": "#/$defs/BudgetV3"
+        "$ref": "#/$defs/BudgetV3",
+        "description": "Optional with task: omitted uses the service default, a valid budget\nis used as sent. Required with question."
       },
       "continuation": {
         "anyOf": [
@@ -227,7 +266,8 @@
           {
             "type": "null"
           }
-        ]
+        ],
+        "description": "What you will produce. Checked; does not change gathering yet."
       },
       "fresh": {
         "description": "Start an independent run; never reuse a job by digest.",
@@ -250,14 +290,14 @@
         ]
       },
       "known": {
-        "description": "Source the caller already holds. Evidence wholly inside a known range\nis withheld and counted.",
+        "description": "Up to 32 path ranges you already read. Checked; does not change\ngathering yet.",
         "items": {
           "$ref": "#/$defs/KnownRange"
         },
         "type": "array"
       },
       "needs": {
-        "description": "What the caller must find out, one fact each. When present these are\nthe request's sub-needs, in this order, and the kernel derives none.",
+        "description": "Up to 8 statements of what you must learn, one each, at most 400\nbytes. Stating needs improves the result.",
         "items": {
           "type": "string"
         },
@@ -269,6 +309,7 @@
         "type": "string"
       },
       "question": {
+        "description": "Existing full request only, with schema and budget; never with task.",
         "type": "string"
       },
       "reply_detail": {
@@ -295,6 +336,11 @@
         "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results; it does not resolve calls or verify live source."
       },
       "schema": {
+        "description": "Existing full request only; supplied by the service for task.",
+        "type": "string"
+      },
+      "task": {
+        "description": "The whole task in your words; it becomes the question.",
         "type": "string"
       },
       "verification": {
@@ -339,9 +385,7 @@
       }
     },
     "required": [
-      "schema",
-      "question",
-      "budget"
+      "task"
     ],
     "type": "object"
   },
