@@ -148,6 +148,45 @@ Steps A and B run on every change. C and D run once each unless a result
 calls for a repeat. Opus and the ten held-out tasks come only if D shows a
 gain worth confirming.
 
+## Results so far
+
+### Step A and B, first version (27 November 2026)
+
+`topical_index.py` and `live_gather.py`, first version, no tuning pass, no
+model, no content index. Replay of the same 20 recorded agent calls, 113
+located essential truth items:
+
+| Placement of a truth item | Current kernel reply | Prototype |
+| --- | --- | --- |
+| Carried as a passage | 7 | 11 |
+| Named at its lines | 16 | 31 |
+| Named at overlapping lines | 9 | 26 |
+| **At the lines, total** | **32 (28%)** | **68 (60%)** |
+| Only the file named | 32 | 25 |
+| **Pointed at the file, total** | **64 (57%)** | **93 (82%)** |
+| File never reached | 49 | 20 |
+
+| Practical measure | Bookbuilder (8,080 text files) | Munarium (1,017) |
+| --- | --- | --- |
+| Map build, one pass | 8.8 s | 1.8 s |
+| Map size as JSON | 32 MB | 4.4 MB |
+| Time per call, files already in memory | 3 to 6 s | 1 to 2 s |
+
+Readings:
+
+- H1 passes gate 1 (82 percent of files against a bar of 80). H2 is at 60
+  percent against a target of 70.
+- The map is about 4 KB a file, ten times the size expected. Most of it is
+  the list of defined names with lines. It is still far smaller than a
+  content index, and it holds no file text.
+- The per-call time is pure Python over files held in memory, scanning
+  every file for every term. It says nothing about a real implementation.
+- Caution on tuning: the prototype was written by someone who had seen
+  these tasks, although no value in it was fitted to them. The ten
+  held-out tasks are the check for that.
+- This is placement, not cost. It says the reply points at the right
+  places far more often. Whether agents then spend less is step D.
+
 ## Gates
 
 1. **After A.** If file recall is under 80 percent, the map's dimensions

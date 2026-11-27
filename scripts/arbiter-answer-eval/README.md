@@ -1372,6 +1372,33 @@ python -B scripts/arbiter-answer-eval/agent_cost_batch.py run --campaign $campai
 python -B scripts/arbiter-answer-eval/agent_cost_batch.py report --campaign $campaign --series oracle-sonnet-r1 --baseline baseline-sonnet-r1
 ~~~
 
+### Topical index prototype
+
+Research tooling for
+[topical-index-research.md](../../docs/arbiter/topical-index-research.md):
+whether a small map of files plus reads of the live files serves an agent
+better than an index of file contents. It is a prototype for measurement
+and not product code.
+
+- `topical_index.py build` makes the map of one repository folder: per text
+  file its role, the names it defines with their lines and its area words,
+  and inverted tables from word to names and to files. No embeddings and
+  no file text. Output: `<snapshot>.map.json`.
+- `live_gather.py` answers a Gather Context call from the live files and
+  the map, in the brief layout with a census section first. `replay`
+  scores it on recorded agent calls with the same placement as
+  `gather_context_call_replay.py`.
+- `agent_cost_run.py --arm live --live-map <map>` serves that reply to an
+  acting agent; `agent_cost_batch.py --arms live --maps <folder>` runs a
+  series.
+
+~~~powershell
+python -B scripts/arbiter-answer-eval/topical_index.py build --source $snapshot --output $maps\$snapshotName.map.json
+python -B scripts/arbiter-answer-eval/live_gather.py replay --campaign $campaign --calls $calls --maps $maps --output $liveOut
+python -B scripts/arbiter-answer-eval/agent_cost_batch.py run --campaign $campaign --series live-sonnet-r1 --model claude-sonnet-5-5 --arms live --handle $handle --maps $maps --instructions-file $guidance
+python -B -m unittest discover -s scripts/arbiter-answer-eval -p 'test_live_gather.py'
+~~~
+
 ### Model-dose experiment
 
 How much local inference the cost reduction needs is measured before the
