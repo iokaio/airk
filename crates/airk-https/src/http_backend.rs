@@ -90,6 +90,12 @@ impl RemoteTools for CapacityBackend {
     fn local_help(&self) -> bool {
         self.backend.local_help()
     }
+    /// Forwarded: without it the bridge filled neither the configured scope
+    /// nor the MCP-roots workspace for the local agent session (found 27
+    /// November 2026).
+    fn fills_workspace(&self, tool: &str) -> bool {
+        self.backend.fills_workspace(tool)
+    }
     fn uses_response_mode(&self, tool: &str) -> bool {
         self.backend.uses_response_mode(tool)
     }

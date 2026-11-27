@@ -137,15 +137,29 @@ pub struct HttpMcpSession {
     /// The scope injected into every read this session sends.
     pub scope: Scope,
     mode: Option<String>,
+    /// The connection's configured scope, sent as `X-AIRK-Scope`.
+    configured_scope: Option<String>,
 }
 impl HttpMcpSession {
+    /// A session whose agent configuration names its scope (`agents connect
+    /// --scope`): every request carries `X-AIRK-Scope`, and no read names
+    /// indexes of its own (27 November 2026).
+    pub fn start_configured(control: &Path, configured_scope: &str) -> Result<Self> {
+        Self::start_inner(
+            control,
+            Scope::none(),
+            Some("full"),
+            None,
+            Some(configured_scope.to_owned()),
+        )
+    }
     /// Plain HTTP only: no enrollment and no credential. The caller explicitly sends
     /// initialize/initialized; its `clientInfo` names the client family.
     pub fn start(control: &Path, scope: Scope) -> Result<Self> {
         Self::start_with_mode(control, scope, Some("full"))
     }
     pub fn start_with_mode(control: &Path, scope: Scope, mode: Option<&str>) -> Result<Self> {
-        Self::start_inner(control, scope, mode, None)
+        Self::start_inner(control, scope, mode, None, None)
     }
     /// Explicit fresh HTTP/MCP transport after an observed catalog boundary on
     /// the same endpoint. Never replays a read.
@@ -155,6 +169,7 @@ impl HttpMcpSession {
             self.scope.clone(),
             self.mode.as_deref(),
             Some(self.endpoint.clone()),
+            self.configured_scope.clone(),
         )?;
         ensure!(
             fresh.endpoint == self.endpoint,
@@ -167,6 +182,7 @@ impl HttpMcpSession {
         scope: Scope,
         mode: Option<&str>,
         existing: Option<EndpointDescriptor>,
+        configured_scope: Option<String>,
     ) -> Result<Self> {
         ensure!(
             mode.is_none_or(|mode| matches!(mode, "full" | "terse")),
@@ -174,6 +190,8 @@ impl HttpMcpSession {
         );
         let mode = mode.map(str::to_owned);
         let saved_mode = mode.clone();
+        let saved_scope = configured_scope.clone();
+        let wire_scope = configured_scope;
         let control = control.to_owned();
         let (commands, incoming) = mpsc::channel();
         let (ready, initialized) = mpsc::channel();
@@ -191,7 +209,7 @@ impl HttpMcpSession {
                     }
                 };
                 let opened = runtime.block_on(async {
-                    tokio::time::timeout(TIMEOUT, Wire::open(&control, mode, existing)).await?
+                    tokio::time::timeout(TIMEOUT, Wire::open(&control, mode, existing, wire_scope)).await?
                 });
                 let mut wire = match opened {
                     Ok(wire) => wire,
@@ -261,6 +279,7 @@ impl HttpMcpSession {
                 endpoint,
                 scope,
                 mode: saved_mode,
+                configured_scope: saved_scope,
             }),
             Ok(Err(error)) => {
                 let _ = worker.join();
@@ -386,6 +405,7 @@ struct Wire {
     initialized: bool,
     protocol: String,
     mode: Option<String>,
+    configured_scope: Option<String>,
     evidence: PathBuf,
     sequence: u64,
 }
@@ -394,6 +414,7 @@ impl Wire {
         control: &Path,
         mode: Option<String>,
         existing: Option<EndpointDescriptor>,
+        configured_scope: Option<String>,
     ) -> Result<Self> {
         let ControlResponse::Health {
             observation: health,
@@ -459,6 +480,7 @@ impl Wire {
             initialized: false,
             protocol: "2025-11-25".into(),
             mode,
+            configured_scope,
             evidence: control.to_path_buf(),
             sequence: 0,
         })
@@ -522,6 +544,9 @@ impl Wire {
         }
         if let Some(mode) = &self.mode {
             request = request.header("x-airk-response-mode", mode);
+        }
+        if let Some(scope) = &self.configured_scope {
+            request = request.header("x-airk-scope", scope);
         }
         if let Some(session) = &self.session {
             request = request.header("mcp-session-id", session);

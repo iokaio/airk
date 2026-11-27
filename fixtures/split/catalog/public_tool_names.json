@@ -1,5 +1,15 @@
 {
   "decision": "completion plan decision 12, 26 November 2026: clean rename at 1.9",
+  "mcp_decision": "27 November 2026: MCP advertises and accepts only seven core retrieval tools; find_references renamed find_identifier_occurrences",
+  "mcp_tools": [
+    "gather_context",
+    "search_passages",
+    "find_definition",
+    "find_identifier_occurrences",
+    "read_indexed_range",
+    "outline_file",
+    "list_indexed_files"
+  ],
   "owner": "airk-core::tool_names::RENAMED_PUBLIC_TOOLS",
   "renamed": [
     {
@@ -20,7 +30,7 @@
     {
       "native": "airk_references",
       "operation": "references",
-      "public": "find_references"
+      "public": "find_identifier_occurrences"
     },
     {
       "native": "airk_read_file",

@@ -17,8 +17,42 @@ pub(super) fn build_tools() -> Vec<Tool> {
 }
 
 fn project_schema() -> Value {
-    json!({"type":"string","pattern":"^[0-9a-f]{64}$","description":"Configured source scope from projects. Required when this connection has no single default; never follows the Explorer dropdown."})
+    json!({"type":"string","pattern":"^[0-9a-f]{64}$","description":"Configured project binding. Needed only when this connection has several and no default; the projects operation lists them."})
 }
+/// Scope selectors an agent never needs (user decision, 27 November 2026):
+/// a call reads its connection's own scope, so MCP leaves these out of the
+/// schemas it advertises. The CLI catalog keeps them.
+const CONNECTION_SCOPE_FIELDS: [&str; 8] = [
+    "project",
+    "project_ids",
+    "index_ids",
+    "index_set_ids",
+    "workspace",
+    "member_availability",
+    "origin_publication",
+    crate::open::CONFIGURED_SCOPE,
+];
+
+/// The schema an MCP agent sees: the tool without connection-scope selectors.
+pub(crate) fn agent_view(mut tool: Tool) -> Tool {
+    let schema = Arc::make_mut(&mut tool.input_schema);
+    if let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) {
+        for field in CONNECTION_SCOPE_FIELDS {
+            properties.remove(field);
+        }
+    }
+    if let Some(required) = schema.get_mut("required").and_then(Value::as_array_mut) {
+        required.retain(|field| !CONNECTION_SCOPE_FIELDS.iter().any(|scope| field == scope));
+    }
+    if let Some(dependent) = schema.get_mut("dependentRequired").and_then(Value::as_object_mut) {
+        dependent.retain(|field, _| !CONNECTION_SCOPE_FIELDS.contains(&field.as_str()));
+        if dependent.is_empty() {
+            schema.remove("dependentRequired");
+        }
+    }
+    tool
+}
+
 pub(crate) fn scoped_tool(mut tool: Tool) -> Tool {
     let schema = Arc::make_mut(&mut tool.input_schema);
     schema.entry("properties").or_insert_with(|| json!({}))["project"] = project_schema();
@@ -38,7 +72,7 @@ pub(crate) fn combined_tool(mut tool: Tool) -> Tool {
         .as_object_mut()
         .expect("tool properties")
         .remove("project");
-    properties["project_ids"] = json!({"type":"array","items":{"type":"string","pattern":"^prj_[0-9a-f]{32}$"},"minItems":1,"maxItems":32,"uniqueItems":true,"description":"Explicit Projects within the frozen reviewed connection grant. Omission keeps the connection's captured selection; no workspace or saved-default expansion."});
+    properties["project_ids"] = json!({"type":"array","items":{"type":"string","pattern":"^prj_[0-9a-f]{32}$"},"minItems":1,"maxItems":32,"uniqueItems":true,"description":"Projects to read, within this connection's reviewed grant; the query_scope operation lists them. Omit to read the whole captured selection."});
     properties["index_ids"] = json!({"type":"array","items":{"type":"string","pattern":"^idx_[0-9a-f]{32}$"},"minItems":1,"maxItems":32,"uniqueItems":true,"description":"Optional explicit index subset of the selected Projects. Qualified follow-up reads require one originating index."});
     if properties.get("limit").is_some() {
         properties["limit_per_index"] = limit_per_index_schema();

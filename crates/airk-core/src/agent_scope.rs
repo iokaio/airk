@@ -137,6 +137,15 @@ pub fn set_by_name(listing: &CatalogListing, name: &str) -> Result<QueryProjectI
     select_name(&names, name)
 }
 
+/// Whether a configured scope name (an agent connection's `X-AIRK-Scope`)
+/// means an index: it names no index set but does name an index. Any other
+/// name is read as an index set, whose resolution reports unknown or
+/// ambiguous names.
+pub fn names_index_only(listing: &CatalogListing, name: &str) -> bool {
+    set_by_name(listing, name) == Err(open_refusal::SCOPE_NAME_UNKNOWN)
+        && index_by_name(listing, name).is_ok()
+}
+
 /// The live member indexes of a set, in id order.
 fn members(listing: &CatalogListing, set: &QueryProjectId) -> BTreeSet<IndexId> {
     listing

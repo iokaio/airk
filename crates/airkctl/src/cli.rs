@@ -345,11 +345,12 @@ enum AgentsCommand {
         #[arg(long)]
         no_user: bool,
     },
-    /// Write the AIRK entry for Claude Code, Codex or VS Code: the live loopback endpoint URL
-    /// and the X-AIRK-Response-Mode header only, no credential (U110).
+    /// Write the AIRK entry for Claude Code, Codex or VS Code: the live loopback endpoint URL,
+    /// the X-AIRK-Response-Mode header and, with --scope, the X-AIRK-Scope header; no
+    /// credential (U110).
     ///
-    /// Agents read with the scope a call names (index_ids, index_set_ids) or the workspace
-    /// default of the folder it passes (`scope default`). Connections no longer exist.
+    /// An agent never chooses its scope. Its calls read the configured scope, else the
+    /// workspace default of the folder its client has open (`scope default`).
     Connect {
         /// The service's control directory (default: --service-runtime-dir, else the installation's).
         #[arg(long)]
@@ -364,6 +365,10 @@ enum AgentsCommand {
         project: Option<PathBuf>,
         #[arg(long, default_value = "airk")]
         server_key: String,
+        /// The index set or index this agent reads, by id or name; written as the entry's
+        /// X-AIRK-Scope header. Connecting again with another --scope replaces it.
+        #[arg(long = "scope")]
+        configured_scope: Option<String>,
         /// Unused since U110 (no credential helper is written).
         #[arg(long)]
         airkctl: Option<PathBuf>,
@@ -2032,6 +2037,7 @@ fn agents_command(cx: &mut Context, selection: Selection, action: AgentsCommand)
             user,
             project,
             server_key,
+            configured_scope,
             ..
         } => match inputs(project.as_slice(), *user) {
             Err(line) => Err(line),
@@ -2048,7 +2054,7 @@ fn agents_command(cx: &mut Context, selection: Selection, action: AgentsCommand)
                 } else {
                     crate::agents::config::Scope::Project
                 };
-                manage::connect(&inputs, *client, scope, server_key)
+                manage::connect(&inputs, *client, scope, server_key, configured_scope.as_deref())
             }
         },
     };

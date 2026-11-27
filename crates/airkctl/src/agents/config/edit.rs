@@ -17,6 +17,20 @@ use serde_json::Value;
 use std::collections::HashSet;
 
 const MODE: &str = "X-AIRK-Response-Mode";
+/// The configured scope of the connection: one index set or index, by id or
+/// name (user decision, 27 November 2026). The service resolves it per call.
+pub(crate) const SCOPE: &str = "X-AIRK-Scope";
+/// The longest configured scope, in UTF-8 bytes (the service's own bound).
+pub(crate) const MAX_SCOPE_BYTES: usize = 256;
+
+/// A configured scope the service will accept in its header: 1 to 256 UTF-8
+/// bytes, printable, without surrounding spaces.
+pub(crate) fn valid_scope(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= MAX_SCOPE_BYTES
+        && name.trim() == name
+        && !name.chars().any(char::is_control)
+}
 /// The VS Code command the extension registered to resolve legacy inputs.
 const VSCODE_COMMAND: &str = "airk.httpCredential";
 
@@ -150,6 +164,7 @@ fn has_mode(row: &Declaration, table: &str) -> bool {
 /// agent's top-level container. `source` is `None` for an absent file. An
 /// existing recognized entry is repaired in place; any other entry with that
 /// key is refused.
+#[cfg(test)]
 pub(crate) fn connect(
     agent: Agent,
     scope: Scope,
@@ -157,8 +172,26 @@ pub(crate) fn connect(
     server_key: &str,
     url: &str,
 ) -> Result<String, String> {
+    connect_scoped(agent, scope, source, server_key, url, None)
+}
+
+/// [`connect`] with the connection's configured scope, written as its
+/// `X-AIRK-Scope` header.
+pub(crate) fn connect_scoped(
+    agent: Agent,
+    scope: Scope,
+    source: Option<&str>,
+    server_key: &str,
+    url: &str,
+    configured_scope: Option<&str>,
+) -> Result<String, String> {
     if !agent.connectable() {
         return Err(unverified(agent));
+    }
+    if configured_scope.is_some_and(|name| !valid_scope(name)) {
+        return Err(format!(
+            "A scope is one index set or index name of 1 to {MAX_SCOPE_BYTES} bytes, without surrounding spaces."
+        ));
     }
     if !recognize::airk_key(server_key) {
         return Err(format!(
@@ -173,14 +206,29 @@ pub(crate) fn connect(
     let empty = if agent == Agent::Codex { "" } else { "{}\n" };
     let source = source.unwrap_or(empty);
     let rows = recognize::declarations(agent.parser(), source)?;
-    if find(&rows, &target).is_some() {
-        return repair(agent, scope, source, &target, url);
-    }
-    let result = if agent == Agent::Codex {
+    let result = if find(&rows, &target).is_some() {
+        repair(agent, scope, source, &target, url)?
+    } else if agent == Agent::Codex {
         toml::append_server(source, server_key, url)
     } else {
         let fields = json_fields(agent, url)?;
         jsonc::insert_member(source, &target.container_path, server_key, &fields)?
+    };
+    let Some(name) = configured_scope else {
+        return bounded(result);
+    };
+    // Set (or replace) the connection's scope header in the entry just
+    // written; an entry connected without --scope keeps any it has.
+    let result = if agent == Agent::Codex {
+        toml::set_string(&result, server_key, Some("http_headers"), SCOPE, name)?
+    } else {
+        let path: Vec<String> = target
+            .container_path
+            .iter()
+            .cloned()
+            .chain([server_key.to_string(), "headers".into(), SCOPE.into()])
+            .collect();
+        jsonc::set_string(&result, &path, name)?
     };
     bounded(result)
 }

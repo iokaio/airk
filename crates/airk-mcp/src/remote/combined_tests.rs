@@ -326,12 +326,14 @@ async fn actual_combined_mcp_and_public_routes_preserve_complete_native_results(
         .iter()
         .find(|tool| tool.name == "airk_search")
         .unwrap();
+    // An agent never chooses scope (27 November 2026): MCP advertises no
+    // selector and no query_scope; the connection's selection applies.
     assert!(
         search.input_schema["properties"]
             .get("project_ids")
-            .is_some()
+            .is_none()
     );
-    assert!(catalog.iter().any(|tool| tool.name == "airk_query_scope"));
+    assert!(!catalog.iter().any(|tool| tool.name == "airk_query_scope"));
     let args = json!({"query":"Marker","project_ids":backend.selection.project_ids,"response_mode":"full"});
     let wire = client
         .call_tool(
@@ -354,15 +356,17 @@ async fn actual_combined_mcp_and_public_routes_preserve_complete_native_results(
         backend.arguments.lock().unwrap()[1].1,
         args.as_object().unwrap().clone()
     );
-    assert_eq!(
+    // The CLI-side catalog keeps the selector the MCP schema leaves out.
+    assert!(
         unified
             .catalog()
             .iter()
             .find(|tool| tool.name == "search_passages")
             .unwrap()
-            .input_schema["properties"]["project_ids"],
-        search.input_schema["properties"]["project_ids"]
+            .input_schema["properties"]["project_ids"]
+            .is_object()
     );
+    assert!(search.input_schema["properties"]["project_ids"].is_null());
     let discovery = unified.call("projects".into(), Map::new()).await?;
     assert_eq!(discovery["structuredContent"]["projects"], json!([]));
     assert_eq!(
@@ -450,6 +454,16 @@ async fn actual_combined_mcp_and_public_routes_preserve_complete_native_results(
     )?;
     for tool in ["index_status", "airk_status", "parse", "airk_parse"] {
         let reply = client.call_tool(CallToolRequestParams::new(tool)).await?;
+        if !airk_core::tool_names::on_mcp(tool) {
+            // Status and Parse are CLI operations only (27 November 2026):
+            // MCP refuses them before the owner runs.
+            assert_eq!(
+                reply.structured_content.as_ref().unwrap()["error"]["code"],
+                "UNKNOWN_TOOL",
+                "{tool}"
+            );
+            continue;
+        }
         assert_ne!(reply.is_error, Some(true), "{reply:?}");
         assert_eq!(finalized.observed_capacity.load(Ordering::SeqCst), 32);
         let mut body = reply.structured_content.unwrap();

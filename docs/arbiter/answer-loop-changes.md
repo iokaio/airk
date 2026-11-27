@@ -4675,3 +4675,45 @@ under `airk_*` names, and the shared manifest carries it. Admin's search
 screen and the guided-evidence tests look operations up there. The public
 `tools` list stays what MCP advertises, so narrowing it cannot break Admin.
 [Help contract](../../crates/airk-mcp/src/help/CONTRACT.md)
+
+### 82. MCP offers seven retrieval tools, scoped by its configuration
+
+User decisions of 27 November 2026, replacing completion plan decision 11:
+
+- **Seven tools.** An MCP client sees and may call only `gather_context`,
+  `search_passages`, `find_definition`, `find_identifier_occurrences`,
+  `read_indexed_range`, `outline_file` and `list_indexed_files`. The user
+  first kept ten, then removed `read_around`, `file_info` and `index_status`
+  as of no real value to an agent. Every other operation stays in `airkctl`,
+  Admin and Workbench. Over MCP it is absent from `tools/list`, and a call to
+  it, by public or native name, is refused `UNKNOWN_TOOL`. Owner:
+  `airk-core::tool_names::MCP_TOOLS`; the gate is in the MCP bridge
+  (`airk-mcp::remote`), which the CLI does not use.
+- **Rename.** `find_references` is `find_identifier_occurrences` (clean: the
+  old name is not callable), because the tool finds exact-spelling textual
+  matches.
+- **Configured scope.** `airkctl agents connect --scope <index set or index>`
+  writes `X-AIRK-Scope` into the agent's MCP entry; the bridge passes it to the
+  service, which resolves it per call after any CLI-named scope and before the
+  workspace default. MCP schemas carry no scope argument (`project`,
+  `project_ids`, `index_ids`, `index_set_ids`, `workspace`,
+  `member_availability`, `origin_publication`). `scope_required` now tells the
+  user how to configure a scope; the agent is never asked to list or choose.
+- **Descriptions and guidance.** Each description says when to use the tool,
+  what it returns, the limit that changes how a result reads and an optional
+  next call, after an outside review of the tool contract. Limits and
+  matching rules moved into field descriptions; `known` says it is validated
+  only; anchors may come from earlier evidence; reads say a citation's
+  publication token as `revision` keeps them on its snapshot. The server
+  guidance routes by need over the seven tools.
+- **Defect found and fixed.** The HTTPS capacity wrapper
+  (`airk-https::http_backend::CapacityBackend`) did not forward
+  `fills_workspace`, so the bridge never filled the MCP-roots workspace for the
+  local agent session, and would not have passed the configured scope.
+
+The CLI is unchanged apart from `agents connect --scope`. Tests that compared
+a removed tool across CLI and MCP now assert the MCP refusal and compare the
+CLI with the open pipe; `agent_reads_use_the_configured_scope_or_a_workspace_default`
+replaces the per-call scope test.
+[What MCP offers](../unified-mcp.md#what-mcp-offers-user-decision-27-november-2026) ·
+[Agent setup](../agent-integration.md)

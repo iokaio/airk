@@ -684,8 +684,16 @@ impl ServerHandler for Bridge {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
+        // MCP offers only the core retrieval tools (user decision, 27 November
+        // 2026); the CLI reads the backend's complete catalog directly.
         Ok(ListToolsResult {
-            tools: self.backend.catalog(),
+            tools: self
+                .backend
+                .catalog()
+                .into_iter()
+                .filter(|tool| airk_core::tool_names::on_mcp(&tool.name))
+                .map(crate::tool_catalog::agent_view)
+                .collect(),
             ..Default::default()
         })
     }
@@ -694,6 +702,15 @@ impl ServerHandler for Bridge {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
+        if !airk_core::tool_names::on_mcp(&request.name) {
+            let refused = crate::unified::failure(
+                "UNKNOWN_TOOL",
+                "Use the tools/list catalog. Other AIRK operations are available through airkctl.",
+            );
+            return Ok(serde_json::from_value::<CallToolResult>(refused)
+                .expect("static unknown-tool envelope")
+                .into());
+        }
         let client = self.client.unwrap_or_else(|| {
             context
                 .client_info()
@@ -715,6 +732,20 @@ impl ServerHandler for Bridge {
             })
             .for_call(&request.name);
         let mut arguments = request.arguments.unwrap_or_default();
+        // The connection's configured scope travels in its header, never in
+        // what the agent sends (user decision, 27 November 2026).
+        arguments.remove(crate::open::CONFIGURED_SCOPE);
+        if self.backend.fills_workspace(&request.name)
+            && let Some(scope) = context
+                .extensions
+                .get::<::http::request::Parts>()
+                .and_then(|parts| parts.extensions.get::<http::ConfiguredScope>())
+        {
+            arguments.insert(
+                crate::open::CONFIGURED_SCOPE.into(),
+                serde_json::Value::String(scope.0.clone()),
+            );
+        }
         if self.backend.fills_workspace(&request.name) && names_no_scope(&arguments) {
             let roots_supported = context
                 .peer
@@ -1392,6 +1423,7 @@ mod tests {
                 async { Ok::<_, anyhow::Error>(().serve(client_io).await?) },
                 async { Ok::<_, anyhow::Error>(bridge.serve(server_io).await?) }
             )?;
+            // MCP offers no parse tool (27 November 2026): refused before work.
             for alias in ["parse", "airk_parse"] {
                 let result = client.call_tool(CallToolRequestParams::new(alias)).await?;
                 assert_eq!(result.is_error, Some(true), "{result:?}");
@@ -1399,9 +1431,7 @@ mod tests {
                     &result.content[0].as_text().unwrap().text,
                 )
                 .map_err(|error| anyhow::anyhow!("unified={unified}: {error}; {result:?}"))?;
-                assert_eq!(value["error"]["code"], "verification_projection_changed");
-                assert_eq!(value["error"]["retryable"], false);
-                assert!(value.get("source_verification").is_none());
+                assert_eq!(value["error"]["code"], "UNKNOWN_TOOL");
             }
             client.close().await?;
             server.close().await?;
@@ -2003,6 +2033,19 @@ mod tests {
         .enumerate()
         {
             backend.limit.store(limit, Ordering::SeqCst);
+            if !airk_core::tool_names::on_mcp(tool) {
+                // MCP offers only the core retrieval tools (27 November 2026).
+                let refused = client
+                    .call_tool(CallToolRequestParams::new(tool))
+                    .await?;
+                assert_eq!(
+                    refused.structured_content.as_ref().unwrap()["error"]["code"],
+                    "UNKNOWN_TOOL",
+                    "{tool}"
+                );
+                continue;
+            }
+            let before = backend.reads.load(Ordering::SeqCst);
             let reply = client
                 .call_tool(
                     CallToolRequestParams::new(tool).with_arguments(
@@ -2016,7 +2059,7 @@ mod tests {
             let body = reply.structured_content.as_ref().unwrap();
             if matches!(tool, "parse" | "airk_parse") {
                 assert_eq!(body["steps"][0]["result"]["query_concurrency"], limit);
-                assert_eq!(backend.reads.load(Ordering::SeqCst), request + 1);
+                assert_eq!(backend.reads.load(Ordering::SeqCst), before + 1, "{request}");
                 continue;
             }
             assert_eq!(
@@ -2033,8 +2076,10 @@ mod tests {
                 )?,
                 *body
             );
-            assert_eq!(backend.reads.load(Ordering::SeqCst), request + 1);
+            assert_eq!(backend.reads.load(Ordering::SeqCst), before + 1, "{request}");
         }
+        // status is not an MCP tool (27 November 2026): refused without a read.
+        let before = backend.reads.load(Ordering::SeqCst);
         let reply = client
             .call_tool(
                 CallToolRequestParams::new("status").with_arguments(
@@ -2048,7 +2093,7 @@ mod tests {
         assert_eq!(reply.is_error, Some(true));
         assert_eq!(
             reply.structured_content.as_ref().unwrap()["error"]["code"],
-            "fixture_failure"
+            "UNKNOWN_TOOL"
         );
         assert!(
             reply
@@ -2058,7 +2103,7 @@ mod tests {
                 .get("query_concurrency")
                 .is_none()
         );
-        assert_eq!(backend.reads.load(Ordering::SeqCst), 9);
+        assert_eq!(backend.reads.load(Ordering::SeqCst), before);
         client.close().await?;
         server.close().await?;
         Ok(())
@@ -2122,6 +2167,7 @@ mod tests {
                 );
                 assert_eq!(value["include_status"], true);
             }
+            // MCP offers no help tool (27 November 2026); the CLI keeps it.
             let help = client
                 .call_tool(
                     CallToolRequestParams::new("airk_help").with_arguments(Default::default()),
@@ -2129,10 +2175,7 @@ mod tests {
                 .await?;
             let help: serde_json::Value =
                 serde_json::from_str(&help.content[0].as_text().unwrap().text)?;
-            assert!(
-                help["topics"].as_array().unwrap().len() >= 25,
-                "help must be served locally rather than forwarded to the echo backend"
-            );
+            assert_eq!(help["error"]["code"], "UNKNOWN_TOOL");
             client.close().await?;
             server.close().await?;
         }

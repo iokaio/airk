@@ -32,6 +32,13 @@ def renamed() -> tuple[tuple[str, str, str], ...]:
     return tuple((row["native"], row["operation"], row["public"]) for row in table["renamed"])
 
 
+@lru_cache(maxsize=1)
+def mcp_tools() -> tuple[str, ...]:
+    """The public tools an MCP agent sees and may call (27 November 2026)."""
+    table = json.loads(TABLE.read_text(encoding="utf-8"))
+    return tuple(table["mcp_tools"])
+
+
 def native(name: str) -> str:
     """The native name of any spelling: native, operation, legacy public or 1.9 public."""
     if name.startswith("airk_"):

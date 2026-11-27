@@ -12,7 +12,7 @@ mod scoped_tests;
 
 mod context;
 
-pub const GUIDANCE: &str = "Multi-place task: gather_context first, with task and needs. Identifier: find_definition -> find_references -> read_indexed_range/read_around; path: read_indexed_range/outline_file; concept: search_passages. Keep scopes/locations/exact tokens/hashes/validators; finish changes pages. Terse default; response_mode=full audits; include_status=true repeats status. Honor typed retries; never replay uncertain work. Review UI drafts. {ref:publication} is reply-local.";
+pub const GUIDANCE: &str = "Pick by need. Task across several places, even naming a symbol: gather_context with task and needs. Definition: find_definition. Where an identifier is written: find_identifier_occurrences. Concept: search_passages. Known file: outline_file. Known lines: read_indexed_range. Pass a citation's publication token as revision. Terse default; response_mode=full audits; include_status=true adds readiness. Honor typed retries; never replay uncertain work. {ref:publication} is reply-local.";
 
 const UI_NAMES: &[(&str, &str)] = &[
     ("draft_search", "airk_explorer_suggest_search"),
@@ -208,7 +208,7 @@ fn build_tools() -> Vec<Tool> {
         .iter_mut()
         .find(|t| t.name == "index_status")
         .unwrap();
-    status.description = Some("Quick version, health and project-index check: counts, publication, source-update state, semantic readiness and configured query_concurrency at frontend admission. Evidence reads run at that concurrency: 16 by default, or 4, 8, 16, 32 or 64 as set in the Management Service; connection channels and worker query slots match it, plus one slot kept for status, so status still answers when every read slot is busy. A read beyond the limit waits in a bounded queue and gets a typed retry reply (retryable, retry_after_ms) when the queue is full or its deadline passes. Obtain before broad evidence fan-out; lightweight does not mean exempt from bounded admission. Completed same-authority observations superseded by scalar invalidation return successfully with status_observation.superseded and their original publication/time. Successful snapshots may be cached for five seconds; observed_unix_ms, cache_age_ms and cached disclose their age. Allows up to ten seconds for shared cold runtime setup, followed by a two-second observation budget; expiry reports unknown readiness and null evidence. Always skips process diagnostics and editor probes. Call diagnostics for detailed work, runtime versions and Explorer attachment. Does not start indexing or repair.".into());
+    status.description = Some("Use before broad parallel retrieval, or when you need the publication token or readiness. Returns the index publication, source-update state, semantic readiness and query_concurrency, the ceiling on parallel evidence reads; a read beyond it waits or gets a typed retry. On a combined connection it reports each selected project and index. observed_unix_ms and cache_age_ms give the observation age; an unknown result means readiness was not observed in time. Does not start indexing or repair.".into());
     let help = result.iter_mut().find(|t| t.name == "help").unwrap();
     help.description = Some("Explain AIRK usage, CLI commands, tool schemas and Explorer workflows. Omit selectors for an overview; query searches bundled guidance, topic_id reads a UI/engine guide, topic reads native guidance, command reads CLI help, and tool reads a public tool schema. Native guides retain prefixed CLI/evidence compatibility names; tools/list and tool selectors describe the unified public catalog. Returns documentation, never project evidence or live health.".into());
     let schema = Arc::make_mut(&mut help.input_schema);
@@ -390,12 +390,21 @@ impl Unified {
             Some(_) => {
                 return Err(failure(
                     "INVALID_PROJECT",
-                    "project must be a configured binding from projects.",
+                    "project must be a configured binding from the projects operation.",
                 ));
             }
             None => self.default.clone(),
         };
-        selected.and_then(|id|self.projects.get(&id)).ok_or_else(|| failure("PROJECT_REQUIRED", "Choose an explicit configured binding from projects. Explorer selection does not select a retrieval project."))
+        selected.and_then(|id|self.projects.get(&id)).ok_or_else(|| self.project_required())
+    }
+    /// A connection with several bindings and no default cannot choose for
+    /// an agent, and an agent is never asked to choose (27 November 2026):
+    /// the fix is the connection's own default, which the user sets.
+    fn project_required(&self) -> Value {
+        failure(
+            "PROJECT_REQUIRED",
+            "This connection serves several projects and has no default. Ask the user to set a default project for this agent connection in AIRK Admin, or pass project from the CLI.",
+        )
     }
     async fn ui(&self, project: Option<String>, name: &str, args: Map<String, Value>) -> Value {
         let Some(explorer) = &self.explorer else {
@@ -656,6 +665,7 @@ impl RemoteTools for Unified {
                     failure("INVALID_SCHEMA", "projects accepts no arguments.")
                 });
             }
+
             if tool == "help" {
                 return Ok(self.help(args).await);
             }
@@ -1132,36 +1142,38 @@ mod tests {
                 instructions.contains("never replay uncertain work"),
                 "{catalog}"
             );
-            // Step 3 guidance: a whole task goes to Answer first, with task
-            // and needs; a known identifier or path goes to a direct lookup.
+            // Guidance routes by need (27 November 2026): a task spanning
+            // several places goes to Answer with task and needs, even when it
+            // names a symbol; a definition goes to the direct lookup.
             assert!(
-                instructions.contains(&format!("{answer} first, with task and needs")),
+                instructions.contains(&format!("{answer} with task and needs")),
                 "{catalog}"
             );
             assert!(
-                instructions.contains(&format!("{definition} ->")),
+                instructions.contains(&format!("Definition: {definition}")),
                 "{catalog}"
             );
         }
-        // The public guidance names the renamed public tools (decision 12).
+        // The public guidance names the tools MCP offers, and only those.
         for name in [
             "gather_context",
             "find_definition",
-            "find_references",
+            "find_identifier_occurrences",
             "read_indexed_range",
-            "read_around",
             "outline_file",
             "search_passages",
         ] {
             assert!(GUIDANCE.contains(name), "public name missing: {name}");
         }
+        for gone in ["find_references", "read_around", "index_status", "changes", "drafts"] {
+            assert!(!GUIDANCE.contains(gone), "removed tool named: {gone}");
+        }
         for name in [
             "airk_answer",
-            "airk_changes",
             "airk_symbols",
             "airk_references",
             "airk_read_file",
-            "airk_context",
+            "airk_outline",
             "airk_search",
         ] {
             assert!(
@@ -1423,7 +1435,7 @@ mod tests {
             "draft_strategy",
             "file_info",
             "find_definition",
-            "find_references",
+            "find_identifier_occurrences",
             "gather_context",
             "get_handoff",
             "get_template",

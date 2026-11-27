@@ -14,6 +14,10 @@ use std::sync::Arc;
 pub use airk_core::agent_scope::LIST_SCOPES;
 /// The open selectors a read tool accepts.
 pub const SELECTORS: [&str; 2] = ["index_ids", "index_set_ids"];
+/// The reserved argument that carries the connection's configured scope
+/// from its `X-AIRK-Scope` header to the service. The bridge sets it from the
+/// header and drops any value a caller sends.
+pub const CONFIGURED_SCOPE: &str = "configured_scope";
 
 /// `list_scopes`: every index and index set of this installation with its
 /// id, name, description and indexed paths.
@@ -74,6 +78,17 @@ pub fn local_catalog() -> Vec<Tool> {
             }
             tool
         })
+        .collect()
+}
+
+/// What an agent sees on the local agent session: the tools MCP offers
+/// (`airk_core::tool_names::MCP_TOOLS`) without scope arguments, exactly as
+/// the bridge lists them (27 November 2026).
+pub fn agent_catalog() -> Vec<Tool> {
+    local_catalog()
+        .into_iter()
+        .filter(|tool| airk_core::tool_names::on_mcp(&tool.name))
+        .map(crate::tool_catalog::agent_view)
         .collect()
 }
 

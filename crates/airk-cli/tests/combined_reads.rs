@@ -1910,6 +1910,8 @@ fn assert_parity(label: &str, left: &Value, right: &Value) -> Result<()> {
 struct McpSession {
     transport: http::HttpMcpSession,
     negotiated_protocol: String,
+    /// The fixture service's control folder, for the CLI fallback.
+    control: std::path::PathBuf,
 }
 /// The indexes a session scope reaches: its explicit `index_ids`, else every
 /// index a selected project has a membership in (the fixture's memberships:
@@ -1946,9 +1948,21 @@ impl McpSession {
         Self::start_scope(f, http::Scope::indexes(indexes_of(f, selected)))
     }
     fn start_scope(f: &Fixture, scope: http::Scope) -> Result<Self> {
+        Self::start_transport(f, http::HttpMcpSession::start(&f.control, scope)?)
+    }
+    /// An agent connection configured with `agents connect --scope`: every
+    /// request carries `X-AIRK-Scope`, and no read names indexes itself.
+    fn start_configured(f: &Fixture, configured_scope: &str) -> Result<Self> {
+        Self::start_transport(
+            f,
+            http::HttpMcpSession::start_configured(&f.control, configured_scope)?,
+        )
+    }
+    fn start_transport(f: &Fixture, transport: http::HttpMcpSession) -> Result<Self> {
         let mut session = Self {
-            transport: http::HttpMcpSession::start(&f.control, scope)?,
+            transport,
             negotiated_protocol: String::new(),
+            control: f.control.clone(),
         };
         let initialized = session.request(1, "initialize", json!({"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"airk-combined-fixture","version":"1"}}))?;
         ensure!(
@@ -1975,7 +1989,62 @@ impl McpSession {
             .await?
             .map_err(|refused| anyhow::anyhow!("open pipe read of {tool} refused: {refused}"))
     }
-    fn call(&mut self, mut id: u64, name: &str, arguments: Value) -> Result<Value> {
+    fn call(&mut self, id: u64, name: &str, arguments: Value) -> Result<Value> {
+        let reply = self.call_mcp(id, name, arguments.clone())?;
+        let public = airk_core::tool_names::public_name_of_native(name).unwrap_or(name);
+        if airk_core::tool_names::on_mcp(public) {
+            return Ok(reply);
+        }
+        // MCP offers only the core retrieval tools (27 November 2026). It
+        // refuses this operation, which the CLI keeps: the same open read
+        // through `tools call` stands in for the MCP reply.
+        ensure!(
+            reply["result"]["structuredContent"]["error"]["code"] == "UNKNOWN_TOOL",
+            "MCP must refuse {name}: {reply}"
+        );
+        let native = if name.starts_with("airk_") {
+            name.to_owned()
+        } else {
+            airk_core::tool_names::native_name_of_public(name)
+                .with_context(|| format!("no native operation for {name}"))?
+        };
+        let mut arguments = arguments;
+        let fields = arguments.as_object_mut().context("object arguments")?;
+        let mut scope = Vec::new();
+        for (key, flag) in [("index_ids", "--index"), ("index_set_ids", "--set")] {
+            if let Some(Value::Array(names)) = fields.remove(key) {
+                for name in names {
+                    scope.push(flag.to_owned());
+                    scope.push(name.as_str().context("scope name")?.to_owned());
+                }
+            }
+        }
+        if let Some(Value::String(folder)) = fields.remove("workspace") {
+            scope.push("--workspace".into());
+            scope.push(folder);
+        }
+        if scope.is_empty() {
+            scope = self.transport.scope.cli_arguments();
+        }
+        let output = common::ctl::Ctl::new()
+            .arg("--service-runtime-dir")
+            .arg(&self.control)
+            .args(["tools", "call", &native])
+            .args(scope)
+            .args(["--args".to_owned(), arguments.to_string()])
+            .env("AIRK_MCP_RESPONSE_MODE", "full")
+            .env("AIRK_USAGE_MODE", "disabled")
+            .output()?;
+        ensure!(
+            output.status.success() || output.status.code() == Some(1),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stderr),
+            String::from_utf8_lossy(&output.stdout)
+        );
+        let envelope: Value = serde_json::from_slice(&output.stdout)?;
+        Ok(json!({"jsonrpc":"2.0","id":id,"result":envelope}))
+    }
+    fn call_mcp(&mut self, mut id: u64, name: &str, arguments: Value) -> Result<Value> {
         let deadline = Instant::now() + Duration::from_secs(60);
         loop {
             let reply =
@@ -2009,6 +2078,7 @@ impl McpSession {
             named,
         )?;
         ensure!(wire.get("error").is_none(), "{label}: MCP failed: {wire}");
+
         let piped = pipe_read(f, scope.open_selection(), tool, &stripped)
             .await?
             .map_err(|refused| anyhow::anyhow!("{label}: open pipe read refused: {refused}"))?;
@@ -2212,10 +2282,10 @@ async fn actual_native_cli_and_mcp_preserve_shared_index_scope_and_complete_resu
         .find(|tool| tool["name"] == "search_passages")
         .context("search catalog missing")?;
     let local_catalog = serde_json::to_value(
-        airk_mcp::open::local_catalog()
+        airk_mcp::open::agent_catalog()
             .into_iter()
             .find(|tool| tool.name == "search_passages")
-            .context("local search catalog missing")?,
+            .context("agent search catalog missing")?,
     )?;
     assert_eq!(
         search["inputSchema"], local_catalog["inputSchema"],
@@ -3077,7 +3147,7 @@ async fn recommendations_keep_native_cli_mcp_parity_and_execute_copied_examples(
         // matches permitted policy evidence, including in the one-index subset.
         let mut task = result["instructions"]["examples"][1]["arguments"].clone();
         task["query"] = json!("boundaryneedle");
-        let reply = f.cli("search", &task).await?;
+        let reply = f.cli("airk_search", &task).await?;
         ensure!(
             reply["isError"] != true,
             "recommended task scope failed: {reply}"
@@ -4041,7 +4111,7 @@ const CURRENT_PUBLIC_TOOL_NAMES: [&str; 30] = [
     "draft_strategy",
     "file_info",
     "find_definition",
-    "find_references",
+    "find_identifier_occurrences",
     "gather_context",
     "get_handoff",
     "get_template",
@@ -4881,14 +4951,16 @@ fn listed_tools(reply: &Value) -> Result<Vec<String>> {
 /// Workspace defaults set through the CLI apply to the next MCP call, and
 /// MCP, the pipe and `airkctl tools call --workspace` return the same result.
 #[tokio::test]
-async fn tokenless_https_reads_name_their_scope_or_a_workspace_default() -> Result<()> {
+async fn agent_reads_use_the_configured_scope_or_a_workspace_default() -> Result<()> {
     let f = Fixture::new(true)?;
     let _service = f.start().await?;
+    // An agent never chooses its scope (27 November 2026): MCP lists no
+    // list_scopes tool and no scope argument.
     let mut mcp = McpSession::start_scope(&f, http::Scope::none())?;
     let catalog = mcp.request(2, "tools/list", json!({}))?;
     let names = listed_tools(&catalog)?;
     ensure!(
-        names.contains(&"list_scopes".to_owned()) && names.contains(&"search_passages".to_owned()),
+        !names.contains(&"list_scopes".to_owned()) && names.contains(&"search_passages".to_owned()),
         "{catalog}"
     );
     let search = catalog["result"]["tools"]
@@ -4898,31 +4970,37 @@ async fn tokenless_https_reads_name_their_scope_or_a_workspace_default() -> Resu
         .find(|tool| tool["name"] == "search_passages")
         .context("search tool")?;
     let properties = &search["inputSchema"]["properties"];
-    ensure!(
-        properties["workspace"].is_object()
-            && properties["index_ids"]["description"]
-                .as_str()
-                .is_some_and(|text| text.contains("A scope is required")),
-        "{search}"
-    );
+    for field in ["index_ids", "index_set_ids", "workspace", "project", "project_ids"] {
+        ensure!(properties.get(field).is_none(), "{field} advertised: {search}");
+    }
     let arguments = json!({"query":"boundaryneedle","mode":"lexical","limit":8,"max_bytes":8192,"verification":"off"});
     let with = |key: &str, value: Value| {
         let mut changed = arguments.clone();
         changed[key] = value;
         changed
     };
-    // No scope: refused, and the refusal says how to name one.
+    // No configured scope and no workspace: refused, and the message tells
+    // the user how to configure one rather than asking the agent to choose.
     let unscoped = mcp.call(3, "search_passages", arguments.clone())?;
     assert_eq!(
         unscoped["result"]["structuredContent"]["error"]["code"], "scope_required",
         "{unscoped}"
     );
-    // A named index: the same complete read through MCP and the pipe.
+    let message = unscoped["result"]["structuredContent"]["error"]["message"]
+        .as_str()
+        .context("refusal message")?;
+    ensure!(
+        message.contains("agents connect --scope") && !message.contains("list_scopes"),
+        "{message}"
+    );
+    // A configured scope (X-AIRK-Scope): the same complete read as the pipe.
     let index = f.indexes[0].to_string();
-    let named = mcp.call(4, "search_passages", with("index_ids", json!([index])))?;
-    ensure!(named["result"]["isError"] != true, "{named}");
-    let named_body = body(&named["result"])?;
-    assert_eq!(named_body["read_scope"]["source"], "named", "{named_body}");
+    let mut configured = McpSession::start_configured(&f, &index)?;
+    let read = configured.call(2, "search_passages", arguments.clone())?;
+    ensure!(read["result"]["isError"] != true, "{read}");
+    let configured_body = body(&read["result"])?;
+    assert_eq!(configured_body["read_scope"]["source"], "configured", "{configured_body}");
+    assert_eq!(configured_body["read_scope"]["name"], json!(index), "{configured_body}");
     let piped = pipe_read(
         &f,
         open_selection(&[index.as_str()], &[]),
@@ -4931,12 +5009,26 @@ async fn tokenless_https_reads_name_their_scope_or_a_workspace_default() -> Resu
     )
     .await?
     .map_err(|refused| anyhow::anyhow!("pipe read refused: {refused}"))?;
-    assert_parity(
-        "U110 named MCP vs pipe",
-        &body(&named["result"])?,
-        &body(&piped)?,
-    )?;
-    // A workspace default set through the CLI applies to a nested workspace.
+    let named_body = body(&piped)?;
+    let mut left = configured_body.clone();
+    let mut right = named_body.clone();
+    for value in [&mut left, &mut right] {
+        value.as_object_mut().context("body")?.remove("read_scope");
+    }
+    assert_eq!(
+        stable(logical_comparison_copy(&left)?)?,
+        stable(logical_comparison_copy(&right)?)?,
+        "a configured scope reads exactly what naming it reads"
+    );
+    // An unknown configured name is refused, never guessed.
+    let mut unknown = McpSession::start_configured(&f, "no such scope")?;
+    let refused = unknown.call(2, "search_passages", arguments.clone())?;
+    assert_eq!(
+        refused["result"]["structuredContent"]["error"]["code"], "scope_name_unknown",
+        "{refused}"
+    );
+    // Without a configured scope, the workspace default of the client's open
+    // folder applies (the bridge fills `workspace` from MCP roots; passed here).
     let folder = f.registrations[0].root.clone();
     let (code, stdout, stderr) = airkctl_full(
         &f,
@@ -4996,18 +5088,10 @@ async fn tokenless_https_reads_name_their_scope_or_a_workspace_default() -> Resu
     ensure!(code == 0, "tools call --workspace failed: {stderr}");
     let from_cli: Value = serde_json::from_str(&stdout)?;
     assert_parity(
-        "U110 workspace MCP vs CLI",
+        "workspace MCP vs CLI",
         &body(&defaulted["result"])?,
         &body(&from_cli)?,
     )?;
-    // list_scopes shows the stored defaults and the one for a workspace.
-    let listed = mcp.call(6, "list_scopes", json!({"workspace": nested}))?;
-    let listed_body = body(&listed["result"])?;
-    assert_eq!(
-        listed_body["workspace_defaults"][0]["folder"],
-        json!(folder)
-    );
-    assert_eq!(listed_body["workspace_default"]["folder"], json!(folder));
     // Clearing the default: the workspace no longer selects a scope.
     let (code, stdout, stderr) =
         airkctl_full(&f, &["scope", "default", "--workspace", &folder]).await?;

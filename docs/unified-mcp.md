@@ -18,7 +18,7 @@ For detailed per-tool developer guidance, see the [MCP developer guide](mcp-deve
 
 
 
-The unpublished AIRK 1.8.14 implementation uses one server named `airk`, with 29 unique, unprefixed tools (the historical 1.6.4 catalog has 27). Evidence tools answer from the configured index. `parse` prepares or executes a bounded read-only evidence plan without an editor. Help explains AIRK. Draft tools prepare suggestions that wait for the user in Explorer. Current qualification limits are recorded in the [1.8.14 working record](releases/release-1.8.14.md).
+The unpublished AIRK 1.8.14 implementation used one server named `airk`, with 29 unique, unprefixed tools; since 27 November 2026 MCP offers seven of them (see below) (the historical 1.6.4 catalog has 27). Evidence tools answer from the configured index. `parse` prepares or executes a bounded read-only evidence plan without an editor. Help explains AIRK. Draft tools prepare suggestions that wait for the user in Explorer. Current qualification limits are recorded in the [1.8.14 working record](releases/release-1.8.14.md).
 
 **Historical P1 scope:** P1 repaired compact discovery bindings inside `parse` and advertised its nested
 plan/recipe/budget/output inputs as JSON objects. See the [shared binding and
@@ -112,7 +112,7 @@ renamed tool is not callable and is not an alias.
 | `airk_answer` | `answer` | `gather_context` |
 | `airk_search` | `search` | `search_passages` |
 | `airk_symbols` | `symbols` | `find_definition` |
-| `airk_references` | `references` | `find_references` |
+| `airk_references` | `references` | `find_identifier_occurrences` (`find_references` from 26 to 27 November) |
 | `airk_read_file` | `read_file` | `read_indexed_range` |
 | `airk_context` | `context` | `read_around` |
 | `airk_outline` | `outline` | `outline_file` |
@@ -141,8 +141,10 @@ Every other public tool, including `file_info`, keeps its name.
   pins a prepared plan whose step names `symbols`. Renaming step names would
   change that identity and need a new plan schema version, so they are not
   renamed; Parse's description says it takes operation names.
-- `find_references` opens with "Textual occurrences", because the name
-  suggests resolved references.
+- On 27 November 2026 the user renamed `find_references` to
+  `find_identifier_occurrences`, because the operation finds exact-spelling
+  textual matches and the old name suggested resolved references. The rename is
+  clean: `find_references` is not callable.
 - The concurrency note (evidence reads at a configured 16 by default; 4, 8,
   16, 32 or 64; matching channels and worker slots; one extra status slot;
   typed retry beyond the limit) lives in the `index_status` description, by
@@ -156,6 +158,39 @@ Every other public tool, including `file_info`, keeps its name.
 
 
 
+## What MCP offers (user decision, 27 November 2026)
+
+An MCP client sees and may call only seven core retrieval tools:
+`gather_context`, `search_passages`, `find_definition`,
+`find_identifier_occurrences`, `read_indexed_range`, `outline_file` and
+`list_indexed_files`. The user first kept ten, then removed `read_around`,
+`file_info` and `index_status` the same day as of no real value to an agent:
+replies already carry publication tokens, readiness and coverage, and a wider
+`read_indexed_range` serves for more lines. Every other operation (`context`,
+`file_info`, `status`, `capabilities`, `changes`, `code_facts`,
+`relationships`, `imports`, `document_facts`, `parse`, `diagnostics`, `help`,
+`projects`, `query_scope`, `list_scopes` and the Explorer drafting and handoff
+tools)
+stays in `airkctl`, Admin and Workbench. Over MCP it is absent from
+`tools/list`, and a call to it, by public or native name, is refused
+`UNKNOWN_TOOL`. `airk-core::tool_names::MCP_TOOLS` owns the list, and the MCP
+bridge (`airk-mcp::remote`) applies it; the CLI reads the complete catalog
+directly and is unaffected. This replaces completion plan decision 11, which
+had deferred narrowing to a free-choice comparison.
+
+The schemas MCP advertises carry no scope argument (`project`, `project_ids`,
+`index_ids`, `index_set_ids`, `workspace`, `member_availability`,
+`origin_publication`): a read uses its connection's configured scope, the
+`X-AIRK-Scope` header that `airkctl agents connect --scope` writes, else the
+workspace default of the client's open folder
+([agent setup](agent-integration.md)). An agent is never asked to list or
+choose a scope.
+
+Descriptions follow one structure: when to use the tool, what it returns, the
+limit that changes how a result reads, and an optional next call. Limits,
+enums and matching rules sit in the field descriptions. A read that passes a
+citation's publication token as `revision` stays on that snapshot, and is
+refused once that publication is superseded.
 ## Identifier routing and bounded admission
 
 

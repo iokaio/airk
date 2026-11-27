@@ -1073,11 +1073,13 @@ mod tests {
                 "{}",
                 tool.name
             );
+            // The response_mode field explains Full (27 November 2026: the
+            // shared guidance moved out of each tool's description).
             assert!(
-                tool.description
-                    .as_deref()
-                    .is_some_and(|description| description.contains("response_mode=full")),
-                "{}: description must explain response_mode=full",
+                schema["properties"]["response_mode"]["description"]
+                    .as_str()
+                    .is_some_and(|description| description.contains("Full adds provenance")),
+                "{}: response_mode must explain Full",
                 tool.name
             );
         }

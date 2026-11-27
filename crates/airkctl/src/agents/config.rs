@@ -37,7 +37,9 @@ pub(crate) use writer_test_support::Editable as EditableFixture;
 
 pub(crate) use crate::contract::{Agent, Class, Entry, Scope, Transport};
 pub(crate) use classify::{Classifier, FileReport, revalidate_entry};
-pub(crate) use edit::{Target, codex_timeout_short, connect, remove, repair};
+pub(crate) use edit::{Target, codex_timeout_short, connect_scoped, remove, repair};
+#[cfg(test)]
+pub(crate) use edit::connect;
 pub(crate) use edit_record::Operation as EditOperation;
 #[cfg(test)]
 pub(crate) use io::edit_file;

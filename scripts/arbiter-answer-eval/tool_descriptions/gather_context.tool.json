@@ -1,5 +1,7 @@
 {
-  "description": "Use first for a task that needs evidence from several places in the index, then again as you learn more, with narrower needs and the known ranges you already hold. For one known identifier or path, call find_definition or read_indexed_range instead. Pass the task text as task. Fill needs (up to 8 short statements of what you must learn, each at most 400 bytes); add anchors (up to 16 exact strings from the task: identifiers, routes, quoted text, numbers with units; each at most 200 bytes), deliverable (code_change, test, document or analysis) and known (ranges you already hold; checked, not yet used). Needs or a code_change or test deliverable also bring the project's rules, test command and build file. Omit budget for the service default. The default reply is a short map: where each need is answered, the best passages, what was not found and what to ask next; read omitted ranges with read_indexed_range. response_mode=full returns every record, for provenance/coverage audits; verification report/require checks returned saved sources.",
+  "name": "gather_context",
+  "listed_name": "gather_context",
+  "description": "Use for a task that needs evidence from several places, such as a change that spans implementation and tests, even when the task names a symbol; call again with narrower needs as you learn more. Pass the task text as task, and optionally needs, anchors, deliverable and known. Returns a short map: for each need, where it is answered and the best passages, and what was not found. A code_change or test deliverable, or stated needs, also gathers the project rules, how tests run and the build file, and lists any it does not find. Ranges listed without text can be read with read_indexed_range. For one definition use find_definition; for one known file, outline_file. response_mode=full returns the complete reply.",
   "inputSchema": {
     "$defs": {
       "BudgetV3": {
@@ -153,7 +155,7 @@
     "additionalProperties": false,
     "properties": {
       "anchors": {
-        "description": "Up to 16 exact strings from the task (identifiers, routes, quoted\ntext, numbers with units), at most 200 bytes each.",
+        "description": "Up to 16 exact strings to look for (identifiers, routes, quoted text,\nnumbers with units), each at most 200 UTF-8 bytes. Take them from the\ntask or from evidence an earlier reply returned.",
         "items": {
           "type": "string"
         },
@@ -161,7 +163,7 @@
       },
       "budget": {
         "$ref": "#/$defs/BudgetV3",
-        "description": "Optional with task: omitted uses the service default, a valid budget\nis used as sent. Required with question."
+        "description": "The loop's limits (calls, deadline_ms, max_bytes and the rest). Omit\nwith task for the service default; a valid budget is used as sent.\nRequired with question."
       },
       "continuation": {
         "anyOf": [
@@ -183,7 +185,7 @@
             "type": "null"
           }
         ],
-        "description": "What you will produce. It selects standing needs the reply also\ncovers: project rules, how tests run, the build file."
+        "description": "What you will produce. code_change also gathers the project rules, how\ntests run, the build file and where errors reach the user; test, the\nfirst three."
       },
       "fresh": {
         "description": "Start an independent run; never reuse a job by digest.",
@@ -206,23 +208,18 @@
         ]
       },
       "known": {
-        "description": "Up to 32 path ranges you already read. Checked; does not change\ngathering yet.",
+        "description": "Up to 32 path ranges you already hold. They are validated only; they\ndo not yet change what is gathered or returned.",
         "items": {
           "$ref": "#/$defs/KnownRange"
         },
         "type": "array"
       },
       "needs": {
-        "description": "Up to 8 statements of what you must learn, one each, at most 400\nbytes. Stating needs improves the result.",
+        "description": "Up to 8 statements of what you must learn, one per need, each at most\n400 UTF-8 bytes. Stated needs also gather the project rules, how tests\nrun and the build file.",
         "items": {
           "type": "string"
         },
         "type": "array"
-      },
-      "project": {
-        "description": "Configured source scope from projects. Required when this connection has no single default; never follows the Explorer dropdown.",
-        "pattern": "^[0-9a-f]{64}$",
-        "type": "string"
       },
       "question": {
         "description": "Existing full request only, with schema and budget; never with task.",
@@ -249,7 +246,7 @@
             "type": "null"
           }
         ],
-        "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results; it does not resolve calls or verify live source."
+        "description": "Terse is the default. Full adds provenance, coverage and readiness detail; for gather_context it is the complete reply, including passages the short map leaves out. It does not widen the search."
       },
       "schema": {
         "description": "Existing full request only; supplied by the service for task.",
@@ -304,7 +301,5 @@
       "task"
     ],
     "type": "object"
-  },
-  "listed_name": "gather_context",
-  "name": "gather_context"
+  }
 }

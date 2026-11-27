@@ -367,7 +367,7 @@ Commands:
   endpoint  Read the local HTTPS endpoint agents use (URL and TLS issuer); no token is needed (U110)
   manual    Print exact manual setup text for a selected client and file, without editing it
   list      Classify AIRK's entries in agent configuration files; read-only
-  connect   Write the AIRK entry for Claude Code, Codex or VS Code: the live loopback endpoint URL and the X-AIRK-Response-Mode header only, no credential (U110)
+  connect   Write the AIRK entry for Claude Code, Codex or VS Code: the live loopback endpoint URL, the X-AIRK-Response-Mode header and, with --scope, the X-AIRK-Scope header; no credential (U110)
   repair    Rewrite AIRK entries that name another endpoint or still carry legacy credential fields (Authorization, headersHelper, http_headers_helper, bearer_token_env_var) to the URL-only form (U110)
   remove    Remove AIRK entries, optionally selecting exact list rows or a connection
 
@@ -402,9 +402,9 @@ Options:
 ## airkctl agents connect
 
 ```text
-Write the AIRK entry for Claude Code, Codex or VS Code: the live loopback endpoint URL and the X-AIRK-Response-Mode header only, no credential (U110).
+Write the AIRK entry for Claude Code, Codex or VS Code: the live loopback endpoint URL, the X-AIRK-Response-Mode header and, with --scope, the X-AIRK-Scope header; no credential (U110).
 
-Agents read with the scope a call names (index_ids, index_set_ids) or the workspace default of the folder it passes (`scope default`). Connections no longer exist.
+An agent never chooses its scope. Its calls read the configured scope, else the workspace default of the folder its client has open (`scope default`).
 
 Usage: airkctl agents connect [OPTIONS] --client <CLIENT>
 
@@ -444,11 +444,14 @@ Options:
       --server-key <SERVER_KEY>
           [default: airk]
 
-      --airkctl <AIRKCTL>
-          Unused since U110 (no credential helper is written)
-
       --collection <COLLECTION>
           [default: default]
+
+      --scope <CONFIGURED_SCOPE>
+          The index set or index this agent reads, by id or name; written as the entry's X-AIRK-Scope header. Connecting again with another --scope replaces it
+
+      --airkctl <AIRKCTL>
+          Unused since U110 (no credential helper is written)
 
   -h, --help
           Print help (see a summary with '-h')

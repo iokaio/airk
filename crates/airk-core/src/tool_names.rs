@@ -15,13 +15,34 @@ pub const RENAMED_PUBLIC_TOOLS: [(&str, &str); 9] = [
     ("answer", "gather_context"),
     ("search", "search_passages"),
     ("symbols", "find_definition"),
-    ("references", "find_references"),
+    ("references", "find_identifier_occurrences"),
     ("read_file", "read_indexed_range"),
     ("context", "read_around"),
     ("outline", "outline_file"),
     ("list_files", "list_indexed_files"),
     ("status", "index_status"),
 ];
+
+/// The public tools an MCP client sees and may call (user decision, 27
+/// November 2026): the core retrieval tools only. Every other operation
+/// stays in the CLI, Admin and Workbench; an MCP call to it is refused as
+/// an unknown tool, under its public or its native name.
+pub const MCP_TOOLS: [&str; 7] = [
+    "gather_context",
+    "search_passages",
+    "find_definition",
+    "find_identifier_occurrences",
+    "read_indexed_range",
+    "outline_file",
+    "list_indexed_files",
+];
+
+/// Whether an MCP client may see and call `name`: one of [`MCP_TOOLS`], or
+/// the native `airk_*` name of one. An old public name selects nothing.
+pub fn on_mcp(name: &str) -> bool {
+    MCP_TOOLS.contains(&name)
+        || public_name_of_native(name).is_some_and(|public| MCP_TOOLS.contains(&public))
+}
 
 /// The operation a native, public or operation spelling names. A renamed
 /// public name maps to its operation; a native name loses one `airk_`
@@ -89,6 +110,8 @@ mod tests {
             "decision": "completion plan decision 12, 26 November 2026: clean rename at 1.9",
             "owner": "airk-core::tool_names::RENAMED_PUBLIC_TOOLS",
             "renamed": renamed,
+            "mcp_tools": MCP_TOOLS,
+            "mcp_decision": "27 November 2026: MCP advertises and accepts only seven core retrieval tools; find_references renamed find_identifier_occurrences",
         });
         let text = serde_json::to_string_pretty(&value).unwrap() + "\n";
         if std::env::var_os("AIRK_WRITE_PUBLIC_TOOL_NAMES").as_deref()
@@ -112,7 +135,7 @@ mod tests {
             ("airk_answer", "gather_context"),
             ("airk_search", "search_passages"),
             ("airk_symbols", "find_definition"),
-            ("airk_references", "find_references"),
+            ("airk_references", "find_identifier_occurrences"),
             ("airk_read_file", "read_indexed_range"),
             ("airk_context", "read_around"),
             ("airk_outline", "outline_file"),
@@ -144,5 +167,40 @@ mod tests {
         assert_eq!(native_name_of_public("airk_search"), None);
         assert_eq!(public_name_of_native("airk_airk_search"), None);
         assert_eq!(public_name_of_native("search"), None);
+        // The 26 November public name, renamed on 27 November, names no operation.
+        assert_eq!(operation("find_references"), "find_references");
+    }
+
+    #[test]
+    fn mcp_offers_exactly_the_seven_core_retrieval_tools_under_either_spelling() {
+        // Literal list from the user's decision of 27 November 2026.
+        let kept = [
+            ("gather_context", "airk_answer"),
+            ("search_passages", "airk_search"),
+            ("find_definition", "airk_symbols"),
+            ("find_identifier_occurrences", "airk_references"),
+            ("read_indexed_range", "airk_read_file"),
+            ("outline_file", "airk_outline"),
+            ("list_indexed_files", "airk_list_files"),
+        ];
+        for (public, native) in kept {
+            assert!(on_mcp(public), "{public}");
+            assert!(on_mcp(native), "{native}");
+        }
+        for gone in [
+            "capabilities", "changes", "code_facts", "relationships", "imports",
+            "document_facts", "parse", "query_scope", "projects", "help", "diagnostics",
+            "draft_search", "draft_strategy", "draft_plan", "list_templates", "get_template",
+            "validate_draft", "proposal_status", "get_handoff", "suggest_view",
+            "airk_capabilities", "airk_changes", "airk_code_facts", "airk_relationships",
+            "airk_imports", "airk_document_facts", "airk_parse", "airk_query_scope",
+            "airk_help", "airk_diagnostics", "airk_explorer_suggest_search",
+            "find_references", "search", "references", "status",
+            // Removed the same day: the CLI keeps context, file_info and status.
+            "read_around", "file_info", "index_status", "airk_context", "airk_file_info",
+            "airk_status",
+        ] {
+            assert!(!on_mcp(gone), "{gone}");
+        }
     }
 }

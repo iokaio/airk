@@ -4,8 +4,8 @@
     "admin": "AIRK Admin in the browser: open it, or print a single-use sign-in URL\n\nUsage: airkctl admin [OPTIONS] <COMMAND>\n\nCommands:\n  open  Open AIRK Admin in this computer's default browser, signed in\n  url   Print a single-use AIRK Admin sign-in URL (valid 60 seconds) for manual use\n\nOptions:\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --collection <COLLECTION>\n          [default: default]\n\n  -h, --help\n          Print help\n",
     "admin open": "Open AIRK Admin in this computer's default browser, signed in.\n\nNeeds a local graphical session (refused over SSH). The single-use sign-in link goes through an owner-only file, never a command line.\n\nUsage: airkctl admin open [OPTIONS]\n\nOptions:\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --runtime-dir <RUNTIME_DIR>\n          The service's control directory (default: --service-runtime-dir, else the installation's)\n\n      --page <PAGE>\n          The page to open\n          \n          [possible values: overview, index-library, activity, agents, storage, recovery, service, logs, usage, search, help]\n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --for-folder <FOR_FOLDER>\n          Index library: prefill a new index for this folder\n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --show-index <SHOW_INDEX>\n          Index library: show this index (`idx_…`)\n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --show-set <SHOW_SET>\n          Index library: show this index set (`prj_…`)\n\n      --collection <COLLECTION>\n          [default: default]\n\n  -h, --help\n          Print help (see a summary with '-h')\n",
     "admin url": "Print a single-use AIRK Admin sign-in URL (valid 60 seconds) for manual use.\n\nThe URL is a secret: open it only in your own browser and never paste it into a page.\n\nUsage: airkctl admin url [OPTIONS]\n\nOptions:\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --runtime-dir <RUNTIME_DIR>\n          The service's control directory (default: --service-runtime-dir, else the installation's)\n\n      --page <PAGE>\n          The page to open\n          \n          [possible values: overview, index-library, activity, agents, storage, recovery, service, logs, usage, search, help]\n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --for-folder <FOR_FOLDER>\n          Index library: prefill a new index for this folder\n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --show-index <SHOW_INDEX>\n          Index library: show this index (`idx_…`)\n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --show-set <SHOW_SET>\n          Index library: show this index set (`prj_…`)\n\n      --collection <COLLECTION>\n          [default: default]\n\n  -h, --help\n          Print help (see a summary with '-h')\n",
-    "agents": "Agent configuration: endpoint, manual, list, connect, repair and remove; agents need no token (U110)\n\nUsage: airkctl agents [OPTIONS] <COMMAND>\n\nCommands:\n  endpoint  Read the local HTTPS endpoint agents use (URL and TLS issuer); no token is needed (U110)\n  manual    Print exact manual setup text for a selected client and file, without editing it\n  list      Classify AIRK's entries in agent configuration files; read-only\n  connect   Write the AIRK entry for Claude Code, Codex or VS Code: the live loopback endpoint URL and the X-AIRK-Response-Mode header only, no credential (U110)\n  repair    Rewrite AIRK entries that name another endpoint or still carry legacy credential fields (Authorization, headersHelper, http_headers_helper, bearer_token_env_var) to the URL-only form (U110)\n  remove    Remove AIRK entries, optionally selecting exact list rows or a connection\n\nOptions:\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --collection <COLLECTION>\n          [default: default]\n\n  -h, --help\n          Print help\n",
-    "agents connect": "Write the AIRK entry for Claude Code, Codex or VS Code: the live loopback endpoint URL and the X-AIRK-Response-Mode header only, no credential (U110).\n\nAgents read with the scope a call names (index_ids, index_set_ids) or the workspace default of the folder it passes (`scope default`). Connections no longer exist.\n\nUsage: airkctl agents connect [OPTIONS] --client <CLIENT>\n\nOptions:\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --runtime-dir <RUNTIME_DIR>\n          The service's control directory (default: --service-runtime-dir, else the installation's)\n\n      --client <CLIENT>\n          [possible values: claude, codex, vscode]\n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --user\n          Write the user-level file instead of the project's\n\n      --project <PROJECT>\n          The project folder (default: the current directory)\n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --server-key <SERVER_KEY>\n          [default: airk]\n\n      --airkctl <AIRKCTL>\n          Unused since U110 (no credential helper is written)\n\n      --collection <COLLECTION>\n          [default: default]\n\n  -h, --help\n          Print help (see a summary with '-h')\n",
+    "agents": "Agent configuration: endpoint, manual, list, connect, repair and remove; agents need no token (U110)\n\nUsage: airkctl agents [OPTIONS] <COMMAND>\n\nCommands:\n  endpoint  Read the local HTTPS endpoint agents use (URL and TLS issuer); no token is needed (U110)\n  manual    Print exact manual setup text for a selected client and file, without editing it\n  list      Classify AIRK's entries in agent configuration files; read-only\n  connect   Write the AIRK entry for Claude Code, Codex or VS Code: the live loopback endpoint URL, the X-AIRK-Response-Mode header and, with --scope, the X-AIRK-Scope header; no credential (U110)\n  repair    Rewrite AIRK entries that name another endpoint or still carry legacy credential fields (Authorization, headersHelper, http_headers_helper, bearer_token_env_var) to the URL-only form (U110)\n  remove    Remove AIRK entries, optionally selecting exact list rows or a connection\n\nOptions:\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --collection <COLLECTION>\n          [default: default]\n\n  -h, --help\n          Print help\n",
+    "agents connect": "Write the AIRK entry for Claude Code, Codex or VS Code: the live loopback endpoint URL, the X-AIRK-Response-Mode header and, with --scope, the X-AIRK-Scope header; no credential (U110).\n\nAn agent never chooses its scope. Its calls read the configured scope, else the workspace default of the folder its client has open (`scope default`).\n\nUsage: airkctl agents connect [OPTIONS] --client <CLIENT>\n\nOptions:\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --runtime-dir <RUNTIME_DIR>\n          The service's control directory (default: --service-runtime-dir, else the installation's)\n\n      --client <CLIENT>\n          [possible values: claude, codex, vscode]\n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --user\n          Write the user-level file instead of the project's\n\n      --project <PROJECT>\n          The project folder (default: the current directory)\n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --server-key <SERVER_KEY>\n          [default: airk]\n\n      --collection <COLLECTION>\n          [default: default]\n\n      --scope <CONFIGURED_SCOPE>\n          The index set or index this agent reads, by id or name; written as the entry's X-AIRK-Scope header. Connecting again with another --scope replaces it\n\n      --airkctl <AIRKCTL>\n          Unused since U110 (no credential helper is written)\n\n  -h, --help\n          Print help (see a summary with '-h')\n",
     "agents endpoint": "Read the local HTTPS endpoint agents use (URL and TLS issuer); no token is needed (U110)\n\nUsage: airkctl agents endpoint [OPTIONS]\n\nOptions:\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --runtime-dir <RUNTIME_DIR>\n          The service's control directory (default: --service-runtime-dir, else the installation's)\n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --collection <COLLECTION>\n          [default: default]\n\n  -h, --help\n          Print help\n",
     "agents list": "Classify AIRK's entries in agent configuration files; read-only\n\nUsage: airkctl agents list [OPTIONS]\n\nOptions:\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --runtime-dir <RUNTIME_DIR>\n          The service's control directory (default: --service-runtime-dir, else the installation's)\n\n      --project <PROJECTS>\n          A project folder to check (repeatable; default: the current directory)\n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --no-user\n          Leave this user's agent configuration files out\n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --collection <COLLECTION>\n          [default: default]\n\n  -h, --help\n          Print help\n",
     "agents manual": "Print exact manual setup text for a selected client and file, without editing it\n\nUsage: airkctl agents manual [OPTIONS] --client <CLIENT>\n\nOptions:\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --runtime-dir <RUNTIME_DIR>\n          \n\n      --client <CLIENT>\n          [possible values: claude, codex, vscode]\n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --user\n          Use this user's configuration file instead of the project file\n\n      --project <PROJECT>\n          The project folder (default: the current directory)\n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --server-key <SERVER_KEY>\n          [default: airk]\n\n      --collection <COLLECTION>\n          [default: default]\n\n  -h, --help\n          Print help\n",
@@ -176,7 +176,7 @@
             "type": "null"
           }
         ],
-        "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results."
+        "description": "Terse is the default. Full adds provenance, coverage and readiness detail; for gather_context it is the complete reply, including passages the short map leaves out. It does not widen the search."
       },
       "start_line": {
         "default": 1,
@@ -210,7 +210,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Use first for a task that needs evidence from several places in the index, then again as you learn more, with narrower needs and the known ranges you already hold. For one known identifier or path, call airk_symbols or airk_read_file instead. Pass the task text as task. Fill needs (up to 8 short statements of what you must learn, each at most 400 bytes); add anchors (up to 16 exact strings from the task: identifiers, routes, quoted text, numbers with units; each at most 200 bytes), deliverable (code_change, test, document or analysis) and known (ranges you already hold; checked, not yet used). Needs or a code_change or test deliverable also bring the project's rules, test command and build file. Omit budget for the service default. The default reply is a short map: where each need is answered, the best passages, what was not found and what to ask next; read omitted ranges with airk_read_file. response_mode=full returns every record, for provenance/coverage audits; verification report/require checks returned saved sources.",
+      "description": "Use for a task that needs evidence from several places, such as a change that spans implementation and tests, even when the task names a symbol; call again with narrower needs as you learn more. Pass the task text as task, and optionally needs, anchors, deliverable and known. Returns a short map: for each need, where it is answered and the best passages, and what was not found. A code_change or test deliverable, or stated needs, also gathers the project rules, how tests run and the build file, and lists any it does not find. Ranges listed without text can be read with airk_read_file. For one definition use airk_symbols; for one known file, airk_outline. response_mode=full returns the complete reply.",
       "inputSchema": {
         "$defs": {
           "BudgetV3": {
@@ -364,7 +364,7 @@
         "additionalProperties": false,
         "properties": {
           "anchors": {
-            "description": "Up to 16 exact strings from the task (identifiers, routes, quoted\ntext, numbers with units), at most 200 bytes each.",
+            "description": "Up to 16 exact strings to look for (identifiers, routes, quoted text,\nnumbers with units), each at most 200 UTF-8 bytes. Take them from the\ntask or from evidence an earlier reply returned.",
             "items": {
               "type": "string"
             },
@@ -372,7 +372,7 @@
           },
           "budget": {
             "$ref": "#/$defs/BudgetV3",
-            "description": "Optional with task: omitted uses the service default, a valid budget\nis used as sent. Required with question."
+            "description": "The loop's limits (calls, deadline_ms, max_bytes and the rest). Omit\nwith task for the service default; a valid budget is used as sent.\nRequired with question."
           },
           "continuation": {
             "anyOf": [
@@ -394,7 +394,7 @@
                 "type": "null"
               }
             ],
-            "description": "What you will produce. It selects standing needs the reply also\ncovers: project rules, how tests run, the build file."
+            "description": "What you will produce. code_change also gathers the project rules, how\ntests run, the build file and where errors reach the user; test, the\nfirst three."
           },
           "fresh": {
             "description": "Start an independent run; never reuse a job by digest.",
@@ -417,14 +417,14 @@
             ]
           },
           "known": {
-            "description": "Up to 32 path ranges you already read. Checked; does not change\ngathering yet.",
+            "description": "Up to 32 path ranges you already hold. They are validated only; they\ndo not yet change what is gathered or returned.",
             "items": {
               "$ref": "#/$defs/KnownRange"
             },
             "type": "array"
           },
           "needs": {
-            "description": "Up to 8 statements of what you must learn, one each, at most 400\nbytes. Stating needs improves the result.",
+            "description": "Up to 8 statements of what you must learn, one per need, each at most\n400 UTF-8 bytes. Stated needs also gather the project rules, how tests\nrun and the build file.",
             "items": {
               "type": "string"
             },
@@ -455,7 +455,7 @@
                 "type": "null"
               }
             ],
-            "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results."
+            "description": "Terse is the default. Full adds provenance, coverage and readiness detail; for gather_context it is the complete reply, including passages the short map leaves out. It does not widen the search."
           },
           "schema": {
             "description": "Existing full request only; supplied by the service for task.",
@@ -566,7 +566,7 @@
                 "type": "null"
               }
             ],
-            "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results."
+            "description": "Terse is the default. Full adds provenance, coverage and readiness detail; for gather_context it is the complete reply, including passages the short map leaves out. It does not widen the search."
           },
           "rich": {
             "default": false,
@@ -755,7 +755,7 @@
                 "type": "null"
               }
             ],
-            "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results."
+            "description": "Terse is the default. Full adds provenance, coverage and readiness detail; for gather_context it is the complete reply, including passages the short map leaves out. It does not widen the search."
           },
           "selectors": {
             "default": [],
@@ -955,7 +955,7 @@
                 "type": "null"
               }
             ],
-            "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results."
+            "description": "Terse is the default. Full adds provenance, coverage and readiness detail; for gather_context it is the complete reply, including passages the short map leaves out. It does not widen the search."
           },
           "start_line": {
             "description": "First line, 1-based and inclusive, of a range in the exact path; requires end_line. A fact matches when its own lines overlap the range, e.g. the definition containing a line.",
@@ -1015,7 +1015,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Use to widen one search or fact hit. Returns bounded neighboring indexed lines around its line coordinate, from the last successful index. PDF/DOCX/PPTX lines are extracted-text coordinates; keep the request within one original page/block/slide. Next: airk_read_file for an exact larger range. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+      "description": "Use to see more lines around one line you already have from a hit or citation. Returns the neighboring indexed lines, bounded by before, after and max_bytes. Pass the publication token of the hit as revision to stay on its snapshot. For extracted documents, keep within one page, block or slide. For an exact larger range use airk_read_file.",
       "inputSchema": {
         "$defs": {
           "ResponseMode": {
@@ -1109,10 +1109,10 @@
                 "type": "null"
               }
             ],
-            "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results."
+            "description": "Terse is the default. Full adds provenance, coverage and readiness detail; for gather_context it is the complete reply, including passages the short map leaves out. It does not widen the search."
           },
           "revision": {
-            "description": "Exact current token; a superseded token expires without historical fallback.",
+            "description": "Publication token of the citation or reply you are following. The read uses that snapshot; a superseded token is refused, and no older copy is served.",
             "type": [
               "string",
               "null"
@@ -1204,7 +1204,7 @@
                 "type": "null"
               }
             ],
-            "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results."
+            "description": "Terse is the default. Full adds provenance, coverage and readiness detail; for gather_context it is the complete reply, including passages the short map leaves out. It does not widen the search."
           }
         },
         "type": "object"
@@ -1267,7 +1267,7 @@
             ]
           },
           "language": {
-            "description": "Optional indexed language/profile label from airk_file_info.\nExact indexed native or retained producer language/profile label; 1..128 UTF-8 bytes. JSON maxLength is a character bound; native validation enforces the byte bound.",
+            "description": "Optional indexed language/profile label, as replies report it (for example rust or markdown).\nExact indexed native or retained producer language/profile label; 1..128 UTF-8 bytes. JSON maxLength is a character bound; native validation enforces the byte bound.",
             "maxLength": 128,
             "minLength": 1,
             "type": [
@@ -1329,7 +1329,7 @@
                 "type": "null"
               }
             ],
-            "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results."
+            "description": "Terse is the default. Full adds provenance, coverage and readiness detail; for gather_context it is the complete reply, including passages the short map leaves out. It does not widen the search."
           },
           "verification": {
             "default": "report",
@@ -1373,7 +1373,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Use before interpreting one file's evidence. Returns its indexed language/profile, extraction method, syntax quality, hash and line basis, distinguishing source lines from extracted document coordinates. Next: airk_outline or airk_read_file. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+      "description": "Use when a file's language, extraction method, syntax quality, revision or line coordinates need clarifying, for example before reading lines of a PDF or Office document. Returns its indexed language and profile, extraction method, syntax quality, content hash and line basis.",
       "inputSchema": {
         "$defs": {
           "ResponseMode": {
@@ -1447,10 +1447,10 @@
                 "type": "null"
               }
             ],
-            "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results."
+            "description": "Terse is the default. Full adds provenance, coverage and readiness detail; for gather_context it is the complete reply, including passages the short map leaves out. It does not widen the search."
           },
           "revision": {
-            "description": "Exact current token; a superseded token expires without historical fallback.",
+            "description": "Publication token of the citation or reply you are following. The read uses that snapshot; a superseded token is refused, and no older copy is served.",
             "type": [
               "string",
               "null"
@@ -1555,7 +1555,7 @@
                 "type": "null"
               }
             ],
-            "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results."
+            "description": "Terse is the default. Full adds provenance, coverage and readiness detail; for gather_context it is the complete reply, including passages the short map leaves out. It does not widen the search."
           },
           "start_line": {
             "default": 1,
@@ -1636,7 +1636,7 @@
             "type": "boolean"
           },
           "language": {
-            "description": "Optional indexed language/profile label; obtain the label from airk_file_info.\nExact indexed native or retained producer language/profile label; 1..128 UTF-8 bytes. JSON maxLength is a character bound; native validation enforces the byte bound.",
+            "description": "Optional indexed language/profile label, as replies report it (for example rust or markdown).\nExact indexed native or retained producer language/profile label; 1..128 UTF-8 bytes. JSON maxLength is a character bound; native validation enforces the byte bound.",
             "maxLength": 128,
             "minLength": 1,
             "type": [
@@ -1709,7 +1709,7 @@
                 "type": "null"
               }
             ],
-            "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results."
+            "description": "Terse is the default. Full adds provenance, coverage and readiness detail; for gather_context it is the complete reply, including passages the short map leaves out. It does not widen the search."
           },
           "verification": {
             "default": "report",
@@ -1753,7 +1753,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Use when you know a directory but not the file. Filter by literal relative-path prefix, not glob; count and bytes are bounded. Returns the snapshot inventory, not all live workspace files or indexing coverage. Next: airk_outline or airk_read_file on a chosen path. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+      "description": "Use when you know a directory but not the file. prefix is a literal path prefix, not a glob. Returns the indexed files under it, bounded by limit and max_bytes and paged by cursor. Then, if useful: airk_outline or airk_read_file on a chosen path.",
       "inputSchema": {
         "$defs": {
           "ResponseMode": {
@@ -1819,7 +1819,7 @@
                 "type": "null"
               }
             ],
-            "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results."
+            "description": "Terse is the default. Full adds provenance, coverage and readiness detail; for gather_context it is the complete reply, including passages the short map leaves out. It does not widen the search."
           },
           "verification": {
             "default": "report",
@@ -1863,7 +1863,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Use for one known file's structure before reading it. Takes one exact path; returns its imports, definitions, call candidates and document facts with locations in file order, paged by cursor. Compact minimal navigation is default; compact=false expands facts and IDs. A first page may not reach a given definition, so locate one with scoped airk_symbols/airk_code_facts. Bounded or empty output is not a whole-file or complete-language claim. Read-only source evidence; suggest_view proposes an Explorer screen instead. Next: airk_read_file on a listed range. Use response_mode=full for provenance audits.",
+      "description": "Use when you know one file and need to find where something is in it. Takes one exact path; returns its imports, definitions and document headings with line locations, in file order, paged by cursor. Compact by default; compact=false adds full facts and IDs. A large file can take several pages; airk_symbols with path finds one definition in it directly. Then, if useful: airk_read_file on a listed range.",
       "inputSchema": {
         "$defs": {
           "ResponseMode": {
@@ -1960,10 +1960,10 @@
                 "type": "null"
               }
             ],
-            "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results."
+            "description": "Terse is the default. Full adds provenance, coverage and readiness detail; for gather_context it is the complete reply, including passages the short map leaves out. It does not widen the search."
           },
           "revision": {
-            "description": "Exact current token; a superseded token expires without historical fallback.",
+            "description": "Publication token of the citation or reply you are following. The read uses that snapshot; a superseded token is refused, and no older copy is served.",
             "type": [
               "string",
               "null"
@@ -2099,7 +2099,7 @@
                 "type": "null"
               }
             ],
-            "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results."
+            "description": "Terse is the default. Full adds provenance, coverage and readiness detail; for gather_context it is the complete reply, including passages the short map leaves out. It does not widen the search."
           },
           "schema": {
             "type": "string"
@@ -2260,7 +2260,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Use when you know the path and lines: from a hit, a citation or the task. Returns an inclusive 1-based indexed line range from the last successful snapshot, the revision citations point to. For PDF/DOCX/PPTX, use extracted lines within one page/block/slide. Next: airk_context to widen around one line, airk_outline for the file's structure. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+      "description": "Use when you know the path and the lines, from a citation, a hit or the task. Returns that inclusive 1-based line range from the index. Pass the publication token of the citation as revision to read the snapshot it points to; if that publication has been superseded the read is refused rather than returning different lines. For PDF, DOCX and PPTX, lines are extracted-text coordinates; keep a range within one page, block or slide. If you know the file but not the lines, use airk_outline, or airk_search with path_prefix.",
       "inputSchema": {
         "$defs": {
           "ResponseMode": {
@@ -2342,10 +2342,10 @@
                 "type": "null"
               }
             ],
-            "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results."
+            "description": "Terse is the default. Full adds provenance, coverage and readiness detail; for gather_context it is the complete reply, including passages the short map leaves out. It does not widen the search."
           },
           "revision": {
-            "description": "Exact current token; a superseded token expires without historical fallback.",
+            "description": "Publication token of the citation or reply you are following. The read uses that snapshot; a superseded token is refused, and no older copy is served.",
             "type": [
               "string",
               "null"
@@ -2404,7 +2404,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Textual occurrences of an exact identifier: use after airk_symbols to find where it appears. Returns exact-case whole-identifier matching lines in retained indexed text, including definitions, strings and comments. Markdown, HTML, scripts and source can all match; scope by path_prefix, exact indexed language or metadata-based evidence_kind for impact work. These are textual candidates, never resolved references. Omit new paging options for legacy index ordering; explicit order=index/path/code_first, filters, cursor, include_files or include_count select bounded pageable scanning. Page file summaries/counts disclose their scope and matching-line unit; incomplete scans never imply an exact corpus total. Consume continuation and check truncation/coverage before concluding no impact. Next: airk_read_file or airk_context on chosen lines. Use response_mode=full for provenance/coverage audits.",
+      "description": "Use to find every indexed line where an exact identifier is written, for usage or impact questions; call it directly when you know the identifier. Matches the exact-case whole identifier in code, comments, strings and documents, so results include its definitions, other names with the same spelling and mentions in text; a use written under another name is not matched. Scope with path_prefix, language or evidence_kind. Counts are matching lines. The reply says whether it scanned its whole scope; follow cursor to scan the rest. Then, if useful: airk_read_file around a chosen line.",
       "inputSchema": {
         "$defs": {
           "EvidenceKind": {
@@ -2497,7 +2497,7 @@
             "type": "integer"
           },
           "name": {
-            "description": "Exact-case whole identifier to locate textually, not a regex or semantic symbol ID.",
+            "description": "The identifier exactly as written, whole and case-sensitive; not a regex or symbol ID.",
             "type": "string"
           },
           "order": {
@@ -2536,7 +2536,7 @@
                 "type": "null"
               }
             ],
-            "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results."
+            "description": "Terse is the default. Full adds provenance, coverage and readiness detail; for gather_context it is the complete reply, including passages the short map leaves out. It does not widen the search."
           },
           "verification": {
             "default": "report",
@@ -2665,7 +2665,7 @@
                 "type": "null"
               }
             ],
-            "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results."
+            "description": "Terse is the default. Full adds provenance, coverage and readiness detail; for gather_context it is the complete reply, including passages the short map leaves out. It does not widen the search."
           },
           "symbol": {
             "description": "Use code.symbol_id from code facts/symbols, a file:path owner, or an exact written syntax target (e.g. db.query). Syntax targets are not resolved symbol IDs.",
@@ -2716,7 +2716,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Use for one concept, behavior or phrase when you have no exact identifier or path; prose, comments and code rank together. For a named type or function use airk_symbols; for a whole task use airk_answer. Returns ranked cited snippets (full_chunks for whole indexed chunks) with served mode, readiness and limitations; bounded definition pointers may accompany identifiers. Scope by literal path_prefix, exact indexed language, metadata-based evidence_kind or exclude_path_prefix. Omitted mode keeps the saved hybrid/vector policy and may serve lexical evidence during a helper outage, recording semantic incompleteness; explicit vector/hybrid and saved RequireComplete refuse the outage. Vector/hybrid need the indexed local model; semantic=true aliases vector. Explicit lexical turns punctuation and quotes into AND terms (no phrase matching) in stable-id order, not relevance. Empty matches alone establish no cause. Next: airk_read_file or airk_context on a hit. Check truncation and use response_mode=full for provenance audits.",
+      "description": "Use to find a concept, behavior or phrase across the index, or within one area with path_prefix, when you do not have its exact name. Prose, comments and code are searched together. Returns cited passages: ranked by relevance in the default hybrid or vector mode; in explicit lexical mode, passages containing every term, in stable index order rather than by relevance. Omit mode to follow the configured policy: while the semantic helper is unavailable it serves lexical results and says so; an explicit vector or hybrid mode is refused instead. An empty result reports its served mode, filters and readiness. If a passage is not enough, read more of its file with airk_read_file.",
       "inputSchema": {
         "$defs": {
           "EvidenceKind": {
@@ -2778,7 +2778,7 @@
             "type": "boolean"
           },
           "language": {
-            "description": "Exact indexed extraction-language/profile label, as reported by airk_file_info.",
+            "description": "Exact indexed extraction-language/profile label, as replies report it (for example rust or markdown).",
             "type": [
               "string",
               "null"
@@ -2806,7 +2806,7 @@
                 "type": "null"
               }
             ],
-            "description": "Omit for the saved collection policy; pending vectors are disclosed in the response."
+            "description": "Omit to follow the configured policy, which serves lexical results during a semantic helper outage and says so. An explicit vector or hybrid mode is refused when the semantic index cannot serve it."
           },
           "path_prefix": {
             "description": "Optional literal collection-relative path prefix, not a glob.",
@@ -2816,7 +2816,7 @@
             ]
           },
           "query": {
-            "description": "Default hybrid retrieval; lexical normalizes punctuation/quotes into AND terms, not phrase matching.",
+            "description": "What to find. In lexical mode the words are AND terms; quotes and punctuation do not make a phrase.",
             "type": "string"
           },
           "reply_detail": {
@@ -2840,7 +2840,7 @@
                 "type": "null"
               }
             ],
-            "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results."
+            "description": "Terse is the default. Full adds provenance, coverage and readiness detail; for gather_context it is the complete reply, including passages the short map leaves out. It does not widen the search."
           },
           "semantic": {
             "default": false,
@@ -2892,7 +2892,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Quick AIRK version, basic health and project-index check: generation, counts, freshness and semantic coverage. The MCP frontend adds configured query_concurrency from admission. Evidence reads run at that concurrency: 16 by default, or 4, 8, 16, 32 or 64 as set in the Management Service; connection channels and worker query slots match it, plus one slot kept for status, so status still answers when every read slot is busy. A read beyond the limit waits in a bounded queue and gets a typed retry reply (retryable, retry_after_ms) when the queue is full or its deadline passes. Completed same-authority observations superseded by scalar invalidation return successfully with status_observation.superseded and their original publication/time. Successful native snapshots may be cached for up to five seconds with explicit observation time and cache age. Reads scalar publication metadata without imported fact payloads, runtime/work probes or editor processes in every response mode. Use airk_diagnostics for process/version identities, detailed job state and diagnostic observations. Health is not progress. response_mode=full retains the same lightweight scope. MCP does not manage jobs.",
+      "description": "Use before broad parallel retrieval, or when you need the publication token or readiness. Returns the index publication, source-update state, semantic readiness and query_concurrency, the ceiling on parallel evidence reads; a read beyond it waits or gets a typed retry. observed_unix_ms and cache_age_ms give the observation age; an unknown result means readiness was not observed in time. Does not start indexing or repair.",
       "inputSchema": {
         "$defs": {
           "ResponseMode": {
@@ -2932,7 +2932,7 @@
                 "type": "null"
               }
             ],
-            "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results."
+            "description": "Terse is the default. Full adds provenance, coverage and readiness detail; for gather_context it is the complete reply, including passages the short map leaves out. It does not widen the search."
           }
         },
         "type": "object"
@@ -2945,7 +2945,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Use first for a known type, function or other written definition name, before text search. Exact name is default: Session does not match OwnerSession. Explicit name_match=suffix/contains matches simple/qualified names case-sensitively; omit name to list within indexed language/profile or literal path_prefix. Returns definition locations; keep compact discovery for candidates, then request compact=false on a selected scope for rich IDs/details. Consume cursor pages; include_count reports bounded count precision. Does not resolve dynamic/cross-file names. Next: airk_references for uses, airk_read_file or airk_context for the body, airk_code_facts for more fact categories. Use response_mode=full for provenance audits.",
+      "description": "Use to find where a named type, function or other definition is declared. Exact name by default (Session does not match OwnerSession); name_match=suffix or contains broadens it, case-sensitively; omit name to list the definitions under a path_prefix or language. Returns definition locations across all indexed files. It matches written names and does not resolve imports, aliases or dynamic dispatch. Compact results by default; compact=false on a chosen result adds full details and symbol IDs. Follow cursor only when you need more candidates. Then, if useful: airk_read_file for the body, airk_references for where the name is written.",
       "inputSchema": {
         "$defs": {
           "NameMatch": {
@@ -2992,7 +2992,7 @@
             "type": "boolean"
           },
           "language": {
-            "description": "Optional indexed language/profile label; obtain the label from airk_file_info.\nExact indexed native or retained producer language/profile label; 1..128 UTF-8 bytes. JSON maxLength is a character bound; native validation enforces the byte bound.",
+            "description": "Optional indexed language/profile label, as replies report it (for example rust or markdown).\nExact indexed native or retained producer language/profile label; 1..128 UTF-8 bytes. JSON maxLength is a character bound; native validation enforces the byte bound.",
             "maxLength": 128,
             "minLength": 1,
             "type": [
@@ -3065,7 +3065,7 @@
                 "type": "null"
               }
             ],
-            "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results."
+            "description": "Terse is the default. Full adds provenance, coverage and readiness detail; for gather_context it is the complete reply, including passages the short map leaves out. It does not widen the search."
           },
           "verification": {
             "default": "report",
@@ -3112,7 +3112,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Use first for a task that needs evidence from several places in the index, then again as you learn more, with narrower needs and the known ranges you already hold. For one known identifier or path, call find_definition or read_indexed_range instead. Pass the task text as task. Fill needs (up to 8 short statements of what you must learn, each at most 400 bytes); add anchors (up to 16 exact strings from the task: identifiers, routes, quoted text, numbers with units; each at most 200 bytes), deliverable (code_change, test, document or analysis) and known (ranges you already hold; checked, not yet used). Needs or a code_change or test deliverable also bring the project's rules, test command and build file. Omit budget for the service default. The default reply is a short map: where each need is answered, the best passages, what was not found and what to ask next; read omitted ranges with read_indexed_range. response_mode=full returns every record, for provenance/coverage audits; verification report/require checks returned saved sources.",
+      "description": "Use for a task that needs evidence from several places, such as a change that spans implementation and tests, even when the task names a symbol; call again with narrower needs as you learn more. Pass the task text as task, and optionally needs, anchors, deliverable and known. Returns a short map: for each need, where it is answered and the best passages, and what was not found. A code_change or test deliverable, or stated needs, also gathers the project rules, how tests run and the build file, and lists any it does not find. Ranges listed without text can be read with read_indexed_range. For one definition use find_definition; for one known file, outline_file. response_mode=full returns the complete reply.",
       "inputSchema": {
         "$defs": {
           "BudgetV3": {
@@ -3266,7 +3266,7 @@
         "additionalProperties": false,
         "properties": {
           "anchors": {
-            "description": "Up to 16 exact strings from the task (identifiers, routes, quoted\ntext, numbers with units), at most 200 bytes each.",
+            "description": "Up to 16 exact strings to look for (identifiers, routes, quoted text,\nnumbers with units), each at most 200 UTF-8 bytes. Take them from the\ntask or from evidence an earlier reply returned.",
             "items": {
               "type": "string"
             },
@@ -3274,7 +3274,7 @@
           },
           "budget": {
             "$ref": "#/$defs/BudgetV3",
-            "description": "Optional with task: omitted uses the service default, a valid budget\nis used as sent. Required with question."
+            "description": "The loop's limits (calls, deadline_ms, max_bytes and the rest). Omit\nwith task for the service default; a valid budget is used as sent.\nRequired with question."
           },
           "continuation": {
             "anyOf": [
@@ -3296,7 +3296,7 @@
                 "type": "null"
               }
             ],
-            "description": "What you will produce. It selects standing needs the reply also\ncovers: project rules, how tests run, the build file."
+            "description": "What you will produce. code_change also gathers the project rules, how\ntests run, the build file and where errors reach the user; test, the\nfirst three."
           },
           "fresh": {
             "description": "Start an independent run; never reuse a job by digest.",
@@ -3319,21 +3319,21 @@
             ]
           },
           "known": {
-            "description": "Up to 32 path ranges you already read. Checked; does not change\ngathering yet.",
+            "description": "Up to 32 path ranges you already hold. They are validated only; they\ndo not yet change what is gathered or returned.",
             "items": {
               "$ref": "#/$defs/KnownRange"
             },
             "type": "array"
           },
           "needs": {
-            "description": "Up to 8 statements of what you must learn, one each, at most 400\nbytes. Stating needs improves the result.",
+            "description": "Up to 8 statements of what you must learn, one per need, each at most\n400 UTF-8 bytes. Stated needs also gather the project rules, how tests\nrun and the build file.",
             "items": {
               "type": "string"
             },
             "type": "array"
           },
           "project": {
-            "description": "Configured source scope from projects. Required when this connection has no single default; never follows the Explorer dropdown.",
+            "description": "Configured project binding. Needed only when this connection has several and no default; the projects operation lists them.",
             "pattern": "^[0-9a-f]{64}$",
             "type": "string"
           },
@@ -3362,7 +3362,7 @@
                 "type": "null"
               }
             ],
-            "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results."
+            "description": "Terse is the default. Full adds provenance, coverage and readiness detail; for gather_context it is the complete reply, including passages the short map leaves out. It does not widen the search."
           },
           "schema": {
             "description": "Existing full request only; supplied by the service for task.",
@@ -3453,7 +3453,7 @@
             "type": "boolean"
           },
           "project": {
-            "description": "Configured source scope from projects. Required when this connection has no single default; never follows the Explorer dropdown.",
+            "description": "Configured project binding. Needed only when this connection has several and no default; the projects operation lists them.",
             "pattern": "^[0-9a-f]{64}$",
             "type": "string"
           },
@@ -3478,7 +3478,7 @@
                 "type": "null"
               }
             ],
-            "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results."
+            "description": "Terse is the default. Full adds provenance, coverage and readiness detail; for gather_context it is the complete reply, including passages the short map leaves out. It does not widen the search."
           },
           "rich": {
             "default": false,
@@ -3647,7 +3647,7 @@
             "type": "string"
           },
           "project": {
-            "description": "Configured source scope from projects. Required when this connection has no single default; never follows the Explorer dropdown.",
+            "description": "Configured project binding. Needed only when this connection has several and no default; the projects operation lists them.",
             "pattern": "^[0-9a-f]{64}$",
             "type": "string"
           },
@@ -3672,7 +3672,7 @@
                 "type": "null"
               }
             ],
-            "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results."
+            "description": "Terse is the default. Full adds provenance, coverage and readiness detail; for gather_context it is the complete reply, including passages the short map leaves out. It does not widen the search."
           },
           "selectors": {
             "default": [],
@@ -3852,7 +3852,7 @@
             "type": "string"
           },
           "project": {
-            "description": "Configured source scope from projects. Required when this connection has no single default; never follows the Explorer dropdown.",
+            "description": "Configured project binding. Needed only when this connection has several and no default; the projects operation lists them.",
             "pattern": "^[0-9a-f]{64}$",
             "type": "string"
           },
@@ -3877,7 +3877,7 @@
                 "type": "null"
               }
             ],
-            "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results."
+            "description": "Terse is the default. Full adds provenance, coverage and readiness detail; for gather_context it is the complete reply, including passages the short map leaves out. It does not widen the search."
           },
           "start_line": {
             "description": "First line, 1-based and inclusive, of a range in the exact path; requires end_line. A fact matches when its own lines overlap the range, e.g. the definition containing a line.",
@@ -3937,7 +3937,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Use to widen one search or fact hit. Returns bounded neighboring indexed lines around its line coordinate, from the last successful index. PDF/DOCX/PPTX lines are extracted-text coordinates; keep the request within one original page/block/slide. Next: read_indexed_range for an exact larger range. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+      "description": "Use to see more lines around one line you already have from a hit or citation. Returns the neighboring indexed lines, bounded by before, after and max_bytes. Pass the publication token of the hit as revision to stay on its snapshot. For extracted documents, keep within one page, block or slide. For an exact larger range use read_indexed_range.",
       "inputSchema": {
         "$defs": {
           "ResponseMode": {
@@ -4011,7 +4011,7 @@
             "type": "string"
           },
           "project": {
-            "description": "Configured source scope from projects. Required when this connection has no single default; never follows the Explorer dropdown.",
+            "description": "Configured project binding. Needed only when this connection has several and no default; the projects operation lists them.",
             "pattern": "^[0-9a-f]{64}$",
             "type": "string"
           },
@@ -4036,10 +4036,10 @@
                 "type": "null"
               }
             ],
-            "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results."
+            "description": "Terse is the default. Full adds provenance, coverage and readiness detail; for gather_context it is the complete reply, including passages the short map leaves out. It does not widen the search."
           },
           "revision": {
-            "description": "Exact current token; a superseded token expires without historical fallback.",
+            "description": "Publication token of the citation or reply you are following. The read uses that snapshot; a superseded token is refused, and no older copy is served.",
             "type": [
               "string",
               "null"
@@ -4111,7 +4111,7 @@
             "type": "boolean"
           },
           "project": {
-            "description": "Configured source scope from projects. Required when this connection has no single default; never follows the Explorer dropdown.",
+            "description": "Configured project binding. Needed only when this connection has several and no default; the projects operation lists them.",
             "pattern": "^[0-9a-f]{64}$",
             "type": "string"
           },
@@ -4136,7 +4136,7 @@
                 "type": "null"
               }
             ],
-            "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results."
+            "description": "Terse is the default. Full adds provenance, coverage and readiness detail; for gather_context it is the complete reply, including passages the short map leaves out. It does not widen the search."
           }
         },
         "type": "object"
@@ -4199,7 +4199,7 @@
             ]
           },
           "language": {
-            "description": "Optional indexed language/profile label from file_info.\nExact indexed native or retained producer language/profile label; 1..128 UTF-8 bytes. JSON maxLength is a character bound; native validation enforces the byte bound.",
+            "description": "Optional indexed language/profile label, as replies report it (for example rust or markdown).\nExact indexed native or retained producer language/profile label; 1..128 UTF-8 bytes. JSON maxLength is a character bound; native validation enforces the byte bound.",
             "maxLength": 128,
             "minLength": 1,
             "type": [
@@ -4241,7 +4241,7 @@
             "type": "string"
           },
           "project": {
-            "description": "Configured source scope from projects. Required when this connection has no single default; never follows the Explorer dropdown.",
+            "description": "Configured project binding. Needed only when this connection has several and no default; the projects operation lists them.",
             "pattern": "^[0-9a-f]{64}$",
             "type": "string"
           },
@@ -4266,7 +4266,7 @@
                 "type": "null"
               }
             ],
-            "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results."
+            "description": "Terse is the default. Full adds provenance, coverage and readiness detail; for gather_context it is the complete reply, including passages the short map leaves out. It does not widen the search."
           },
           "verification": {
             "default": "report",
@@ -4310,7 +4310,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Use before interpreting one file's evidence. Returns its indexed language/profile, extraction method, syntax quality, hash and line basis, distinguishing source lines from extracted document coordinates. Next: outline_file or read_indexed_range. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+      "description": "Use when a file's language, extraction method, syntax quality, revision or line coordinates need clarifying, for example before reading lines of a PDF or Office document. Returns its indexed language and profile, extraction method, syntax quality, content hash and line basis.",
       "inputSchema": {
         "$defs": {
           "ResponseMode": {
@@ -4364,7 +4364,7 @@
             "type": "string"
           },
           "project": {
-            "description": "Configured source scope from projects. Required when this connection has no single default; never follows the Explorer dropdown.",
+            "description": "Configured project binding. Needed only when this connection has several and no default; the projects operation lists them.",
             "pattern": "^[0-9a-f]{64}$",
             "type": "string"
           },
@@ -4389,10 +4389,10 @@
                 "type": "null"
               }
             ],
-            "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results."
+            "description": "Terse is the default. Full adds provenance, coverage and readiness detail; for gather_context it is the complete reply, including passages the short map leaves out. It does not widen the search."
           },
           "revision": {
-            "description": "Exact current token; a superseded token expires without historical fallback.",
+            "description": "Publication token of the citation or reply you are following. The read uses that snapshot; a superseded token is refused, and no older copy is served.",
             "type": [
               "string",
               "null"
@@ -4519,7 +4519,7 @@
                 "type": "null"
               }
             ],
-            "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results."
+            "description": "Terse is the default. Full adds provenance, coverage and readiness detail; for gather_context it is the complete reply, including passages the short map leaves out. It does not widen the search."
           },
           "start_line": {
             "default": 1,
@@ -4604,7 +4604,7 @@
             "type": "boolean"
           },
           "language": {
-            "description": "Optional indexed language/profile label; obtain the label from file_info.\nExact indexed native or retained producer language/profile label; 1..128 UTF-8 bytes. JSON maxLength is a character bound; native validation enforces the byte bound.",
+            "description": "Optional indexed language/profile label, as replies report it (for example rust or markdown).\nExact indexed native or retained producer language/profile label; 1..128 UTF-8 bytes. JSON maxLength is a character bound; native validation enforces the byte bound.",
             "maxLength": 128,
             "minLength": 1,
             "type": [
@@ -4657,7 +4657,7 @@
             "type": "string"
           },
           "project": {
-            "description": "Configured source scope from projects. Required when this connection has no single default; never follows the Explorer dropdown.",
+            "description": "Configured project binding. Needed only when this connection has several and no default; the projects operation lists them.",
             "pattern": "^[0-9a-f]{64}$",
             "type": "string"
           },
@@ -4682,7 +4682,7 @@
                 "type": "null"
               }
             ],
-            "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results."
+            "description": "Terse is the default. Full adds provenance, coverage and readiness detail; for gather_context it is the complete reply, including passages the short map leaves out. It does not widen the search."
           },
           "verification": {
             "default": "report",
@@ -4726,7 +4726,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Use when you know a directory but not the file. Filter by literal relative-path prefix, not glob; count and bytes are bounded. Returns the snapshot inventory, not all live workspace files or indexing coverage. Next: outline_file or read_indexed_range on a chosen path. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+      "description": "Use when you know a directory but not the file. prefix is a literal path prefix, not a glob. Returns the indexed files under it, bounded by limit and max_bytes and paged by cursor. Then, if useful: outline_file or read_indexed_range on a chosen path.",
       "inputSchema": {
         "$defs": {
           "ResponseMode": {
@@ -4772,7 +4772,7 @@
             "type": "string"
           },
           "project": {
-            "description": "Configured source scope from projects. Required when this connection has no single default; never follows the Explorer dropdown.",
+            "description": "Configured project binding. Needed only when this connection has several and no default; the projects operation lists them.",
             "pattern": "^[0-9a-f]{64}$",
             "type": "string"
           },
@@ -4797,7 +4797,7 @@
                 "type": "null"
               }
             ],
-            "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results."
+            "description": "Terse is the default. Full adds provenance, coverage and readiness detail; for gather_context it is the complete reply, including passages the short map leaves out. It does not widen the search."
           },
           "verification": {
             "default": "report",
@@ -4841,7 +4841,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Use for one known file's structure before reading it. Takes one exact path; returns its imports, definitions, call candidates and document facts with locations in file order, paged by cursor. Compact minimal navigation is default; compact=false expands facts and IDs. A first page may not reach a given definition, so locate one with scoped find_definition/code_facts. Bounded or empty output is not a whole-file or complete-language claim. Read-only source evidence; suggest_view proposes an Explorer screen instead. Next: read_indexed_range on a listed range. Use response_mode=full for provenance audits.",
+      "description": "Use when you know one file and need to find where something is in it. Takes one exact path; returns its imports, definitions and document headings with line locations, in file order, paged by cursor. Compact by default; compact=false adds full facts and IDs. A large file can take several pages; find_definition with path finds one definition in it directly. Then, if useful: read_indexed_range on a listed range.",
       "inputSchema": {
         "$defs": {
           "ResponseMode": {
@@ -4918,7 +4918,7 @@
             "type": "string"
           },
           "project": {
-            "description": "Configured source scope from projects. Required when this connection has no single default; never follows the Explorer dropdown.",
+            "description": "Configured project binding. Needed only when this connection has several and no default; the projects operation lists them.",
             "pattern": "^[0-9a-f]{64}$",
             "type": "string"
           },
@@ -4943,10 +4943,10 @@
                 "type": "null"
               }
             ],
-            "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results."
+            "description": "Terse is the default. Full adds provenance, coverage and readiness detail; for gather_context it is the complete reply, including passages the short map leaves out. It does not widen the search."
           },
           "revision": {
-            "description": "Exact current token; a superseded token expires without historical fallback.",
+            "description": "Publication token of the citation or reply you are following. The read uses that snapshot; a superseded token is refused, and no older copy is served.",
             "type": [
               "string",
               "null"
@@ -5055,7 +5055,7 @@
             ]
           },
           "project": {
-            "description": "Configured source scope from projects. Required when this connection has no single default; never follows the Explorer dropdown.",
+            "description": "Configured project binding. Needed only when this connection has several and no default; the projects operation lists them.",
             "pattern": "^[0-9a-f]{64}$",
             "type": "string"
           },
@@ -5087,7 +5087,7 @@
                 "type": "null"
               }
             ],
-            "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results."
+            "description": "Terse is the default. Full adds provenance, coverage and readiness detail; for gather_context it is the complete reply, including passages the short map leaves out. It does not widen the search."
           },
           "schema": {
             "type": "string"
@@ -5170,7 +5170,7 @@
             "type": "integer"
           },
           "project": {
-            "description": "Configured source scope from projects. Required when this connection has no single default; never follows the Explorer dropdown.",
+            "description": "Configured project binding. Needed only when this connection has several and no default; the projects operation lists them.",
             "pattern": "^[0-9a-f]{64}$",
             "type": "string"
           },
@@ -5253,7 +5253,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Use when you know the path and lines: from a hit, a citation or the task. Returns an inclusive 1-based indexed line range from the last successful snapshot, the revision citations point to. For PDF/DOCX/PPTX, use extracted lines within one page/block/slide. Next: read_around to widen around one line, outline_file for the file's structure. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+      "description": "Use when you know the path and the lines, from a citation, a hit or the task. Returns that inclusive 1-based line range from the index. Pass the publication token of the citation as revision to read the snapshot it points to; if that publication has been superseded the read is refused rather than returning different lines. For PDF, DOCX and PPTX, lines are extracted-text coordinates; keep a range within one page, block or slide. If you know the file but not the lines, use outline_file, or search_passages with path_prefix.",
       "inputSchema": {
         "$defs": {
           "ResponseMode": {
@@ -5315,7 +5315,7 @@
             "type": "string"
           },
           "project": {
-            "description": "Configured source scope from projects. Required when this connection has no single default; never follows the Explorer dropdown.",
+            "description": "Configured project binding. Needed only when this connection has several and no default; the projects operation lists them.",
             "pattern": "^[0-9a-f]{64}$",
             "type": "string"
           },
@@ -5340,10 +5340,10 @@
                 "type": "null"
               }
             ],
-            "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results."
+            "description": "Terse is the default. Full adds provenance, coverage and readiness detail; for gather_context it is the complete reply, including passages the short map leaves out. It does not widen the search."
           },
           "revision": {
-            "description": "Exact current token; a superseded token expires without historical fallback.",
+            "description": "Publication token of the citation or reply you are following. The read uses that snapshot; a superseded token is refused, and no older copy is served.",
             "type": [
               "string",
               "null"
@@ -5402,7 +5402,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Textual occurrences of an exact identifier: use after find_definition to find where it appears. Returns exact-case whole-identifier matching lines in retained indexed text, including definitions, strings and comments. Markdown, HTML, scripts and source can all match; scope by path_prefix, exact indexed language or metadata-based evidence_kind for impact work. These are textual candidates, never resolved references. Omit new paging options for legacy index ordering; explicit order=index/path/code_first, filters, cursor, include_files or include_count select bounded pageable scanning. Page file summaries/counts disclose their scope and matching-line unit; incomplete scans never imply an exact corpus total. Consume continuation and check truncation/coverage before concluding no impact. Next: read_indexed_range or read_around on chosen lines. Use response_mode=full for provenance/coverage audits.",
+      "description": "Use to find every indexed line where an exact identifier is written, for usage or impact questions; call it directly when you know the identifier. Matches the exact-case whole identifier in code, comments, strings and documents, so results include its definitions, other names with the same spelling and mentions in text; a use written under another name is not matched. Scope with path_prefix, language or evidence_kind. Counts are matching lines. The reply says whether it scanned its whole scope; follow cursor to scan the rest. Then, if useful: read_indexed_range around a chosen line.",
       "inputSchema": {
         "$defs": {
           "EvidenceKind": {
@@ -5495,7 +5495,7 @@
             "type": "integer"
           },
           "name": {
-            "description": "Exact-case whole identifier to locate textually, not a regex or semantic symbol ID.",
+            "description": "The identifier exactly as written, whole and case-sensitive; not a regex or symbol ID.",
             "type": "string"
           },
           "order": {
@@ -5514,7 +5514,7 @@
             "type": "string"
           },
           "project": {
-            "description": "Configured source scope from projects. Required when this connection has no single default; never follows the Explorer dropdown.",
+            "description": "Configured project binding. Needed only when this connection has several and no default; the projects operation lists them.",
             "pattern": "^[0-9a-f]{64}$",
             "type": "string"
           },
@@ -5539,7 +5539,7 @@
                 "type": "null"
               }
             ],
-            "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results."
+            "description": "Terse is the default. Full adds provenance, coverage and readiness detail; for gather_context it is the complete reply, including passages the short map leaves out. It does not widen the search."
           },
           "verification": {
             "default": "report",
@@ -5578,7 +5578,7 @@
         ],
         "type": "object"
       },
-      "name": "find_references"
+      "name": "find_identifier_occurrences"
     },
     {
       "annotations": {
@@ -5586,7 +5586,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Use for impact work from a known symbol: returns bounded incoming/outgoing structural candidates with path scope and 1..3 hops. Written targets such as Type::new or obj.method identify textual caller candidates; a struct symbol ID alone does not prove a complete caller set. Verified type/method suggestions, when available, are navigation candidates rather than resolved associations. Agent Lean/Rich Structure retain supported calls; SCIP assertions are not calls. Check coverage and truncation: absent edges never prove no impact. Next: read_indexed_range on candidates, find_references for textual uses. Use response_mode=full for provenance/coverage audits.",
+      "description": "Use for impact work from a known symbol: returns bounded incoming/outgoing structural candidates with path scope and 1..3 hops. Written targets such as Type::new or obj.method identify textual caller candidates; a struct symbol ID alone does not prove a complete caller set. Verified type/method suggestions, when available, are navigation candidates rather than resolved associations. Agent Lean/Rich Structure retain supported calls; SCIP assertions are not calls. Check coverage and truncation: absent edges never prove no impact. Next: read_indexed_range on candidates, find_identifier_occurrences for textual uses. Use response_mode=full for provenance/coverage audits.",
       "inputSchema": {
         "$defs": {
           "ResponseMode": {
@@ -5648,7 +5648,7 @@
             "type": "string"
           },
           "project": {
-            "description": "Configured source scope from projects. Required when this connection has no single default; never follows the Explorer dropdown.",
+            "description": "Configured project binding. Needed only when this connection has several and no default; the projects operation lists them.",
             "pattern": "^[0-9a-f]{64}$",
             "type": "string"
           },
@@ -5673,7 +5673,7 @@
                 "type": "null"
               }
             ],
-            "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results."
+            "description": "Terse is the default. Full adds provenance, coverage and readiness detail; for gather_context it is the complete reply, including passages the short map leaves out. It does not widen the search."
           },
           "symbol": {
             "description": "Use code.symbol_id from code facts/symbols, a file:path owner, or an exact written syntax target (e.g. db.query). Syntax targets are not resolved symbol IDs.",
@@ -5724,7 +5724,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Use for one concept, behavior or phrase when you have no exact identifier or path; prose, comments and code rank together. For a named type or function use find_definition; for a whole task use gather_context. Returns ranked cited snippets (full_chunks for whole indexed chunks) with served mode, readiness and limitations; bounded definition pointers may accompany identifiers. Scope by literal path_prefix, exact indexed language, metadata-based evidence_kind or exclude_path_prefix. Omitted mode keeps the saved hybrid/vector policy and may serve lexical evidence during a helper outage, recording semantic incompleteness; explicit vector/hybrid and saved RequireComplete refuse the outage. Vector/hybrid need the indexed local model; semantic=true aliases vector. Explicit lexical turns punctuation and quotes into AND terms (no phrase matching) in stable-id order, not relevance. Empty matches alone establish no cause. Next: read_indexed_range or read_around on a hit. Check truncation and use response_mode=full for provenance audits.",
+      "description": "Use to find a concept, behavior or phrase across the index, or within one area with path_prefix, when you do not have its exact name. Prose, comments and code are searched together. Returns cited passages: ranked by relevance in the default hybrid or vector mode; in explicit lexical mode, passages containing every term, in stable index order rather than by relevance. Omit mode to follow the configured policy: while the semantic helper is unavailable it serves lexical results and says so; an explicit vector or hybrid mode is refused instead. An empty result reports its served mode, filters and readiness. If a passage is not enough, read more of its file with read_indexed_range.",
       "inputSchema": {
         "$defs": {
           "EvidenceKind": {
@@ -5786,7 +5786,7 @@
             "type": "boolean"
           },
           "language": {
-            "description": "Exact indexed extraction-language/profile label, as reported by file_info.",
+            "description": "Exact indexed extraction-language/profile label, as replies report it (for example rust or markdown).",
             "type": [
               "string",
               "null"
@@ -5814,7 +5814,7 @@
                 "type": "null"
               }
             ],
-            "description": "Omit for the saved collection policy; pending vectors are disclosed in the response."
+            "description": "Omit to follow the configured policy, which serves lexical results during a semantic helper outage and says so. An explicit vector or hybrid mode is refused when the semantic index cannot serve it."
           },
           "path_prefix": {
             "description": "Optional literal collection-relative path prefix, not a glob.",
@@ -5824,12 +5824,12 @@
             ]
           },
           "project": {
-            "description": "Configured source scope from projects. Required when this connection has no single default; never follows the Explorer dropdown.",
+            "description": "Configured project binding. Needed only when this connection has several and no default; the projects operation lists them.",
             "pattern": "^[0-9a-f]{64}$",
             "type": "string"
           },
           "query": {
-            "description": "Default hybrid retrieval; lexical normalizes punctuation/quotes into AND terms, not phrase matching.",
+            "description": "What to find. In lexical mode the words are AND terms; quotes and punctuation do not make a phrase.",
             "type": "string"
           },
           "reply_detail": {
@@ -5853,7 +5853,7 @@
                 "type": "null"
               }
             ],
-            "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results."
+            "description": "Terse is the default. Full adds provenance, coverage and readiness detail; for gather_context it is the complete reply, including passages the short map leaves out. It does not widen the search."
           },
           "semantic": {
             "default": false,
@@ -5905,7 +5905,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Quick version, health and project-index check: counts, publication, source-update state, semantic readiness and configured query_concurrency at frontend admission. Evidence reads run at that concurrency: 16 by default, or 4, 8, 16, 32 or 64 as set in the Management Service; connection channels and worker query slots match it, plus one slot kept for status, so status still answers when every read slot is busy. A read beyond the limit waits in a bounded queue and gets a typed retry reply (retryable, retry_after_ms) when the queue is full or its deadline passes. Obtain before broad evidence fan-out; lightweight does not mean exempt from bounded admission. Completed same-authority observations superseded by scalar invalidation return successfully with status_observation.superseded and their original publication/time. Successful snapshots may be cached for five seconds; observed_unix_ms, cache_age_ms and cached disclose their age. Allows up to ten seconds for shared cold runtime setup, followed by a two-second observation budget; expiry reports unknown readiness and null evidence. Always skips process diagnostics and editor probes. Call diagnostics for detailed work, runtime versions and Explorer attachment. Does not start indexing or repair.",
+      "description": "Use before broad parallel retrieval, or when you need the publication token or readiness. Returns the index publication, source-update state, semantic readiness and query_concurrency, the ceiling on parallel evidence reads; a read beyond it waits or gets a typed retry. On a combined connection it reports each selected project and index. observed_unix_ms and cache_age_ms give the observation age; an unknown result means readiness was not observed in time. Does not start indexing or repair.",
       "inputSchema": {
         "$defs": {
           "ResponseMode": {
@@ -5925,7 +5925,7 @@
             "type": "boolean"
           },
           "project": {
-            "description": "Configured source scope from projects. Required when this connection has no single default; never follows the Explorer dropdown.",
+            "description": "Configured project binding. Needed only when this connection has several and no default; the projects operation lists them.",
             "pattern": "^[0-9a-f]{64}$",
             "type": "string"
           },
@@ -5950,7 +5950,7 @@
                 "type": "null"
               }
             ],
-            "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results."
+            "description": "Terse is the default. Full adds provenance, coverage and readiness detail; for gather_context it is the complete reply, including passages the short map leaves out. It does not widen the search."
           }
         },
         "type": "object"
@@ -5963,7 +5963,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Use first for a known type, function or other written definition name, before text search. Exact name is default: Session does not match OwnerSession. Explicit name_match=suffix/contains matches simple/qualified names case-sensitively; omit name to list within indexed language/profile or literal path_prefix. Returns definition locations; keep compact discovery for candidates, then request compact=false on a selected scope for rich IDs/details. Consume cursor pages; include_count reports bounded count precision. Does not resolve dynamic/cross-file names. Next: find_references for uses, read_indexed_range or read_around for the body, code_facts for more fact categories. Use response_mode=full for provenance audits.",
+      "description": "Use to find where a named type, function or other definition is declared. Exact name by default (Session does not match OwnerSession); name_match=suffix or contains broadens it, case-sensitively; omit name to list the definitions under a path_prefix or language. Returns definition locations across all indexed files. It matches written names and does not resolve imports, aliases or dynamic dispatch. Compact results by default; compact=false on a chosen result adds full details and symbol IDs. Follow cursor only when you need more candidates. Then, if useful: read_indexed_range for the body, find_identifier_occurrences for where the name is written.",
       "inputSchema": {
         "$defs": {
           "NameMatch": {
@@ -6010,7 +6010,7 @@
             "type": "boolean"
           },
           "language": {
-            "description": "Optional indexed language/profile label; obtain the label from file_info.\nExact indexed native or retained producer language/profile label; 1..128 UTF-8 bytes. JSON maxLength is a character bound; native validation enforces the byte bound.",
+            "description": "Optional indexed language/profile label, as replies report it (for example rust or markdown).\nExact indexed native or retained producer language/profile label; 1..128 UTF-8 bytes. JSON maxLength is a character bound; native validation enforces the byte bound.",
             "maxLength": 128,
             "minLength": 1,
             "type": [
@@ -6063,7 +6063,7 @@
             "type": "string"
           },
           "project": {
-            "description": "Configured source scope from projects. Required when this connection has no single default; never follows the Explorer dropdown.",
+            "description": "Configured project binding. Needed only when this connection has several and no default; the projects operation lists them.",
             "pattern": "^[0-9a-f]{64}$",
             "type": "string"
           },
@@ -6088,7 +6088,7 @@
                 "type": "null"
               }
             ],
-            "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results."
+            "description": "Terse is the default. Full adds provenance, coverage and readiness detail; for gather_context it is the complete reply, including passages the short map leaves out. It does not widen the search."
           },
           "verification": {
             "default": "report",
@@ -6292,7 +6292,7 @@
             "type": "string"
           },
           "project": {
-            "description": "Configured source scope from projects. Required when this connection has no single default; never follows the Explorer dropdown.",
+            "description": "Configured project binding. Needed only when this connection has several and no default; the projects operation lists them.",
             "pattern": "^[0-9a-f]{64}$",
             "type": "string"
           },
@@ -6407,7 +6407,7 @@
             "type": "string"
           },
           "project": {
-            "description": "Configured source scope from projects. Required when this connection has no single default; never follows the Explorer dropdown.",
+            "description": "Configured project binding. Needed only when this connection has several and no default; the projects operation lists them.",
             "pattern": "^[0-9a-f]{64}$",
             "type": "string"
           },
@@ -6562,7 +6562,7 @@
             "type": "string"
           },
           "project": {
-            "description": "Configured source scope from projects. Required when this connection has no single default; never follows the Explorer dropdown.",
+            "description": "Configured project binding. Needed only when this connection has several and no default; the projects operation lists them.",
             "pattern": "^[0-9a-f]{64}$",
             "type": "string"
           },
@@ -6713,7 +6713,7 @@
             "type": "string"
           },
           "project": {
-            "description": "Configured source scope from projects. Required when this connection has no single default; never follows the Explorer dropdown.",
+            "description": "Configured project binding. Needed only when this connection has several and no default; the projects operation lists them.",
             "pattern": "^[0-9a-f]{64}$",
             "type": "string"
           }
@@ -6738,7 +6738,7 @@
         "additionalProperties": false,
         "properties": {
           "project": {
-            "description": "Configured source scope from projects. Required when this connection has no single default; never follows the Explorer dropdown.",
+            "description": "Configured project binding. Needed only when this connection has several and no default; the projects operation lists them.",
             "pattern": "^[0-9a-f]{64}$",
             "type": "string"
           },
@@ -6766,7 +6766,7 @@
         "additionalProperties": false,
         "properties": {
           "project": {
-            "description": "Configured source scope from projects. Required when this connection has no single default; never follows the Explorer dropdown.",
+            "description": "Configured project binding. Needed only when this connection has several and no default; the projects operation lists them.",
             "pattern": "^[0-9a-f]{64}$",
             "type": "string"
           },
@@ -7155,7 +7155,7 @@
             "type": "string"
           },
           "project": {
-            "description": "Configured source scope from projects. Required when this connection has no single default; never follows the Explorer dropdown.",
+            "description": "Configured project binding. Needed only when this connection has several and no default; the projects operation lists them.",
             "pattern": "^[0-9a-f]{64}$",
             "type": "string"
           }

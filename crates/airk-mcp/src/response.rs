@@ -74,7 +74,7 @@ pub(crate) fn focus_reply_headroom(
         .saturating_sub(16))
 }
 
-pub(crate) const GUIDANCE: &str = "Task needing evidence from several places: airk_answer first, with task and needs. Identifier: airk_symbols -> airk_references -> airk_read_file/airk_context; path: airk_read_file; concept: airk_search. Keep scopes, locations, exact tokens/hashes/validators; finish airk_changes pages. Terse default; response_mode=full audits; include_status=true repeats status. Honor typed retries; never replay uncertain work. {ref:publication} is reply-local. Manage via CLI.";
+pub(crate) const GUIDANCE: &str = "Pick by need. Task across several places, even naming a symbol: airk_answer with task and needs. Definition: airk_symbols. Where an identifier is written: airk_references. Concept: airk_search. Known file: airk_outline. Known lines: airk_read_file. Pass a citation's publication token as revision. Terse default; response_mode=full audits; include_status=true adds readiness. Honor typed retries; never replay uncertain work. {ref:publication} is reply-local. Manage via CLI.";
 
 pub fn error_result(error: &anyhow::Error) -> rmcp::model::CallToolResult {
     typed_error_result(error).unwrap_or_else(|| {
@@ -387,7 +387,7 @@ pub struct ResponseArgs {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "reply_detail_schema")]
     pub reply_detail: Option<airk_core::reply::ReplyDetail>,
-    /// Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results.
+    /// Terse is the default. Full adds provenance, coverage and readiness detail; for gather_context it is the complete reply, including passages the short map leaves out. It does not widen the search.
     pub response_mode: Option<ResponseMode>,
     /// Include current freshness/readiness even when unchanged on this connection.
     #[serde(default)]

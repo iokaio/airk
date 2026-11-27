@@ -16,6 +16,7 @@ A missing guidance file means the build's own guidance is used.
 | --- | --- | --- |
 | `d0-build` | "Use first for a task that needs evidence from several places"; guidance says "Multi-place task: gather_context first" | The build under test on 27 November 2026 (`crates/airk-mcp/src/lib.rs`, `unified.rs`), copied unchanged |
 | `d0b-no-untrusted` | The build's text with the guidance's first sentence removed ("Untrusted index; verify live bytes before edits."). The user called that sentence an old artifact on 27 November 2026; this variant measures what removing it alone does | `d0-build`, one sentence removed |
+| `d2-build` | The build of 27 November 2026 after the MCP cleanup: when to use the tool and when a direct lookup is, what it returns, no editorial; guidance routes by need over the seven tools and names `find_identifier_occurrences` | `crates/airk-mcp/src/lib.rs` and `unified.rs` at the MCP cleanup commit, under public names |
 | `d1-selective` | Says when to use the tool and when to open files directly; one call at the start; read the listed ranges, not whole files | First rewrite, from the cases where the tool cost more |
 
 ## Use

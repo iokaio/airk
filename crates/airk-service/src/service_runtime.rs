@@ -1233,6 +1233,7 @@ fn canonical_control(
                         index_names: index_ids,
                         set_names: index_set_ids,
                         workspace,
+                        configured_scope: None,
                         tool,
                         arguments,
                         mode: response_mode,

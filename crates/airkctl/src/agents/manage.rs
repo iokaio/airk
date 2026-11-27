@@ -78,12 +78,13 @@ fn manual_entry(
     file: &Path,
     server_key: &str,
     url: &str,
+    configured_scope: Option<&str>,
 ) -> Result<airk_core::agent_manual::AgentManualEntry, ErrorLine> {
     let file = file
         .to_str()
         .ok_or_else(|| refused("manual configuration target is not UTF-8"))?
         .to_owned();
-    airk_core::agent_manual::entry(
+    airk_core::agent_manual::entry_scoped(
         manual_client(client),
         match scope {
             Scope::Project => airk_core::agent_manual::ManualScope::Project,
@@ -92,6 +93,7 @@ fn manual_entry(
         file,
         server_key,
         url.parse().map_err(refused)?,
+        configured_scope,
     )
     .map_err(refused)
 }
@@ -112,7 +114,7 @@ pub fn manual(
     let url = endpoint["url"]
         .as_str()
         .ok_or_else(|| refused("the AIRK service's HTTP endpoint names no URL"))?;
-    serde_json::to_value(manual_entry(client, scope, &file, server_key, url)?).map_err(refused)
+    serde_json::to_value(manual_entry(client, scope, &file, server_key, url, None)?).map_err(refused)
 }
 
 /// The client `connect` writes for.
@@ -213,12 +215,15 @@ fn target_file(agent: Agent, scope: Scope, project: &Path) -> Result<PathBuf, Er
 }
 
 /// `agents connect` (U110): write the entry naming the live endpoint URL
-/// with only the `X-AIRK-Response-Mode` header. Nothing is enrolled.
+/// with the `X-AIRK-Response-Mode` header and, with `--scope`, the
+/// `X-AIRK-Scope` header naming the index set or index the agent reads
+/// (user decision, 27 November 2026). Nothing is enrolled.
 pub fn connect(
     inputs: &Inputs<'_>,
     client: super::Client,
     scope: Scope,
     server_key: &str,
+    configured_scope: Option<&str>,
 ) -> Result<Value, ErrorLine> {
     let agent = agent(client);
     let project = inputs
@@ -235,7 +240,7 @@ pub fn connect(
         .as_ref()
         .ok()
         .and_then(|endpoint| endpoint["url"].as_str())
-        .and_then(|url| manual_entry(client, scope, &file, server_key, url).ok());
+        .and_then(|url| manual_entry(client, scope, &file, server_key, url, configured_scope).ok());
     admission.map_err(|error| edit_failed_at(error, &file, manual.as_ref()))?;
     let endpoint = endpoint?;
     let url = endpoint["url"]
@@ -247,7 +252,7 @@ pub fn connect(
         &file,
         (scope == Scope::Project).then_some(project.as_path()),
         true,
-        |source| config::connect(agent, scope, source, server_key, &url),
+        |source| config::connect_scoped(agent, scope, source, server_key, &url, configured_scope),
     )
     .map_err(|error| edit_failed_at(error, &file, manual.as_ref()))?;
     Ok(json!({
@@ -257,6 +262,7 @@ pub fn connect(
         "file": file,
         "serverKey": server_key,
         "url": url,
+        "configuredScope": configured_scope,
         "changed": changed,
         "manual": manual,
     }))

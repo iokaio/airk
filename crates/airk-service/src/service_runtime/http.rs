@@ -42,6 +42,7 @@ fn open_hooks(state: Weak<State>) -> airk_https::http_backend::OpenHooks {
                         index_names: read.index_names,
                         set_names: read.set_names,
                         workspace: read.workspace,
+                        configured_scope: read.configured_scope,
                         tool: read.tool,
                         arguments: read.arguments,
                         mode: airk_core::service::ToolResponseMode::Terse,

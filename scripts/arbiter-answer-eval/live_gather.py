@@ -302,8 +302,7 @@ def gather(repository: Repository, arguments: dict) -> dict:
              "needs": [{"need": 1, "text": "everything this task needs", "origin": "caller", "status": "covered",
                         "where": [{"at": item["at"], "why": item["why"]} for item in ranges]}],
              "passages": passages, "outline": outline,
-             "next": {"paths": ranked[TOP_FILES:TOP_FILES + 12] + guidance[:4],
-                      "ask": "Ask again with narrower needs or exact names for what is still open."}}
+             "next": {"paths": ranked[TOP_FILES:TOP_FILES + 12] + guidance[:4]}}
     while len(json.dumps(brief, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > MAX_BRIEF_BYTES:
         if brief["passages"]:
             brief["passages"].pop()
@@ -368,7 +367,7 @@ def focus(repository: Repository, brief: dict) -> dict:
             "searched": brief["searched"], "census": census,
             "needs": [{**brief["needs"][0], "where": kept}], "passages": passages,
             **({"omitted": rest[:8]} if rest else {}),
-            "next": {"ask": brief["next"]["ask"]}, "elapsed_ms": brief.get("elapsed_ms")}
+            "elapsed_ms": brief.get("elapsed_ms")}
 
 
 def census_spans(brief: dict) -> list[str]:

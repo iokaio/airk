@@ -65,34 +65,12 @@ async fn actual_remote_bridge_selection_help_preserves_full_native_refusal_and_t
     let reply = client
         .call_tool(CallToolRequestParams::new("airk_help"))
         .await?;
-    assert_eq!(
-        selected.calls.load(Ordering::SeqCst),
-        1,
-        "selected help must bypass static bridge help"
-    );
+    // MCP offers no help tool (27 November 2026): the bridge refuses it
+    // before any native call. The CLI keeps help.
+    assert_eq!(selected.calls.load(Ordering::SeqCst), 0);
     assert_eq!(reply.is_error, Some(true));
     let body = reply.structured_content.unwrap();
-    assert_eq!(
-        body["error"]["native_control_response"],
-        json!({"failure":{"code":"grant_revoked","retry":{"complete":true}}})
-    );
-    assert_eq!(body["error"]["query_submitted"], false);
-    assert_eq!(body["requested_scope"]["confirmed"], false);
-    assert_eq!(
-        body["requested_scope"]["selection"]["scope_identity"],
-        "5c".repeat(32)
-    );
-    assert!(
-        body["requested_scope"]["selection"]
-            .get("window_scope_selection")
-            .is_some()
-    );
-    assert!(
-        body["requested_scope"]["selection"]
-            .get("grant_id")
-            .is_none()
-    );
-    assert!(body.get("scope_observation").is_none() && body.get("publication").is_none());
+    assert_eq!(body["error"]["code"], "UNKNOWN_TOOL");
     selected.failed.store(true, Ordering::SeqCst);
     let reply = call_observed(selected.as_ref(), "airk_status".into(), Default::default()).await?;
     assert_eq!(reply["isError"], true);

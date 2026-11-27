@@ -1,5 +1,12 @@
 # Open agent access: specification for U105/U106
 
+> **Superseded again on 27 November 2026.** Agents no longer name a scope: a
+> read uses the connection's configured scope (`X-AIRK-Scope`, written by
+> `airkctl agents connect --scope`), else the workspace default of the client's
+> open folder, and MCP offers no `list_scopes` and no scope arguments. The CLI
+> keeps per-call `--index`, `--set` and `--workspace`. See
+> [agent integration](../agent-integration.md).
+>
 > **Superseded in part by U110 (user decision, 15 November 2026).** `/mcp` now
 > takes no token: the gateway strips and ignores any `Authorization` header
 > (Host, `Origin` and admin-cookie refusals remain), and every MCP session is

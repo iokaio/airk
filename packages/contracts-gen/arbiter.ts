@@ -27,13 +27,15 @@ export type Advice = {
  */
 export type AnswerCallV3 = {
     /**
-     * Up to 16 exact strings from the task (identifiers, routes, quoted
-     * text, numbers with units), at most 200 bytes each.
+     * Up to 16 exact strings to look for (identifiers, routes, quoted text,
+     * numbers with units), each at most 200 UTF-8 bytes. Take them from the
+     * task or from evidence an earlier reply returned.
      */
     anchors?: Array<string>;
     /**
-     * Optional with task: omitted uses the service default, a valid budget
-     * is used as sent. Required with question.
+     * The loop's limits (calls, deadline_ms, max_bytes and the rest). Omit
+     * with task for the service default; a valid budget is used as sent.
+     * Required with question.
      */
     budget?: BudgetV3;
     /**
@@ -41,18 +43,20 @@ export type AnswerCallV3 = {
      */
     continuation?: Sha256Digest | null;
     /**
-     * What you will produce. It selects standing needs the reply also
-     * covers: project rules, how tests run, the build file.
+     * What you will produce. code_change also gathers the project rules, how
+     * tests run, the build file and where errors reach the user; test, the
+     * first three.
      */
     deliverable?: Deliverable | null;
     /**
-     * Up to 32 path ranges you already read. Checked; does not change
-     * gathering yet.
+     * Up to 32 path ranges you already hold. They are validated only; they
+     * do not yet change what is gathered or returned.
      */
     known?: Array<KnownRange>;
     /**
-     * Up to 8 statements of what you must learn, one each, at most 400
-     * bytes. Stating needs improves the result.
+     * Up to 8 statements of what you must learn, one per need, each at most
+     * 400 UTF-8 bytes. Stated needs also gather the project rules, how tests
+     * run and the build file.
      */
     needs?: Array<string>;
     /**

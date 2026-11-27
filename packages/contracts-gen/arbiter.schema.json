@@ -64,7 +64,7 @@
       "description": "The public Answer call (CONTRACT \"Public Answer call\", user decision of\n25 November 2026): `task` alone, or the existing full request with\n`schema`, `question` and `budget`. Every reader converts it with\n[`AnswerCallV3::into_request`], so both forms give one canonical request.\nThe field comments are the advertised argument descriptions.",
       "properties": {
         "anchors": {
-          "description": "Up to 16 exact strings from the task (identifiers, routes, quoted\ntext, numbers with units), at most 200 bytes each.",
+          "description": "Up to 16 exact strings to look for (identifiers, routes, quoted text,\nnumbers with units), each at most 200 UTF-8 bytes. Take them from the\ntask or from evidence an earlier reply returned.",
           "items": {
             "type": "string"
           },
@@ -72,7 +72,7 @@
         },
         "budget": {
           "$ref": "#/$defs/BudgetV3",
-          "description": "Optional with task: omitted uses the service default, a valid budget\nis used as sent. Required with question."
+          "description": "The loop's limits (calls, deadline_ms, max_bytes and the rest). Omit\nwith task for the service default; a valid budget is used as sent.\nRequired with question."
         },
         "continuation": {
           "anyOf": [
@@ -94,17 +94,17 @@
               "type": "null"
             }
           ],
-          "description": "What you will produce. It selects standing needs the reply also\ncovers: project rules, how tests run, the build file."
+          "description": "What you will produce. code_change also gathers the project rules, how\ntests run, the build file and where errors reach the user; test, the\nfirst three."
         },
         "known": {
-          "description": "Up to 32 path ranges you already read. Checked; does not change\ngathering yet.",
+          "description": "Up to 32 path ranges you already hold. They are validated only; they\ndo not yet change what is gathered or returned.",
           "items": {
             "$ref": "#/$defs/KnownRange"
           },
           "type": "array"
         },
         "needs": {
-          "description": "Up to 8 statements of what you must learn, one each, at most 400\nbytes. Stating needs improves the result.",
+          "description": "Up to 8 statements of what you must learn, one per need, each at most\n400 UTF-8 bytes. Stated needs also gather the project rules, how tests\nrun and the build file.",
           "items": {
             "type": "string"
           },

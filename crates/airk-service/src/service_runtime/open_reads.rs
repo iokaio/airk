@@ -40,6 +40,10 @@ pub(super) struct OpenCall {
     /// U110: the caller's workspace folder, whose stored default applies
     /// when no index or set is named.
     pub(super) workspace: Option<String>,
+    /// The agent connection's configured scope (its `X-AIRK-Scope` header):
+    /// one index set or index, by id or name. It applies when the call
+    /// names nothing, before any workspace default.
+    pub(super) configured_scope: Option<String>,
     pub(super) tool: String,
     pub(super) arguments: Map<String, Value>,
     pub(super) mode: ToolResponseMode,
@@ -211,8 +215,19 @@ async fn response_inner(
     // U110: the local caller names its scope, or names a workspace whose
     // stored default applies; nothing else is ambient.
     let stored_default;
+    let configured: [String; 1];
     let mut scope = json!({"source": "named"});
-    let requested = if !named {
+    let requested = if !named && let Some(name) = call.configured_scope.as_deref() {
+        // The connection's configured scope: an index set by that id or
+        // name, else an index (an `idx_` id names an index).
+        configured = [name.to_owned()];
+        scope = json!({"source": "configured", "name": name});
+        if name.starts_with("idx_") || agent_scope::names_index_only(&listing, name) {
+            agent_scope::Requested::Named { indexes: &configured, sets: &[] }
+        } else {
+            agent_scope::Requested::Named { indexes: &[], sets: &configured }
+        }
+    } else if !named {
         let Some(workspace) = call.workspace.as_deref() else {
             return scope_required(None);
         };
@@ -431,11 +446,13 @@ fn complete_help_envelope(result: &mut Value) {
 
 /// U110: the refusal of a read that named no scope it could use.
 fn scope_required(workspace: Option<&str>) -> ControlResponse {
+    // Neither the agent nor its model chooses a scope: the user configures
+    // one (user decision, 27 November 2026).
     let message = match workspace {
         Some(workspace) => format!(
-            "No default scope is stored for workspace {workspace:?} or any folder containing it. Name the indexes or index sets to read (index_ids, index_set_ids), or apply a search scope in the AIRK Explorer for that folder. Call list_scopes to see indexes, index sets and workspace defaults."
+            "This agent connection has no configured scope, and no default scope is stored for {workspace:?} or a folder containing it. Ask the user to run airkctl agents connect --scope <index set or index> for this agent, or to apply a search scope for that folder in the AIRK Explorer. From the CLI, pass --index or --set."
         ),
-        None => "Name the indexes or index sets to read (index_ids, index_set_ids), or pass workspace (your working folder) to use the default scope applied for it in the AIRK Explorer. Call list_scopes to see indexes, index sets and workspace defaults.".to_owned(),
+        None => "This agent connection has no configured scope. Ask the user to run airkctl agents connect --scope <index set or index> for this agent, or to apply a search scope for its folder in the AIRK Explorer. From the CLI, pass --index or --set.".to_owned(),
     };
     ControlResponse::ToolResult {
         result: airk_mcp::unified::failure(

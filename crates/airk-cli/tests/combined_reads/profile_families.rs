@@ -87,9 +87,6 @@ fn single_index_body(reply: &Value, index: IndexId, label: &str) -> Result<Value
     Ok(value)
 }
 
-fn single_index_mcp_body(wire: &Value, index: IndexId, label: &str) -> Result<Value> {
-    single_index_body(rpc_result(wire, label)?, index, label)
-}
 
 /// The complete family report of one file result, with its bounded rows,
 /// file identity and saved-source basis.
@@ -157,34 +154,15 @@ async fn opted_file_family_report_keeps_full_native_cli_console_mcp_and_input_ca
             let mut mcp = McpSession::start(&f)?;
             let catalog = mcp.request(2, "tools/list", json!({}))?;
             let catalog = rpc_result(&catalog, "MCP tool catalog")?;
-            let public = catalog["tools"]
-                .as_array()
-                .context("MCP tool catalog absent")?
-                .iter()
-                .find(|tool| tool["name"] == "file_info")
-                .context("MCP FileInfo absent")?;
-            // U110: the tokenless MCP session lists the local agent catalog,
-            // whose reads take a per-call scope; it is the canonical owner's
-            // complete FileInfo definition.
-            let canonical = serde_json::to_value(
-                airk_mcp::open::local_catalog()
-                    .into_iter()
-                    .find(|tool| tool.name == "file_info")
-                    .context("canonical local FileInfo absent")?,
-            )?;
-            assert_eq!(
-                public, &canonical,
-                "actual MCP must retain the complete local-session FileInfo definition"
-            );
-            // The CLI lists the service's tool catalog (the window route
-            // reads through the same service catalog owner).
-            assert_eq!(
-                public["inputSchema"]["properties"]["include_profile_families"],
-                expected_schema
-            );
-            assert_eq!(
-                cli_info["inputSchema"]["properties"]["include_profile_families"],
-                expected_schema
+            // FileInfo is a CLI operation only (27 November 2026): MCP does
+            // not list it, and refuses it below.
+            assert!(
+                !catalog["tools"]
+                    .as_array()
+                    .context("MCP tool catalog absent")?
+                    .iter()
+                    .any(|tool| tool["name"] == "file_info"),
+                "MCP must not list file_info"
             );
             let mut arguments = json!({"path":"api/policy.md","include_profile_families":true,"project_ids":[f.projects[0]],"index_ids":[f.indexes[0]],"member_availability":"require","verification":"off","response_mode":mode});
             if let Some(detail) = detail {
@@ -193,18 +171,16 @@ async fn opted_file_family_report_keeps_full_native_cli_console_mcp_and_input_ca
             let native = native_read(backend.as_ref(), "airk_file_info", &arguments).await?;
             let cli = f.cli("airk_file_info", &arguments).await?;
             let open = open_arguments(&arguments)?;
-            let wire = mcp.call(3, "file_info", open.clone())?;
+            let _refused = mcp.call(3, "file_info", open.clone())?;
             let native = positive_body(&native, f.indexes[0], "opted native")?;
             let cli = positive_body(&cli, f.indexes[0], "opted CLI")?;
-            let wire = single_index_mcp_body(&wire, f.indexes[0], "opted MCP")?;
             let piped = single_index_body(
                 &open_pipe(&f, "file_info", &open).await?,
                 f.indexes[0],
                 "opted open pipe",
             )?;
             assert_parity("complete opted file-info CLI result", &native, &cli)?;
-            assert_parity("complete opted file-info MCP alias result", &piped, &wire)?;
-            assert_family_report(&wire, "opted MCP")?;
+            assert_family_report(&piped, "opted open pipe")?;
             let member = native["members"]
                 .as_array()
                 .and_then(|members| members.first())
@@ -298,8 +274,10 @@ async fn opted_file_family_report_keeps_full_native_cli_console_mcp_and_input_ca
         "CLI conditional",
     )?;
     let mut open = open_arguments(&conditional)?;
-    let wire = conditional_mcp.call(3, "file_info", open.clone())?;
-    let wire = single_index_mcp_body(&wire, f.indexes[0], "conditional MCP")?;
+    let _refused = conditional_mcp.call(3, "file_info", open.clone())?;
+    // FileInfo is CLI-only (27 November 2026): the open pipe is the
+    // service path MCP used to reach.
+    let wire = single_index_body(&open_pipe(&f, "file_info", &open).await?, f.indexes[0], "conditional MCP")?;
     assert_parity("opt-in conditional CLI representation", &native, &cli)?;
     assert_parity(
         "opt-in conditional MCP representation",
@@ -339,8 +317,10 @@ async fn opted_file_family_report_keeps_full_native_cli_console_mcp_and_input_ca
         f.indexes[0],
         "CLI conditional",
     )?;
-    let wire = conditional_mcp.call(4, "file_info", open.clone())?;
-    let wire = single_index_mcp_body(&wire, f.indexes[0], "conditional MCP")?;
+    let _refused = conditional_mcp.call(4, "file_info", open.clone())?;
+    // FileInfo is CLI-only (27 November 2026): the open pipe is the
+    // service path MCP used to reach.
+    let wire = single_index_body(&open_pipe(&f, "file_info", &open).await?, f.indexes[0], "conditional MCP")?;
     assert_parity("unchanged conditional CLI representation", &native, &cli)?;
     assert_parity(
         "unchanged conditional MCP representation",
@@ -382,8 +362,10 @@ async fn opted_file_family_report_keeps_full_native_cli_console_mcp_and_input_ca
         "CLI full_args",
     )?;
     let open = open_arguments(&full_args)?;
-    let wire = mcp.call(3, "file_info", open.clone())?;
-    let wire = single_index_mcp_body(&wire, f.indexes[2], "known policy MCP")?;
+    let _refused = mcp.call(3, "file_info", open.clone())?;
+    // FileInfo is CLI-only (27 November 2026): the open pipe is the
+    // service path MCP used to reach.
+    let wire = single_index_body(&open_pipe(&f, "file_info", &open).await?, f.indexes[2], "known policy MCP")?;
     assert_parity("known collection policy CLI FileInfo", &native, &cli)?;
     assert_parity(
         "known collection policy MCP FileInfo",

@@ -22,6 +22,9 @@ pub struct OpenRead {
     /// U110: the caller's workspace folder (explicit, or filled from the
     /// client's MCP roots), removed from the arguments.
     pub workspace: Option<String>,
+    /// The connection's configured scope, from its `X-AIRK-Scope` header: an
+    /// index set or index, by id or name.
+    pub configured_scope: Option<String>,
     pub tool: String,
     pub arguments: Map<String, Value>,
     pub client: ClientFamily,
@@ -137,6 +140,16 @@ impl RemoteTools for OpenBackend {
                     ));
                 }
             };
+            let configured_scope = match arguments.remove(airk_mcp::open::CONFIGURED_SCOPE) {
+                None => None,
+                Some(Value::String(name)) => Some(name),
+                Some(_) => {
+                    return Ok(airk_mcp::unified::failure(
+                        "INVALID_SCHEMA",
+                        "The configured scope is one index set or index name.",
+                    ));
+                }
+            };
             let client = *self
                 .client
                 .lock()
@@ -147,6 +160,7 @@ impl RemoteTools for OpenBackend {
                 index_names,
                 set_names,
                 workspace,
+                configured_scope,
                 tool,
                 arguments,
                 client,

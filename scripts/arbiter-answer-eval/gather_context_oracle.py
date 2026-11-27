@@ -78,7 +78,7 @@ def brief(task: dict, snapshot: pathlib.Path, arguments: dict, layout: str = "pa
             absent.append("nothing found for " + ", ".join(f'"{pattern}"' for pattern in scope.get("patterns") or [])
                           + "; searched: " + ", ".join(scope.get("paths") or []))
     out = {"schema": gather_context_dose.BRIEF_SCHEMA, "task": str(arguments.get("task") or task.get("instruction") or "")[:512],
-           "result": "complete", "stop": "covered", "full": "response_mode=full returns the complete reply.",
+           "result": "complete", "stop": "covered",
            "needs": [{"need": 1, "text": "everything this task needs", "origin": "caller", "status": "covered", "where": where}],
            "passages": passages}
     if trust:
@@ -87,5 +87,5 @@ def brief(task: dict, snapshot: pathlib.Path, arguments: dict, layout: str = "pa
         out["not_found"] = absent
     if omitted:
         out["omitted"] = omitted[:gather_context_dose.OMITTED_LIMIT]
-    out["next"] = {"ask": "Ask again with narrower needs for what is still open, the same anchors, and known ranges for what you already hold."}
+    # The build's brief carries no editorial note or advice (27 November 2026).
     return out

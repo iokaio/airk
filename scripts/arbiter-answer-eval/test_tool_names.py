@@ -18,7 +18,7 @@ class ToolNames(unittest.TestCase):
             ("airk_answer", "answer", "gather_context"),
             ("airk_search", "search", "search_passages"),
             ("airk_symbols", "symbols", "find_definition"),
-            ("airk_references", "references", "find_references"),
+            ("airk_references", "references", "find_identifier_occurrences"),
             ("airk_read_file", "read_file", "read_indexed_range"),
             ("airk_context", "context", "read_around"),
             ("airk_outline", "outline", "outline_file"),
@@ -34,6 +34,12 @@ class ToolNames(unittest.TestCase):
             self.assertEqual(tool_names.operation(current), legacy)
         with self.assertRaises(ValueError):
             tool_names.public("airk_search", names="old")
+
+    def test_mcp_offers_the_seven_core_retrieval_tools(self) -> None:
+        # Literal list from the user's decisions of 27 November 2026, not read from the table.
+        self.assertEqual(tool_names.mcp_tools(), (
+            "gather_context", "search_passages", "find_definition", "find_identifier_occurrences",
+            "read_indexed_range", "outline_file", "list_indexed_files"))
 
     def test_a_catalog_from_either_image_is_keyed_by_native_names(self) -> None:
         wanted = {name for names in common.PATH_TOOLS.values() for name in names}

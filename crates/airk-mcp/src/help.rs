@@ -461,7 +461,7 @@ mod tests {
             value["content"]
                 .as_str()
                 .unwrap()
-                .contains("Quick AIRK version, basic health and project-index check")
+                .contains("Returns the index publication, source-update state, semantic readiness")
         );
         for value in [
             json!({"topic":"made-up"}),

@@ -57,7 +57,8 @@ rk agents connect --client claude|codex|vscode [--user] [--project <folder>]
 ```
 
 Connect writes only AIRK's entry in the agent's configuration file: the
-endpoint URL and the header `X-AIRK-Response-Mode: terse`. It writes no
+endpoint URL, the header `X-AIRK-Response-Mode: terse` and, with `--scope`,
+the `X-AIRK-Scope` header. It writes no
 `Authorization`, no `headersHelper`/`http_headers_helper` and creates no
 connection; entries are recognized by URL. Other servers, comments, disabled
 states and policies are kept. `--connection-id` and `--selection-file` are
@@ -71,29 +72,32 @@ An old helper entry that still runs `agents credential` fails until `agents
 repair` (or the extension's Reconnect) rewrites it; an old VS Code token input
 gets a fixed placeholder, which the endpoint ignores.
 
-**Scope is a tool parameter.** Every read tool takes `index_ids` and
-`index_set_ids` (ids or names, union, at most 32 each) and `workspace` (an
-absolute folder path). Resolution:
+**Scope is configured, not chosen (27 November 2026).** An agent never lists
+or selects indexes: that would spend a model round trip on something the user
+already knows. `rk agents connect --scope <name>` writes the index set or
+index the agent reads, by id or name, into its configuration entry as the
+`X-AIRK-Scope` header, beside `X-AIRK-Response-Mode`. Connecting again with
+another `--scope` replaces it. The tools an agent sees take no scope argument.
+Each read resolves, in order:
 
-1. named selectors, if any;
+1. the connection's configured scope (`X-AIRK-Scope`): an index set by that
+   id or name, else an index;
 2. otherwise the workspace default of the most specific stored folder
-   containing `workspace` (on Windows, case-insensitive with `/` and `\`
-   equal);
-3. otherwise the call is refused `scope_required`; the message tells the agent
-   to call `list_scopes` or pass `workspace`.
+   containing the client's open folder (from MCP roots; on Windows,
+   case-insensitive with `/` and `\` equal);
+3. otherwise the call is refused `scope_required`, and the message tells the
+   user how to configure a scope. The agent is not asked to choose.
 
-Results carry `structuredContent.read_scope` = `{source: "named" |
-"workspace_default", workspace_folder?, index_ids}`. Names resolve by id
+Results carry `structuredContent.read_scope` = `{source: "configured" |
+"workspace_default", name?, workspace_folder?, index_ids}`. Names resolve by id
 (`idx_…`, `prj_…`), then exact name, then a unique case-insensitive name;
 ambiguous or unknown names refuse `scope_name_ambiguous` or
 `scope_name_unknown`.
 
-`list_scopes` (formerly `list_indexes`) lists every index and index set with its
-id, name, description and indexed folders (a set lists its member indexes). Its
-first page adds `workspace_defaults` (every stored default); with the optional
-`workspace` argument it also adds `workspace_default`, the matching default or
-null.
-
+The CLI keeps per-call scope: `rk tools call --index <id|name>…`, `--set
+<id|name>…` and `--workspace <folder>`, and `list_scopes` (formerly
+`list_indexes`) lists every index and index set with its id, name,
+description and indexed folders, with `workspace_defaults` on its first page.
 **Workspace defaults.** The Explorer's applied search scope is stored as the
 default of every folder of its VS Code window. AIRK Service persists them
 (`agent-workspace-defaults.json` in its private HTTP directory, at most 256
@@ -110,21 +114,21 @@ With no `--index`/`--set`, `scope default` clears the folders' default. Both
 print `{"schema":1,"entries":[{folder,index_ids,index_set_ids,applied_unix_ms}]}`.
 `rk tools call --workspace <folder>` follows the same resolution as MCP.
 
-**MCP roots.** When a read names no selectors and no `workspace`, and the client
+**MCP roots.** When the connection has no configured scope and the client
 declared the MCP `roots` capability, the service asks the client (`roots/list`,
 once per session after initialization, refreshed on
 `notifications/roots/list_changed`, waiting at most 2 s) and uses the first
 `file:` root as `workspace`. Without roots the call is unchanged. Roots are
-deprecated by SEP-2577 in newer MCP protocol versions; passing `workspace`
-explicitly remains the primary path.
+deprecated by SEP-2577 in newer MCP protocol versions, so a configured scope is
+the primary path.
 
 Results of a read over several indexes stay grouped by index (`members[]`), and
 each member reports `index_name` and `elapsed_ms`. `limit_per_index` (1–100)
 gives every index exactly that many results; `limit` is then the overall cap
 (default indexes × `limit_per_index`), and a product above the cap or above 100
 is refused `combined_limit_per_index_too_large`. Member reads run concurrently
-up to the machine's query concurrency. Workspace defaults are a convenience,
-not a boundary: any agent can name any index.
+up to the machine's query concurrency. Scopes are a convenience, not a
+boundary: the CLI can name any index.
 
 A named index is read whole (every enabled source root); an index set is read as
 its member indexes, each whole. Index and index-set descriptions are edited in

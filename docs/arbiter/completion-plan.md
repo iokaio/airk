@@ -219,9 +219,13 @@ Dated entries record the user's choices. The remaining proposals are open.
     `task` as the only required argument. The service supplies the schema
     and default budget and honors an explicit valid budget. Accept the
     existing full `question` request throughout the 1.9 release line.
-11. **Default MCP tool profile and leaner default schemas:** decided on the
-    free-choice comparison, after the Windows review. The CLI stays full
-    featured either way.
+11. **Default MCP tool profile and leaner default schemas (decided 27
+    November 2026, replacing the deferral to the free-choice comparison).**
+    MCP offers only seven core retrieval tools, with no scope arguments: a
+    connection's scope is configured (`agents connect --scope`). The CLI
+    stays full featured. `find_references` is renamed
+    `find_identifier_occurrences`.
+    [What MCP offers](../unified-mcp.md#what-mcp-offers-user-decision-27-november-2026)
 12. **Public tool names (decided 26 November 2026).** Adopt the nine
     proposed names now, without first testing them in the free-choice arm.
     The rename is clean at 1.9: an old public name is not callable.

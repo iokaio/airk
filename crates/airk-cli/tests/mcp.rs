@@ -14,6 +14,8 @@ use std::{
 struct Session {
     transport: Mutex<common::http::HttpMcpSession>,
     _service: Arc<common::Service>,
+    /// The session's response mode, so a CLI fallback reads alike.
+    mode: Option<String>,
 }
 fn cli_call(
     root: &std::path::Path,
@@ -164,40 +166,17 @@ fn assert_query_scope_metadata_tool(tools: &[Value], name: &str, transport_proje
     }
 }
 
-/// U110: the tokenless local agent session's `tools/list`: the public
-/// catalog without `projects`, plus `list_scopes`. Independently listed.
+/// The tokenless local agent session's `tools/list` (user decisions of 27
+/// November 2026): only the seven core retrieval tools. Independently listed.
 fn assert_local_mcp_catalog_names(tools: &[Value]) {
     let expected = [
-        "capabilities",
-        "changes",
-        "code_facts",
-        "diagnostics",
-        "document_facts",
-        "draft_plan",
-        "draft_search",
-        "draft_strategy",
-        "file_info",
         "find_definition",
-        "find_references",
+        "find_identifier_occurrences",
         "gather_context",
-        "get_handoff",
-        "get_template",
-        "help",
-        "imports",
-        "index_status",
         "list_indexed_files",
-        "list_scopes",
-        "list_templates",
         "outline_file",
-        "parse",
-        "proposal_status",
-        "query_scope",
-        "read_around",
         "read_indexed_range",
-        "relationships",
         "search_passages",
-        "suggest_view",
-        "validate_draft",
     ];
     let mut actual = tools
         .iter()
@@ -205,42 +184,6 @@ fn assert_local_mcp_catalog_names(tools: &[Value]) {
         .collect::<Vec<_>>();
     actual.sort_unstable();
     assert_eq!(actual, expected, "complete local agent session catalog");
-}
-/// U110: the local session's `query_scope` is the canonical query-scope
-/// schema plus exactly the per-call scope (`index_ids`, `index_set_ids`,
-/// `workspace`) and the open read's `limit_per_index`; no project binding.
-fn assert_local_query_scope_tool(tools: &[Value]) {
-    let tool = tools
-        .iter()
-        .find(|tool| tool["name"] == "query_scope")
-        .expect("query scope metadata tool");
-    let canonical = airk_mcp::open::local_catalog()
-        .into_iter()
-        .find(|tool| tool.name == "query_scope")
-        .expect("local query scope metadata tool");
-    assert_eq!(
-        tool["inputSchema"],
-        serde_json::to_value(canonical).unwrap()["inputSchema"]
-    );
-    assert_eq!(tool["annotations"]["readOnlyHint"], true);
-    assert_eq!(tool["inputSchema"]["additionalProperties"], false);
-    let mut schema = tool["inputSchema"].clone();
-    let properties = schema["properties"].as_object_mut().unwrap();
-    for added in ["index_ids", "index_set_ids", "workspace", "limit_per_index"] {
-        assert!(
-            properties.remove(added).is_some(),
-            "local query_scope lacks {added}"
-        );
-    }
-    let mut expected_schema = airk_core::combined_reads::query_scope::schema();
-    expected_schema["$schema"] = json!("https://json-schema.org/draft/2020-12/schema");
-    assert_eq!(schema, expected_schema);
-    for field in ["project", "project_ids", "verification", "response_mode"] {
-        assert!(
-            tool["inputSchema"]["properties"].get(field).is_none(),
-            "discovery must not advertise {field}"
-        );
-    }
 }
 
 impl Session {
@@ -263,6 +206,7 @@ impl Session {
         Ok(Self {
             transport: Mutex::new(transport),
             _service: service,
+            mode: mode.map(str::to_owned),
         })
     }
     fn send(&mut self, value: Value) -> anyhow::Result<()> {
@@ -296,13 +240,50 @@ impl Session {
         arguments: Value,
         deadline: std::time::Instant,
     ) -> anyhow::Result<Value> {
+        let native = if name.starts_with("airk_") {
+            name.to_owned()
+        } else {
+            airk_core::tool_names::native_name_of_public(name)
+                .ok_or_else(|| anyhow::anyhow!("no native operation for {name}"))?
+        };
         let name = airk_core::tool_names::public_name_of_native(name).unwrap_or(name);
-        self.transport.get_mut().unwrap().request_until(
+        let reply = self.transport.get_mut().unwrap().request_until(
             i64::try_from(id)?,
             "tools/call",
             json!({"name":name,"arguments":arguments}),
             deadline,
-        )
+        )?;
+        if airk_core::tool_names::on_mcp(name) {
+            return Ok(reply);
+        }
+        // MCP offers only the core retrieval tools (27 November 2026). It
+        // refuses this operation, which the CLI keeps: the same open read
+        // through `tools call` stands in for the MCP reply.
+        anyhow::ensure!(
+            reply["result"]["structuredContent"]["error"]["code"] == "UNKNOWN_TOOL",
+            "MCP must refuse {name}: {reply}"
+        );
+        let mut command = common::ctl::Ctl::new();
+        command
+            .arg("--service-runtime-dir")
+            .arg(&self._service.control)
+            .args(["tools", "call", &native])
+            .args(self._service.open_scope().cli_arguments())
+            .args(["--args".to_owned(), arguments.to_string()])
+            .env(
+                "AIRK_MCP_RESPONSE_MODE",
+                self.mode.as_deref().unwrap_or("terse"),
+            )
+            .env("AIRK_USAGE_MODE", "disabled");
+        let output = common::read_retry::output(&mut command)?;
+        anyhow::ensure!(
+            output.status.success() || output.status.code() == Some(1),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stderr),
+            String::from_utf8_lossy(&output.stdout)
+        );
+        let envelope: Value = serde_json::from_slice(&output.stdout)?;
+        Ok(json!({"jsonrpc":"2.0","id":id,"result":envelope}))
     }
     fn published_status(&mut self, id: u64, project: &str) -> anyhow::Result<Value> {
         let deadline = std::time::Instant::now() + Duration::from_secs(60);
@@ -787,9 +768,10 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
     assert_eq!(cli["plan"], mcp["plan"]);
     assert_eq!(cli["evidence"], mcp["evidence"]);
     assert!(!cli["evidence"].as_array().unwrap().is_empty());
-    session.send(json!({"jsonrpc":"2.0","id":18,"method":"tools/list","params":{}}))?;
-    let catalog = session.receive(18)?;
-    let parse = catalog["result"]["tools"]
+    // Parse is a CLI operation only (27 November 2026): read its schema from
+    // the complete catalog the CLI lists.
+    let catalog = serde_json::to_value(airk_mcp::unified::tools())?;
+    let parse = catalog
         .as_array()
         .unwrap()
         .iter()
@@ -1152,11 +1134,12 @@ fn default_terse_https_supports_full_and_requested_status_without_changing_revis
     let instructions = initialized["result"]["instructions"].as_str().unwrap();
     assert!(instructions.len() <= 512 && instructions.contains("response_mode=full"));
     session.send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;
-    // Exercise unified HTTPS help without sending Explorer-only detail into the
-    // native selector; the canonical CLI helper retains the identical refusal.
+    // MCP offers no help tool (27 November 2026): `Session::call` asserts the
+    // MCP refusal under either negotiated protocol and returns the CLI's
+    // answer, which keeps help with its own structured refusal.
     let invalid_help = json!({"topic":"workbench","detail":"full"});
     let refused = session.call(200, "help", invalid_help.clone())?;
-    // U110: the open `tools call` answers help as the local agent session does.
+    assert_eq!(refused["result"]["isError"], true);
     let command = open_command(
         root.path(),
         state.path(),
@@ -1176,45 +1159,17 @@ fn default_terse_https_supports_full_and_requested_status_without_changing_revis
     );
     let canonical: Value = serde_json::from_slice(&output.stdout)?;
     assert_eq!(canonical["isError"], true);
-    let text: Value = serde_json::from_str(canonical["content"][0]["text"].as_str().unwrap())?;
-    assert_eq!(
-        canonical["structuredContent"], text,
-        "actual CLI retains complete structured failure"
-    );
-    // The pinned SDK omits this complete-result discriminator for the
-    // explicitly negotiated 2025 protocol. Assert its exact value before
-    // projecting that one documented transport field; keep every native field.
-    let mut legacy = canonical.clone();
-    assert_eq!(
-        legacy.as_object_mut().unwrap().remove("resultType"),
-        Some(json!("complete"))
-    );
-    assert_eq!(refused["result"], legacy);
-    assert_eq!(refused["result"]["isError"], true);
-    assert!(refused["result"].get("resultType").is_none());
+    assert_eq!(canonical["resultType"], "complete");
     // 2026-07-28 uses per-request metadata rather than initialize. Asking for
-    // it through this legacy handshake negotiates the supported 2025 fallback
-    // and retains the identical complete native receipt under that envelope.
+    // it through this legacy handshake negotiates the supported 2025 fallback.
     let mut fallback = Session::with_mode(root.path(), state.path(), None)?;
     fallback.send(json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2026-07-28","capabilities":{},"clientInfo":{"name":"future-initialize-fallback","version":"1"}}}))?;
     let initialized = fallback.receive(1)?;
     assert_eq!(initialized["result"]["protocolVersion"], "2025-11-25");
     fallback.send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;
     let fallback_refused = fallback.call(2, "help", invalid_help)?;
-    assert_eq!(fallback_refused["result"], legacy);
-    assert!(fallback_refused["result"].get("resultType").is_none());
-    assert_eq!(canonical["resultType"], "complete");
-    drop(fallback);
-    let valid_help = session.call(
-        201,
-        "help",
-        json!({"topic":"workbench","response_mode":"full"}),
-    )?;
-    assert_ne!(
-        valid_help["result"]["isError"], true,
-        "valid native help refused: {valid_help}"
-    );
-    let mut values: Vec<Value> = Vec::new();
+    assert_eq!(fallback_refused["result"]["isError"], true);
+    drop(fallback);    let mut values: Vec<Value> = Vec::new();
     for (id, args) in [
         (2, json!({"query":"response_fixture","mode":"lexical"})),
         (3, json!({"query":"response_fixture","mode":"lexical"})),
@@ -1418,7 +1373,8 @@ fn durable_key_reads_match_cli_and_mcp_and_reject_filter_combinations() -> anyho
     let catalog = session.receive(2)?;
     let tools = catalog["result"]["tools"].as_array().unwrap();
     assert_local_mcp_catalog_names(tools);
-    assert_local_query_scope_tool(tools);
+    // MCP offers no query_scope (27 November 2026); the CLI keeps it.
+    assert!(!tools.iter().any(|tool| tool["name"] == "query_scope"));
     session.wait_source_idle()?;
     for (id, command, option, tool, field, key) in [
         (
@@ -1891,26 +1847,31 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
         serde_json::to_value(airk_mcp::unified::tools())?
     );
     assert_query_scope_metadata_tool(catalog["tools"].as_array().unwrap(), "query_scope", true);
-    // U110: every tokenless HTTPS MCP session is the local agent session,
-    // whose catalog is the public one without `projects` (replaced by
-    // `list_scopes`) and whose reads take the per-call scope.
+    // Every tokenless HTTPS MCP session is the local agent session, which
+    // lists only the core retrieval tools, without scope arguments.
     assert_eq!(
         listed["result"]["tools"],
-        serde_json::to_value(airk_mcp::open::local_catalog())?,
-        "actual MCP must retain the complete local agent session catalog"
+        serde_json::to_value(airk_mcp::open::agent_catalog())?,
+        "actual MCP must list exactly the agent catalog"
     );
     assert_local_mcp_catalog_names(tools);
     let names: std::collections::BTreeSet<_> = tools
         .iter()
         .map(|tool| tool["name"].as_str().unwrap())
         .collect();
-    assert_local_query_scope_tool(tools);
-    for tool in catalog["tools"].as_array().unwrap() {
-        let name = tool["name"].as_str().unwrap();
-        assert!(
-            name == "projects" || names.contains(name),
-            "missing public evidence tool {name}"
-        );
+    // MCP offers no query_scope (27 November 2026); the CLI keeps it.
+    assert!(!tools.iter().any(|tool| tool["name"] == "query_scope"));
+    // MCP lists a subset of the CLI's complete catalog: exactly the tools it
+    // offers (27 November 2026). The CLI keeps every other operation.
+    let cli_names: std::collections::BTreeSet<_> = catalog["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect();
+    for name in &names {
+        assert!(cli_names.contains(name), "MCP tool {name} missing from the CLI catalog");
+        assert!(airk_core::tool_names::on_mcp(name), "MCP lists {name}");
     }
     let drafts = [
         "draft_search",

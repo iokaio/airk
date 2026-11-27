@@ -29,6 +29,17 @@ mod tests;
 #[derive(Clone, Copy)]
 pub(super) struct ReadResponsePreference(pub crate::response::ResponseMode);
 
+/// The header that names an agent connection's scope (user decision, 27
+/// November 2026): an index set or index, by id or name, written into the
+/// agent's MCP configuration by `airkctl agents connect --scope`.
+pub const SCOPE_HEADER: &str = "x-airk-scope";
+/// The longest scope name the header carries, in UTF-8 bytes.
+pub const MAX_SCOPE_BYTES: usize = 256;
+
+/// The configured scope of this request, from [`SCOPE_HEADER`].
+#[derive(Clone)]
+pub(super) struct ConfiguredScope(pub String);
+
 pub type HttpResponse = Response<BoxBody<Bytes, Infallible>>;
 /// Must create a session-local backend bound to the already authenticated exact
 /// credential, grant, namespace, service instance and endpoint generation.
@@ -611,9 +622,32 @@ impl HttpReadService {
             },
             _ => return error(StatusCode::BAD_REQUEST, "invalid_response_mode"),
         };
+        let configured_scope = match request
+            .headers()
+            .get_all(SCOPE_HEADER)
+            .iter()
+            .collect::<Vec<_>>()
+            .as_slice()
+        {
+            [] => None,
+            [value] => match std::str::from_utf8(value.as_bytes()) {
+                Ok(name)
+                    if !name.trim().is_empty()
+                        && name.len() <= MAX_SCOPE_BYTES
+                        && name.trim() == name =>
+                {
+                    Some(ConfiguredScope(name.to_owned()))
+                }
+                _ => return error(StatusCode::BAD_REQUEST, "invalid_scope_header"),
+            },
+            _ => return error(StatusCode::BAD_REQUEST, "invalid_scope_header"),
+        };
         let path = request.uri().path().to_owned();
         if path == "/mcp" {
             request.extensions_mut().insert(context.clone());
+            if let Some(scope) = configured_scope {
+                request.extensions_mut().insert(scope);
+            }
             if let Some(preference) = preference {
                 request
                     .extensions_mut()

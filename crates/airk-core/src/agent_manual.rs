@@ -65,6 +65,26 @@ pub fn entry(
     server_key: &str,
     url: LoopbackMcpUrl,
 ) -> Result<AgentManualEntry> {
+    entry_scoped(client, scope, file, server_key, url, None)
+}
+
+/// [`entry`] with the connection's configured scope as its `X-AIRK-Scope`
+/// header (user decision, 27 November 2026).
+pub fn entry_scoped(
+    client: ManualClient,
+    scope: ManualScope,
+    file: String,
+    server_key: &str,
+    url: LoopbackMcpUrl,
+    configured_scope: Option<&str>,
+) -> Result<AgentManualEntry> {
+    ensure!(
+        configured_scope.is_none_or(|name| !name.is_empty()
+            && name.len() <= 256
+            && name.trim() == name
+            && !name.chars().any(char::is_control)),
+        "invalid configured scope"
+    );
     ensure!(
         !file.is_empty() && file.len() <= 32768 && !file.contains('\0'),
         "invalid manual target file"
@@ -88,10 +108,14 @@ pub fn entry(
             } else {
                 serde_json::to_string(server_key)?
             };
+            let scope_line = match configured_scope {
+                Some(name) => format!("\"X-AIRK-Scope\" = {}\n", serde_json::to_string(name)?),
+                None => String::new(),
+            };
             (
                 ManualFormat::Toml,
                 format!(
-                    "[mcp_servers.{key}]\nurl = {}\ntool_timeout_sec = {}\n\n[mcp_servers.{key}.http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n",
+                    "[mcp_servers.{key}]\nurl = {}\ntool_timeout_sec = {}\n\n[mcp_servers.{key}.http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n{scope_line}",
                     serde_json::to_string(&url)?,
                     crate::read_attempt::MAX_ANSWER_READ_BUDGET.as_secs()
                 ),
@@ -103,7 +127,10 @@ pub fn entry(
             } else {
                 "mcpServers"
             };
-            let value = serde_json::json!({container: {server_key: {"type": "http", "url": url, "headers": {"X-AIRK-Response-Mode": "terse"}}}});
+            let mut value = serde_json::json!({container: {server_key: {"type": "http", "url": url, "headers": {"X-AIRK-Response-Mode": "terse"}}}});
+            if let Some(name) = configured_scope {
+                value[container][server_key]["headers"]["X-AIRK-Scope"] = serde_json::json!(name);
+            }
             (
                 ManualFormat::Json,
                 format!("{}\n", serde_json::to_string_pretty(&value)?),

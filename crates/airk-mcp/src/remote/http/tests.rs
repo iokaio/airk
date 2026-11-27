@@ -24,6 +24,10 @@ impl RemoteTools for Echo {
     fn local_help(&self) -> bool {
         false
     }
+    /// Like the local agent session, a read takes the connection's scope.
+    fn fills_workspace(&self, tool: &str) -> bool {
+        tool == "search_passages"
+    }
     fn call(&self, name: String, args: serde_json::Map<String, Value>) -> RemoteFuture<'_> {
         Box::pin(async move {
             self.calls
@@ -280,8 +284,8 @@ async fn standard_streamable_http_negotiates_lists_calls_and_keeps_credentials_s
     let listed = value(a.service.handle(listed).await).await?;
     assert_eq!(
         listed["result"]["tools"].as_array().unwrap().len(),
-        4,
-        "MCP retains the existing canonical catalog including reviewed draft proposals"
+        1,
+        "MCP lists only its core retrieval tools (27 November 2026)"
     );
     let mut call = request(
         Method::POST,
@@ -914,5 +918,64 @@ async fn an_answer_in_flight_keeps_its_http_session_past_the_idle_timeout() -> a
     ));
     assert_eq!(service.handle(late).await.status(), StatusCode::NOT_FOUND);
     service.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn configured_scope_header_reaches_the_backend_and_overrides_any_sent_value()
+-> anyhow::Result<()> {
+    // User decision, 27 November 2026: an agent's scope is the X-AIRK-Scope
+    // header its configuration carries, never an argument it sends.
+    let f = fixture(ReadSessionFactory::default(), HttpSessionBudget::new(8)?)?;
+    let mut initialize = request(
+        Method::POST,
+        "/mcp",
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"fixture","version":"1"}}}),
+    );
+    initialize.headers_mut().insert("x-airk-scope", "Team Set".parse()?);
+    let response = f.service.handle(initialize).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let session = response
+        .headers()
+        .get("mcp-session-id")
+        .expect("MCP session header")
+        .clone();
+    value(response).await?;
+    let mut ready = request(
+        Method::POST,
+        "/mcp",
+        json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+    );
+    ready.headers_mut().insert("mcp-session-id", session.clone());
+    ready.headers_mut().insert("x-airk-scope", "Team Set".parse()?);
+    assert!(f.service.handle(ready).await.status().is_success());
+    let mut call = request(
+        Method::POST,
+        "/mcp",
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search_passages","arguments":{"query":"q","configured_scope":"spoofed"}}}),
+    );
+    call.headers_mut().insert("mcp-session-id", session.clone());
+    call.headers_mut().insert("x-airk-scope", "Team Set".parse()?);
+    let reply = value(f.service.handle(call).await).await?;
+    assert_ne!(reply["result"]["isError"], true, "{reply}");
+    let calls = f.calls.lock().unwrap().clone();
+    let (_, arguments) = calls.last().expect("backend call");
+    assert_eq!(arguments["configured_scope"], "Team Set");
+    // A malformed header is refused before any read.
+    for bad in [" padded", ""] {
+        let mut call = request(
+            Method::POST,
+            "/mcp",
+            json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"search_passages","arguments":{"query":"q"}}}),
+        );
+        call.headers_mut().insert("mcp-session-id", session.clone());
+        call.headers_mut().insert("x-airk-scope", bad.parse()?);
+        assert_eq!(
+            f.service.handle(call).await.status(),
+            StatusCode::BAD_REQUEST,
+            "{bad:?}"
+        );
+    }
+    f.service.close().await;
     Ok(())
 }

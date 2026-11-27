@@ -54,6 +54,7 @@ pub(super) async fn mcp_matches_open_pipe(
     let tool = airk_core::tool_names::public_name_of_native(tool).unwrap_or(tool);
     let open = open_arguments(arguments)?;
     let wire = mcp.call(id, tool, open.clone())?;
+
     ensure!(
         wire.get("error").is_none() && wire["result"]["isError"] != true,
         "{label}: MCP read failed: {wire}"
