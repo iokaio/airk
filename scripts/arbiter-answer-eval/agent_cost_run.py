@@ -163,6 +163,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--live-layout", default="full", help="live arm: full or focus")
     parser.add_argument("--oracle-layout", default="passages", help="oracle arm: passages or ranges")
     parser.add_argument("--oracle-trust", action="store_true", help="oracle arm: add the line saying what need not be read again")
+    parser.add_argument("--oracle-complete", action="store_true", help="oracle arm: add the completeness line when every need is covered")
     parser.add_argument("--model", required=True)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--handle", type=Path)
@@ -209,6 +210,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.arm == "oracle":
             server += ["--oracle-task", str(args.task.resolve()), "--oracle-snapshot", str(snapshot),
                        "--oracle-layout", args.oracle_layout] + (["--oracle-trust"] if args.oracle_trust else [])
+            server += ["--oracle-complete"] if args.oracle_complete else []
         if args.arm == "live":
             server += ["--live-source", str(snapshot), "--live-map", str(args.live_map.resolve(strict=True)),
                        "--live-layout", args.live_layout]
