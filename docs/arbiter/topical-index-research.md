@@ -118,6 +118,20 @@ brought in where an experiment calls for choosing among what is gathered.
 - *Correctness is the guard.* The primary agent judges every kept
   condition's sessions against the frozen truth.
 - *No edits under a running series.*
+- *Record every case where cost goes up, and learn when to decline
+  (user, 27 November 2026).* Whenever a condition makes a task dearer
+  than its unaided baseline, the case is added to the table "Where the
+  tool costs more" below with what could have been known at the time of
+  the call: what the request names, how many terms and files the census
+  finds, the deliverable, and the reply's size. When the cases fall into
+  recognizable patterns, the tool is given a rule that declines such a
+  request with an error such as "gather_context cannot process this
+  request effectively", so the agent does that task itself and the tool is
+  used only where a gain is probable. A decline rule may use only what
+  the tool can see in the call and in its own census, never a task's
+  baseline cost or truth. Declining is itself tested as an experiment:
+  a declined call costs the agent one round trip, and that cost is
+  measured on the tasks the rule would decline.
 - *Stop rule.* If a task's best result stays under half of its oracle
   saving after its set, that is recorded as the finding for that task and
   work moves on. If that happens on three tasks running, the series stops
@@ -143,6 +157,43 @@ Python client, on both transports). It has the most room, the prototype
 captures none of it, and the repository is small, so calls are quick.
 Next in line: bookbuilder-N-C3, in the other repository and a narrow
 coding task.
+
+### Where the tool costs more
+
+Started from the three 20-task series already run, at one price, medians
+of three. A minus sign means dearer than no tool.
+
+| Task | Unaided cost, round trips | Oracle | Prototype v2 | Prototype v3 | What the task is |
+| --- | --- | --- | --- | --- | --- |
+| munarium-N-C2 | $0.12, 6 | -6.7% | -74.8% | -56.1% | Add tests for one named method, beside named existing tests |
+| bookbuilder-N-C4 | $0.14, 7 | -9.9% | -82.8% | -90.2% | Add tests for one named handler |
+| bookbuilder-N-A2 | $0.24, 6 | -2.3% | -28.6% | -31.1% | Answer a question naming one script and one version number |
+| munarium-N-C3 | $0.34, 9 | -4.8% | -15.1% | -43.9% | Add a filter to one named page |
+| munarium-N-C1 | $0.53, 10 | -17.4% | -34.1% | -24.0% | Change one constant everywhere it is stated |
+| munarium-N-C4 | $0.44, 8 | +7.9% | -25.8% | -8.4% | Add one method like a named existing one |
+| munarium-C2 | $0.44, 10 | +22.5% | -19.7% | -2.4% | Find and fix a named symptom |
+| bookbuilder-T1 | $0.35, 7 | +6.1% | -8.8% | -20.1% | Add tests for one formatter |
+
+First patterns, to be confirmed or dropped as cases accumulate:
+
+1. **The task is already short.** The two dearest losses are the two
+   cheapest tasks, six or seven round trips unaided. A reply of 24,000
+   bytes costs more to carry than those tasks cost to explore. Even the
+   perfect reply loses on them. What the tool can see: the request names
+   the one file, type or method to work on, and the census finds its
+   terms in very few files.
+2. **The request already says where.** Five of the eight name the exact
+   symbol, page, script or example to follow. The agent goes straight
+   there; the reply adds files it then also opens.
+3. **Every-place changes of one value** (munarium-N-C1) lose even with
+   the perfect reply. The agent re-verifies every place itself, so the
+   reply is paid for twice. Bookbuilder-N-C2 is the same kind of task and
+   came out even, so this pattern is not settled.
+
+Candidate decline rule to test, from patterns 1 and 2: decline when the
+request names a specific symbol or path, the census finds every named
+term in three files or fewer, and no need asks for "every place" or a
+trace.
 
 ## Why this research
 
