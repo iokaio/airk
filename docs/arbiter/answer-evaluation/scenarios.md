@@ -1,5 +1,28 @@
 # Answer evaluation scenarios
 
+## Gather Context working set from 27 November 2026
+
+The Gather Context work uses a smaller working set (user decision,
+27 November 2026). The 20 development scenarios below keep their hashes
+and their place in the freeze; this changes which of them are worked on.
+[Strategy](../retrieval-strategy-combined.md#strategy-from-27-november-2026)
+
+- **Broad set, 6 tasks.** Bookbuilder C3, A1 and T1; Munarium C2, A1 and
+  T1. The rule: per repository one coding, one architecture and one test
+  or writing task, the first of each kind not tuned on. Munarium C1 and
+  C3 and Bookbuilder C2 and T2 were tuned on during the loop prototype.
+- **Holdout, 10 tasks.** The other untuned scenarios: Bookbuilder A2, A3,
+  C1, W1 and W2; Munarium A2, A3, T2, W1 and W2. They run only at
+  checkpoints.
+- **Narrow set, 14 new tasks, 7 per repository:** 4 coding, 2 architecture
+  and 1 writing, of the kind an agent meets in everyday development.
+  Bookbuilder's stay inside the `pro` folder. Coding tasks start from
+  mined commits, adjusted by Claude's judgment toward typical requests,
+  and qualify only when the code they change is present unchanged in the
+  indexed snapshot. Each task and its truth are written and frozen with a
+  hash before any tool or agent runs on it. They are not written yet.
+- The sealed scenarios stay closed.
+
 ## Current Windows CUDA development inventory
 
 Windows L7 uses ten development scenarios each from munarium at

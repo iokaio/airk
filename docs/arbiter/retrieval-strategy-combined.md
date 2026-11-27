@@ -3159,6 +3159,88 @@ First get a sufficient result on a real task with a trace showing exactly how it
 
 **Make completion verifiable.** Extend the maintained replay/report validator to require the frozen case roster and the required Arbiter configuration, bound CUDA dispatch receipts and Arbiter-sourced decision counts for enabled runs, the weight identity, precision, largest admitted input and peak device memory of every run, the unavailable-path observation, the source-to-delivery trace, and a recorded sufficiency verdict with its reasons for every case. Add negative tests for a missing case, a disabled or CPU-fallback run mislabeled as Arbiter-enabled, a run that exceeds the 16 GB fit, and a missing trace or verdict. Keep incomplete runs reportable with their exact missing evidence. Require the validator's successful complete report and the recorded user disposition before marking the implementation and testing complete. After the user reviews the plan and resumes work, run authorized Windows CUDA development diagnostics under their own frozen scope. Restarting the formal product baseline still requires the recorded review decision.
 
+### Strategy from 27 November 2026
+
+This section governs Gather Context work from this date. Where it differs from the sections around it, this one applies. The earlier sections stay as the record of what was planned and why. The user directed this strategy on 27 November 2026 after reviewing the prototype and first kernel results. Claude carries out the work (user direction, 26 November 2026). [Results record](../simplify/one-process-ledger.md) · [The loop as prototyped](gather-context-loop.md)
+
+**What the work so far established.**
+
+- *The agents we imitate did poorly on our own standard.* Where sessions were judged, almost none met the bar. The loop baseline finished no scenario correctly on all five paths. With all 113 required passages placed in the agent's first reply, 2 of 20 briefs were correct. The two reference investigations, Claude's and OpenAI's, were never judged.
+- *Delivering evidence and an agent using it are separate problems.* Required passages delivered does not predict a correct result. It stays a diagnostic.
+- *The reference agents worked in a recognisable way.* A mean of 5.5 turns and 15.6 calls a task; about 570 lines read a task; an exact census of a token as the first move in 16 of 20 tasks; a search address turned into a read of a whole function or section; six findings that were absences; five tasks that demanded every place.
+- *Fetching needs no model and choosing does.* On four tasks the kernel without the new fetching delivered 1 of 21 required passages. The same fetching rules outside the runtime put 14 of 21 in the candidate pool with no model, and word overlap delivered 4 of them. With Qwen3-Reranker-4B choosing, about 600 judgments a task delivered 12 and several thousand delivered 14. Weights rounded to 8 bits and computed in FP16 delivered exactly what FP16 did.
+- *A check on the judge's own confidence does not find its misses.* Where it ranked a wrong passage above a right one, the right one scored high once a different need saw it or a need asked for that kind of evidence.
+- *The kernel now runs the fetching rules.* The first baseline delivered 6 of 21 with no model in 8 to 28 seconds a request, with three known faults.
+
+**The goal (user, 27 November 2026).** AIRK succeeds when using Gather Context reduces what an agent spends on its model to reach the goal of a task. Cost reduction is the goal. It comes from fewer round trips to the model, and the aim is to reduce them, not to eliminate them.
+
+- *Why round trips and reply size both matter.* An agent's token use is roughly the size of its context multiplied by its round trips, because each round trip sends the whole conversation again. Saving a round trip saves the whole context once. Everything Gather Context returns is sent again on every later round trip, so a large reply can cut round trips and still raise the cost.
+- *More reduction is better, up to a point.* Past that point the chance of a wrong result, and later the time the tool takes, make it a drag on value.
+- *Time is not a constraint in the first solution (user, 27 November 2026).* Elapsed time is recorded and reported and does not decide whether a change is kept. It is taken up after the strategies that reduce cost most are found.
+- *The agent is expected to call the tool several times in one task.* A task that goes from 10 round trips to 4, or from 20 to 15, is a win. The tool and its description in the MCP catalog are designed for repeated use.
+- *A single deterministic pass that does everything is not the goal.* The reference agents' deciding steps often used knowledge the tool does not have, such as a framework's exception type or the repository's own word for a feature. The agent keeps that work; the tool shortens the looking.
+- *The yardstick.* An average reduction of 30 percent, with results no less correct, would be an outstanding outcome.
+- *What a call must do to save a round trip.* An agent already runs independent lookups together: the Claude record shows 109 turns holding 312 calls, about three a turn. What costs it a round trip is a chain, where the next step depends on the last result: search, then read what the search pointed at, then follow what that passage calls or who calls it. A Gather Context call is worth making when it completes two or three such dependent steps at once. A call that only does what the agent could have run together saves nothing. Each rule is judged by how many dependent steps it collapses.
+
+**The shape of the product.**
+
+1. *Deterministic fetching does the wide work.* Exact census of anchors and identifiers, search by need in separate lanes for code, documents and configuration, the project's rule files, the files the evidence names, and code structure followed from located passages through the index's own facts.
+2. *The reply is a map first and little text.* For each need: where the thing lives, a few whole functions, the census by file, what was searched and not found, and what is still open. The size target is what a reference agent read for itself, about 25 KB, against the 50 to 110 KB replies of today.
+3. *Absence and completeness are stated with their scope.* "Searched these indexed files for X and found none", and which files are outside the index. Without that a reply cannot support "no test exists" or "these are all the places".
+4. *A need closes on a cited source or a declared absence.* Rounds and budgets are limits, not the stop rule. Open needs are listed as open.
+5. *The model chooses among what was fetched, and no more.* The working model is the published Qwen3-Reranker-4B with 8-bit weights and FP16 compute. It is not yet in the runtime. Whether it is needed at all once the census narrows the candidates is an open test. Other models, other quantization and speed work wait until the gathering problem is solved.
+6. *The request may carry a folder scope.* An agent working in one project of a repository says so. Both scoped and unscoped requests are tested.
+7. *Every call is worth making again.* An agent will call the tool at the start of a task and again as it learns more, so each reply must cost less in tokens than the round trips it saves. A reply is small, sends nothing the agent already holds (the request's `known` ranges, which today are checked and unused), and answers a narrow follow-up as readily as a whole task. How long a call takes is recorded and is not a limit yet.
+8. *Each reply sets up the next call.* It returns the repository's own vocabulary that it found, the names and files worth asking about next, and the needs still open, so the agent's next request is better aimed than its first.
+9. *The description tells an agent how to use it.* When to call it first, when to call it again with what was learned, what to put in `needs`, `anchors` and `known`, and when a direct lookup is the better call.
+
+**Development tasks.** Two sets replace the 20 broad tasks as the working set.
+
+*Broad set, 6 tasks, 3 per repository.* Chosen by rule from the existing 20: per repository one coding, one architecture and one test or writing task, taking the first of each kind that Claude has not tuned on. Claude tuned on Munarium C1 and C3 and Bookbuilder C2 and T2 during the prototype.
+
+| Repository | Coding | Architecture | Test or writing |
+| --- | --- | --- | --- |
+| Bookbuilder | C3, which also asks for every place | A1 | T1 |
+| Munarium | C2 | A1 | T1 |
+
+Munarium's every-place task, C3, is one of the tuned four, so one of the new Munarium tasks below asks for every place. Of the 14 tasks no longer in the working set, the 10 that were never tuned on are a holdout, run only at checkpoints.
+
+*Narrow set, 14 tasks, 7 per repository:* 4 coding, 2 architecture and 1 writing. These are the requests an agent meets in everyday development: fix this error, add one more of an existing kind, change a limit or a default, find where something is decided, write a test for this behaviour, say what calls this.
+
+- Bookbuilder tasks stay inside the `pro` folder. The repository holds several divergent projects, and tasks that span them would be less typical.
+- Coding tasks start from real commits in each repository's history and are then adjusted by Claude's judgment toward what a typical user of an agent would ask. The user's own tasks and commits may be atypical, so a mined commit is a source, not the task as written.
+- Every task is posed against the indexed snapshot, Bookbuilder `238b22a722ce` and Munarium `9948345d1d14`. A mined commit qualifies only when the code it changed is present unchanged in that snapshot.
+- Each task's truth is written and frozen with a hash before any tool or agent runs on it. For a coding task it is the lines that have to change, taken from the source commit where one exists. For an architecture or writing task it is a short list of facts with their locations.
+- Claude writes both the tasks and their truth, which is a known weakness. Mined commits and the freeze before any run are the guards against it.
+
+**How results are measured.**
+
+- *The result is the reduction in cost.* An acting agent attempts each task with Gather Context available and again with ordinary reads only. The measure is the percentage lower model cost with the tool, averaged over tasks. Cost is the agent's own reported usage (fresh input, cached input read, cache written and output tokens) priced at the model's list rates, so the four kinds combine fairly. Sonnet and Opus are the acting models (user decision, 27 November 2026).
+- *Reported beside it:* round trips to the model, the four token counts, and elapsed time split into model time, Gather Context time and other tool time.
+- *One guard goes with it:* the result is no less correct against the frozen truth. A reduction bought with wrong answers is not a win. Also recorded for each attempt: how many times the agent called Gather Context, the seconds and the bytes returned for each call.
+- *A change is kept when* cost per task falls and the result is no less correct.
+- *The effort curve.* The tool arm is run at several effort settings, using the kernel's deadline, call budget and rule switches, for example about 2, 10 and 30 seconds a call. Cost, round trips, elapsed time and correctness at each setting show where more gathering keeps reducing cost, where it flattens and where it turns. The setting at the knee becomes the default, and it may differ by kind of task.
+- *The exchange rate.* Cost saved for each second of tool time added is reported for every rule. It decides nothing while time is unconstrained, and it is the record the later time work starts from.
+- *Repeats.* The same agent on the same task can differ by several round trips between runs, so each arm is run three times and medians are compared.
+- *What is run when (user accepted the cost, 27 November 2026).* For steering: Sonnet, three repeats, all 20 tasks at the default setting, and the effort curve on a subset of six tasks. At milestones: Sonnet and Opus on all 20 tasks at the chosen setting, and the holdout.
+- *The agent decides when to call the tool.* The tool arm offers Gather Context beside the ordinary reads with its own description and prescribes no first call, so the measure includes whether an agent chooses it and returns to it.
+- *Correctness is judged by Claude directly* against the frozen truth, as the sufficiency standard of 26 November already requires. No separate judging agents.
+- *The unaided baseline is measured first.* It gives each task's cost and round trips without the tool, which is what the reduction is measured against. A task an agent finishes in two round trips cannot show a saving and is marked as such.
+- *The narrow set counts four times the broad set* in the combined score. The two are always also reported apart, so a gain on one cannot hide a loss on the other.
+- *Diagnostics stay diagnostics:* required passages delivered, reply bytes, seconds, and the kernel's own report of reads, passages and time by stage.
+- *Twenty tasks steer and do not prove.* One task changes the score by five to seven points. Claims wait for the holdout.
+
+**Order of work.**
+
+1. Correct the three faults the first kernel baseline showed, one at a time: the default retention budget ends a request before the guidance, cited-file and structure stages; those stages did nothing on Munarium; guidance finds no file when the root listing runs past one page.
+2. Build the task sets: choose and freeze the 6 broad tasks, write and freeze the 14 narrow tasks and their truth.
+3. Measure the unaided baseline for all 20 tasks with both acting models.
+4. Run experiments, one change at a time, each behind its switch, each measured on the same tasks: the exact census as the first move; the map-first reply and its size target; repeated use (honouring `known`, narrow follow-up calls, what each reply offers for the next call, and the tool's description); absence and scope; the stop rule; the folder scope; then the least model use that still pays for itself. Each is kept or dropped on cost saved with results no less correct.
+5. At each checkpoint, run the acting comparison and the holdout.
+6. Admitting the 4B model to the runtime follows only if step 4 shows the model earns its place.
+
+**What is not changing.** The sealed scenarios stay closed. Earlier results keep their identities and their place in the record. The gate's own task kinds and rubric are the user's to change and are not changed here. Passage delivery on the four tuned tasks remains available for comparison with the prototype runs.
+
 ### A decision Sol can turn into an executable test
 
 Use a synthetic provider fault to exercise the control loop end to end. The prompt supplies a quoted button label and a provider name. Construct a UI file that emits an action string, a handler registered under that string, two provider branches and a high-ranked guide that mentions the error. Give the reference validator the expected branch behavior and the two source witnesses. Give the product only the task and scope. Assert that the first useful read identifies the action or its receiver. A later read must use a lead found in that evidence. A complete handoff must include the failing branch, the working control and their effect before any network call. Accept a route starting at the exception if it obtains the same proof.

@@ -254,6 +254,37 @@ Dated entries record the user's choices. The remaining proposals are open.
 
     [Gaps](retrieval-strategy-anthropic.md#23-gaps) · [Strategy](retrieval-strategy-anthropic.md#3-strategy-to-fill-the-gaps) · [Proposed process](retrieval-strategy-anthropic.md#4-how-answer-could-work)
 
+15. **Gather Context strategy and development tasks (decided 27 November
+    2026).** The working development set is 6 of the existing broad tasks,
+    3 per repository, and 14 new narrow tasks, 7 per repository (4 coding,
+    2 architecture, 1 writing), of the kind an agent meets in everyday
+    development. Bookbuilder's narrow tasks stay inside its `pro` folder.
+    Coding tasks start from mined commits and are adjusted by Claude's
+    judgment toward typical requests. The narrow set counts four times the
+    broad set. The 10 untuned tasks left out of the working set are a
+    holdout. The goal is to reduce what an agent spends on its model. It
+    comes from fewer round trips, not none: the agent is expected to call
+    Gather Context several times in a task, and an average reduction of
+    30 percent with results no less correct would be an outstanding
+    outcome. Elapsed time is recorded and is not a constraint in the first
+    solution. The means are deterministic
+    fetching, a map-first reply, stated absences and calls cheap enough to
+    repeat, with the model only choosing among what was fetched. This
+    adopts the census, instruction-file and whole-definition proposals of
+    item 14 as experiments in that order of work. The gate's own task
+    kinds and rubric are unchanged.
+    [Strategy](retrieval-strategy-combined.md#strategy-from-27-november-2026)
+16. **Acting models for the Gather Context comparison (decided 27 November
+    2026).** Sonnet and Opus act on each task with Gather Context and
+    without it. The result is the percentage lower model cost with the
+    tool, guarded by a result no less correct against the frozen truth.
+    Round trips, tokens and time are reported beside it. Each arm is run
+    three times; steering runs use Sonnet, and milestones use both models.
+    The user accepted that cost. Claude judges correctness directly; no
+    separate judging agents are used. This applies to the Gather Context
+    development comparison and does not change the gate's role matrix.
+    [Measures](retrieval-strategy-combined.md#strategy-from-27-november-2026)
+
 ## Milestones
 
 | Milestone | Exit evidence or decision |

@@ -70,6 +70,55 @@ replaces a correct finish in the completion plan's substantial-win rule is
 the user's decision at the Windows review.
 [Gather Context plan](../retrieval-strategy-combined.md#windows-cuda-model-comparison-and-iteration)
 
+## Gather Context comparison from 27 November 2026
+
+This measure governs the Gather Context development work (user decision,
+27 November 2026). The gate rubrics below are unchanged.
+[Strategy](../retrieval-strategy-combined.md#strategy-from-27-november-2026) · [Working set](scenarios.md#gather-context-working-set-from-27-november-2026)
+
+- **Goal.** Gather Context succeeds when it reduces what an agent spends
+  on its model to reach a task's goal. Cost reduction is the goal. It
+  comes from fewer round trips, and an average reduction of 30 percent,
+  with results no less correct, would be an outstanding outcome.
+  Eliminating round trips is not the aim, and the agent is expected to
+  call the tool several times in a task.
+- **Arms.** An acting agent attempts each task with Gather Context
+  available beside the ordinary reads, and again with ordinary reads only.
+  No first call is prescribed. Sonnet and Opus are the acting models.
+- **Result.** The percentage lower model cost with the tool, averaged over
+  tasks. Cost is the agent's reported usage (fresh input, cached input
+  read, cache written, output) priced at the model's list rates.
+- **Guard.** The result is no less correct against the frozen truth. A
+  change is kept when cost falls and the result is no less correct.
+- **Time.** Elapsed time is recorded, split into model time, Gather
+  Context time and other tool time. It is not a constraint in the first
+  solution (user decision, 27 November 2026) and is taken up after the
+  strategies that reduce cost most are found.
+- **Reported beside the result:** round trips to the model, the four token
+  counts, the number of Gather Context calls, and the seconds and bytes of
+  each call.
+- **Effort curve.** The tool arm is run at several effort settings to find
+  where more gathering stops reducing cost. Cost saved for each second of
+  tool time added is reported for every rule.
+- **Repeats.** Each arm is run three times and medians are compared.
+  Steering runs use Sonnet; milestones use Sonnet and Opus on all tasks
+  and the holdout.
+- **Correctness.** Claude judges it directly against the frozen truth,
+  under the sufficiency standard above. For a coding task the truth is the
+  lines that have to change. For an architecture or writing task it is a
+  short list of facts with their locations. No separate judging agents.
+- **Baseline first.** Each task's unaided turns are measured before any
+  tuning. A task finished unaided in two turns cannot show a saving and is
+  marked.
+- **Weights.** The narrow set counts four times the broad set in the
+  combined score. The two sets are always also reported apart.
+- **Diagnostics, never the result:** required passages delivered, reply
+  bytes, seconds, and the kernel's report of reads, passages and time by
+  stage. With all 113 required passages delivered, 2 of 20 briefs were
+  correct, so delivery does not predict a correct result.
+- **Limits.** Twenty tasks steer the work. One task changes the score by
+  five to seven points, so claims wait for the holdout.
+
 ## Rubric A: fewer turns for an agent
 
 ### A correct finish

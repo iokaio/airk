@@ -4,6 +4,29 @@ These instructions are mandatory for the active assignment. Standing rules remai
 
 All unlinked filesystem paths below are repository-relative unless absolute or prefixed with `~/`.
 
+**27 November 2026 — Gather Context strategy (current direction).** The user
+set the strategy for Gather Context after reviewing the prototype and the
+first kernel results. It governs Gather Context work from this date:
+[Strategy from 27 November 2026](arbiter/retrieval-strategy-combined.md#strategy-from-27-november-2026).
+In brief: the goal is to reduce what an agent spends on its model. That
+comes from fewer round trips, not none. The agent is expected to call
+Gather Context several times in a task, and a 30 percent average reduction
+with results no less correct would be an outstanding outcome. Elapsed time
+is recorded and is not a constraint in the first solution. The means are deterministic
+fetching, a map-first reply, stated absences and calls cheap enough to
+repeat, with the model only choosing among what was fetched. The working development set is
+6 of the existing broad tasks and 14 new narrow tasks, the narrow set
+counting four times. Sonnet and Opus act on each task with the tool
+available and without it, the result is the percentage lower model cost,
+and Claude judges correctness directly. Claude carries out this
+work (user direction, 26 November 2026), which is an exception for Gather
+Context to the OpenAI-models instruction in the entry below. Work in the
+order that section gives, starting with the three faults of the first
+kernel baseline. Commits stay on feat/arbiter-final; push, PR, merge to
+main, publication and deployment still need their own authorization.
+[Decisions 15 and 16](arbiter/completion-plan.md#decisions-for-the-user-at-this-review) ·
+[Results record](simplify/one-process-ledger.md#27-november-2026--last-prototype-measurements-the-merges-the-index-rebuild-and-the-first-kernel-baseline)
+
 **25 November 2026 — Windows and CUDA completion authorized.** The user
 approved implementation of the [completion plan](arbiter/completion-plan.md)
 on feat/arbiter-final up to the Windows results review. Start with section 1,
