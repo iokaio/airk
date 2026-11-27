@@ -318,6 +318,29 @@ munarium-N-C2 and bookbuilder-N-C4 as required and lets every required
 task through; it also declines munarium-N-C3 (dearer in both arms) and
 bookbuilder-N-A1 (2 to 5 percent cheaper with the tool). Next: serve the
 decline on the two required tasks and compare with no tool.
+**Decline served** (series `decline-sonnet-r1`, live arm with
+`--live-decline`, five repeats each, one price, 10 of 10 judged correct).
+
+| Task | No tool | Perfect reply | Prototype reply | Declined |
+| --- | --- | --- | --- | --- |
+| munarium-N-C2 | $0.119 | 6.8% dearer | 74.8% dearer | 4.4% dearer |
+| bookbuilder-N-C4 | $0.136 | 10.0% dearer | 82.9% dearer | 36.9% dearer |
+
+Findings:
+
+1. Declining removes most of the loss: one short extra call instead of a
+   20 KB reply. On munarium-N-C2 it is close to no tool.
+2. On bookbuilder-N-C4 the refusal's file list was wrong: it named the Vue
+   views that define the task's setting flags, not the handler the task is
+   about. Defining files of a named field are not the task's files. The
+   agents ignored the list.
+3. On bookbuilder-N-C4, after the refusal, agents read the project's
+   `AGENTS.md` and `CLAUDE.md` (10 KB each), which no unaided session read,
+   and one read a 34 KB test script. A hypothesis, not tested: the tool
+   description says the tool "brings the project's rules", so a refusal
+   prompts the agent to fetch them itself. The unaided baseline has three
+   repeats, so this comparison is noisy.
+4. Recommended: the refusal without a file list, the user's sentence only.
 ### Resume point (27 November 2026)
 
 Work can be picked up from here by another session.
