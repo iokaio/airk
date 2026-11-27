@@ -161,6 +161,7 @@ def main(argv: list[str] | None = None) -> int:
                              "live: it answers from the live files and --live-map (live_gather.py)")
     parser.add_argument("--live-map", type=Path, help="topical map of the snapshot, for the live arm")
     parser.add_argument("--live-layout", default="full", help="live arm: full or focus")
+    parser.add_argument("--live-decline", action="store_true", help="live arm: apply the decline rule first")
     parser.add_argument("--oracle-layout", default="passages", help="oracle arm: passages or ranges")
     parser.add_argument("--oracle-trust", action="store_true", help="oracle arm: add the line saying what need not be read again")
     parser.add_argument("--oracle-complete", action="store_true", help="oracle arm: add the completeness line when every need is covered")
@@ -213,7 +214,7 @@ def main(argv: list[str] | None = None) -> int:
             server += ["--oracle-complete"] if args.oracle_complete else []
         if args.arm == "live":
             server += ["--live-source", str(snapshot), "--live-map", str(args.live_map.resolve(strict=True)),
-                       "--live-layout", args.live_layout]
+                       "--live-layout", args.live_layout] + (["--live-decline"] if args.live_decline else [])
         servers[SERVER] = {"command": server[0], "args": server[1:]}
     mcp_config = args.output / "mcp-config.json"
     mcp_config.write_text(json.dumps({"mcpServers": servers}, indent=2) + "\n", encoding="utf-8", newline="\n")
