@@ -60,6 +60,8 @@ PUBLIC_TOOL = "gather_context"
 def summarize(events: list[dict]) -> dict:
     """What a stream-json transcript says the session cost: the agent's own reported numbers."""
     requests, uses, result, init, final = set(), [], None, None, ""
+    named: dict[str, str] = {}
+    returned: dict[str, int] = {}
     for event in events:
         kind = event.get("type")
         if kind == "system" and event.get("subtype") == "init" and init is None:
@@ -71,8 +73,18 @@ def summarize(events: list[dict]) -> dict:
             for block in message.get("content") or []:
                 if block.get("type") == "tool_use":
                     uses.append(block.get("name"))
+                    named[block.get("id")] = block.get("name")
                 elif block.get("type") == "text" and block.get("text", "").strip():
                     final = block["text"]
+        elif kind == "user":
+            # What each tool handed back: this is what the agent then carries on every later round trip.
+            for block in (event.get("message") or {}).get("content") or []:
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    content = block.get("content")
+                    text = content if isinstance(content, str) else "".join(
+                        part.get("text", "") for part in content or [] if isinstance(part, dict))
+                    name = named.get(block.get("tool_use_id"), "unknown")
+                    returned[name] = returned.get(name, 0) + len(text.encode("utf-8"))
         elif kind == "result":
             result = event
     usage = (result or {}).get("usage") or {}
@@ -90,6 +102,9 @@ def summarize(events: list[dict]) -> dict:
                    "cache_write": usage.get("cache_creation_input_tokens"), "output": usage.get("output_tokens")},
         "elapsed_ms": (result or {}).get("duration_ms"), "model_ms": (result or {}).get("duration_api_ms"),
         "tool_uses": by_tool, "tool_use_total": len(uses),
+        # Bytes each tool returned to the agent, and the share that came from its own file tools.
+        "tool_result_bytes": returned,
+        "own_read_bytes": sum(size for name, size in returned.items() if name in FILE_TOOLS),
         "tools_offered": (init or {}).get("tools"), "mcp_servers": [s.get("name") for s in (init or {}).get("mcp_servers") or []],
         "permission_denials": len((result or {}).get("permission_denials") or []),
         "final_message": final,

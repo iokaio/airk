@@ -1311,3 +1311,30 @@ python -B scripts/arbiter-answer-eval/agent_cost_run.py --task $task --snapshot 
 python -B scripts/arbiter-answer-eval/agent_cost_run.py --task $task --snapshot $snapshot --arm tool --model claude-sonnet-5-5 --handle $handle --repo munarium --instructions-file $guidance --output $toolOut
 python -B -m unittest discover -s scripts/arbiter-answer-eval -p 'test_agent_cost_run.py'
 ~~~
+
+`session.json` also records the bytes each tool returned to the agent
+(`tool_result_bytes`) and the share that came from its own file tools
+(`own_read_bytes`). A reply the client refuses as too large shows as a
+small error notice here, not as the reply's size.
+
+`narrow_scenarios.py` checks and freezes the 7 narrow tasks of each
+repository (4 coding, 2 architecture, 1 writing). Input: the private
+`scenarios-narrow/<repository>/N-*.json` files of schema
+`airk.private.narrow-scenario/1` and the repository snapshot. `check`
+verifies that every truth item names a file and lines present in the
+snapshot; `freeze` runs the same check and writes `freeze.json` with the SHA-256
+of every task file.
+
+`agent_cost_batch.py` runs a whole series and reports it. Input: the
+campaign folder, a series name, a model and the arms. Output:
+`<campaign>/agent-cost/<series>/<task>.<arm>.r<k>/` per session and
+`report.json`. `run` skips a session whose folder exists, so an
+interrupted series resumes. `report` prints the median cost and round
+trips per task and arm and the percentage lower cost with the tool; the
+combined figure counts a narrow task four times a broad one.
+
+~~~powershell
+python -B scripts/arbiter-answer-eval/narrow_scenarios.py check --tasks $campaign\scenarios-narrow\munarium --snapshot $snapshot
+python -B scripts/arbiter-answer-eval/agent_cost_batch.py run --campaign $campaign --series baseline-sonnet-r1 --model claude-sonnet-5-5 --arms plain --repeats 3 --workers 3
+python -B scripts/arbiter-answer-eval/agent_cost_batch.py report --campaign $campaign --series baseline-sonnet-r1
+~~~

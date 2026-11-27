@@ -22,6 +22,10 @@ class SummaryTest(unittest.TestCase):
             assistant("m1", {"type": "tool_use", "name": "mcp__airk__gather_context", "id": "t1", "input": {}}),
             assistant("m2", {"type": "tool_use", "name": "Read", "id": "t2", "input": {}}),
             assistant("m2", {"type": "tool_use", "name": "Read", "id": "t3", "input": {}}),  # same request, second block
+            {"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "t1", "content": [{"type": "text", "text": "map" * 10}]},
+                {"type": "tool_result", "tool_use_id": "t2", "content": "line one\nline two\n"},
+                {"type": "tool_result", "tool_use_id": "t3", "content": "abc"}]}},
             assistant("m3", {"type": "text", "text": "Done: a.rs:4"}),
             {"type": "result", "subtype": "success", "is_error": False, "num_turns": 4, "total_cost_usd": 0.0421,
              "duration_ms": 9000, "duration_api_ms": 7000, "permission_denials": [],
@@ -32,6 +36,8 @@ class SummaryTest(unittest.TestCase):
         self.assertEqual((got["round_trips"], got["tool_use_total"], got["cost_usd"]), (3, 3, 0.0421))
         self.assertEqual(got["tool_uses"], {"mcp__airk__gather_context": 1, "Read": 2})
         self.assertEqual(got["tokens"], {"input": 12, "cache_read": 3000, "cache_write": 900, "output": 210})
+        self.assertEqual(got["tool_result_bytes"], {"mcp__airk__gather_context": 30, "Read": 21})
+        self.assertEqual(got["own_read_bytes"], 21)
         self.assertEqual((got["completed"], got["final_message"], got["mcp_servers"]), (True, "Done: a.rs:4", ["airk"]))
 
     def test_a_session_without_a_result_is_not_completed(self):
