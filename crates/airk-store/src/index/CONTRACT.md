@@ -129,6 +129,15 @@ here first.
   except `Files` and `Language` (which come from `files`): fact name, fact
   kind, edge source and edge target, with the terminal-call rule for
   `postings_version == 1`. `terminal_call_postings_complete` is true.
+  The terminal-call rule (`airk_core::code::terminal_call_name`) ignores one
+  trailing balanced generic argument list since 26 November 2026 (user
+  decision): `services.AddScoped<IFoo, Foo>` and `iter.collect::<Vec<_>>`
+  select `AddScoped` and `collect`. Other targets keep their names. The rule
+  is applied when a file's rows are written and when a query matches loaded
+  facts, so files written before the change keep their earlier selectors and
+  are not found by such a name until re-extracted; `airkctl index --full` (or
+  the adapter `detail-3` re-extraction) rewrites every file's rows. No column,
+  record or format changed.
 - **handles.** `Artifact`: the 16 bytes of `InventoryFile.state.artifact_id`.
   `Unit`: the canonical JSON of each continuity key in
   `InventoryFile.continuity`.

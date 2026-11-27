@@ -44,19 +44,45 @@ impl CodeEvidence {
     }
 }
 
-/// Terminal written method spelling for native call candidates. This does not
-/// resolve receivers, dynamic subscripts, generic expressions or imported IDs.
+/// Terminal written method spelling for native call candidates. One trailing
+/// balanced generic argument list (`Foo<T, U>`, Rust `foo::<T>`) is ignored,
+/// so a generic call indexes under its method name. This does not resolve
+/// receivers, dynamic subscripts, generic expressions or imported IDs.
 pub fn terminal_call_name<'a>(code: &'a CodeEvidence, kind: &str) -> Option<&'a str> {
     if !code.is_call_candidate(kind) {
         return None;
     }
-    let target = code.target.as_deref()?;
+    let target = without_trailing_generic_arguments(code.target.as_deref()?);
     let name = target.rsplit(['.', ':', '>']).next()?.trim();
     let mut chars = name.chars();
     let first = chars.next()?;
     ((first.is_alphabetic() || matches!(first, '_' | '$'))
         && chars.all(|c| c.is_alphanumeric() || matches!(c, '_' | '$')))
     .then_some(name)
+}
+
+/// The target without one trailing balanced `<...>` list and a turbofish `::`
+/// before it. Any other target, including an unbalanced `>`, is unchanged.
+fn without_trailing_generic_arguments(target: &str) -> &str {
+    let trimmed = target.trim_end();
+    if !trimmed.ends_with('>') {
+        return target;
+    }
+    let mut depth = 0usize;
+    for (index, byte) in trimmed.bytes().enumerate().rev() {
+        match byte {
+            b'>' => depth += 1,
+            b'<' => {
+                depth -= 1;
+                if depth == 0 {
+                    let head = trimmed[..index].trim_end();
+                    return head.strip_suffix("::").unwrap_or(head);
+                }
+            }
+            _ => {}
+        }
+    }
+    target
 }
 
 /// Zero-based UTF-8 byte offsets in retained source, with an exclusive end.
@@ -176,13 +202,54 @@ mod terminal_tests {
         for target in [
             "x['reclaim_objects']",
             "x[dynamic]",
-            "x.reclaim_objects::<T>",
             "x.",
             "'reclaim_objects'",
             "",
         ] {
             code.target = Some(target.into());
             assert_eq!(terminal_call_name(&code, "call"), None, "{target}");
+        }
+    }
+
+    #[test]
+    fn terminal_names_ignore_one_trailing_generic_argument_list() {
+        let mut code: CodeEvidence = serde_json::from_value(serde_json::json!({"symbol_id":"s", "qualified_name":"s", "scope":[], "owner_id":null, "signature":null, "parameters":null, "return_type":null, "modifiers":[], "documentation":null, "target":null, "basis":"syntax", "producer":"native", "producer_version":"1", "coverage":"written syntax", "details_truncated":false})).unwrap();
+        for (target, expected) in [
+            ("services.AddScoped<IFoo, Foo>", Some("AddScoped")),
+            ("Enum.TryParse<AIProviderType>", Some("TryParse")),
+            ("x.reclaim_objects::<T>", Some("reclaim_objects")),
+            ("iter.collect::<Vec<_>>", Some("collect")),
+            ("x?.Get<Dictionary<string, List<int>>>", Some("Get")),
+            ("services?.AddScoped<IFoo>", Some("AddScoped")),
+            ("Create<T> ", Some("Create")),
+            ("x->template get<T>", None),
+            ("<T>", None),
+            ("x->", None),
+            ("x.Foo<T><U>", None),
+        ] {
+            code.target = Some(target.into());
+            assert_eq!(terminal_call_name(&code, "call"), expected, "{target}");
+            assert_eq!(terminal_call_name(&code, "definition"), None, "{target}");
+        }
+        // Targets without a trailing generic list keep their earlier names.
+        for (target, expected) in [
+            ("reclaim_objects", Some("reclaim_objects")),
+            ("x.Foo<T>.Bar", Some("Bar")),
+            ("x?.reclaim_objects", Some("reclaim_objects")),
+            ("Type::reclaim_objects", Some("reclaim_objects")),
+            ("x->reclaim_objects", Some("reclaim_objects")),
+            ("Vec::<u8>::with_capacity", Some("with_capacity")),
+            ("a > b", Some("b")),
+            ("x.Foo<T", None),
+            ("x[dynamic]", None),
+        ] {
+            code.target = Some(target.into());
+            assert_eq!(terminal_call_name(&code, "call"), expected, "{target}");
+            assert_eq!(
+                without_trailing_generic_arguments(target),
+                target,
+                "{target} unchanged"
+            );
         }
     }
 }
