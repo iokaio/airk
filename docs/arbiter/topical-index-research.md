@@ -293,6 +293,18 @@ reads, most of them whole central files, looking for what else might
 matter. The 40.8 percent line said "together they are what this task
 needs ... do not search for more"; with a perfect reply that claim is
 true, but a real reply can only make it when its coverage supports it.
+**Set 5: a completeness line** (same conditions, `--oracle-complete`,
+series `t1-oracle-complete-r1`). Appended to the build's line, only when
+the reply is complete and every need covered: "These passages cover every
+need listed; there is no need to search for more." Result: $0.529, 23.3
+percent lower (0.44 to 0.81), 9 round trips, 122 KB read by the agent;
+within noise of no line. All five sessions judged correct.
+
+Finding: neither the assurance, the no-reread instruction nor the
+completeness claim moves the agent. The one part of the 40.8 percent line
+not yet tested on its own is how to read: "read a file only for lines that
+are not shown here, with offset and limit". Its sessions read 85 KB
+against 122 to 136 KB in every other passage condition.
 ### Resume point (27 November 2026)
 
 Work can be picked up from here by another session.
