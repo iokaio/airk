@@ -21855,3 +21855,36 @@ baseline remains paused at the Windows review.
 - Narrow task sets frozen. `narrow_scenarios.py check` and `freeze` passed for 7 tasks per repository (4 coding, 2 architecture, 1 writing) under the private `scenarios-narrow` folder; Bookbuilder tasks are in the `pro` folder. Two Bookbuilder truth items naming `pro/src/WritingForgePro.Host/appsettings.json` were removed, because that file is not in the snapshot; each task records the removal in a `review` field. Mined commits were a source only: tasks were rewritten to what a typical agent user would ask.
 - `agent_cost_batch.py` runs a series (task, arm, repeat), resumes by skipping existing session folders, and reports medians with a narrow task counted four times a broad one. The unaided baseline `baseline-sonnet-r1` (20 tasks, 3 repeats, Sonnet, plain arm) is running; its report is recorded when it finishes.
 - Model-dose experiment added to the plan at the user's direction: the same tasks at no model and at about 50, 150 and 600 judgments a call, applied in the one-tool server with the 4B model's 8-bit weights expanded to FP16, after the small reply and the census.
+
+### 27 November 2026 — Unaided baseline and the measure
+
+- User decisions. Success in this effort is cost alone: the agent's round trips to its model and the size of each. The time a call takes in the evaluation tooling is not a measure of success. The model is incorporated into the runtime after the strategy proves out; until then its choice is applied in the evaluation tooling. Correctness stays the guard.
+- Unaided baseline `baseline-sonnet-r1`: `agent_cost_batch.py run --series baseline-sonnet-r1 --model claude-sonnet-5-5 --arms plain --repeats 3 --workers 3`, then `report`. 60 of 60 sessions completed. Total reported cost $34.19. D: free 873,787,691,008 bytes before and 861,970,079,744 after.
+
+| Task | Weight | Median cost | Median round trips |
+| --- | --- | --- | --- |
+| bookbuilder-A1 | 1 | $1.0210 | 15 |
+| bookbuilder-C3 | 1 | $1.3280 | 17 |
+| bookbuilder-T1 | 1 | $0.3534 | 7 |
+| bookbuilder-N-A1 | 4 | $0.5280 | 9 |
+| bookbuilder-N-A2 | 4 | $0.2430 | 6 |
+| bookbuilder-N-C1 | 4 | $0.7977 | 18 |
+| bookbuilder-N-C2 | 4 | $0.4018 | 11 |
+| bookbuilder-N-C3 | 4 | $0.2835 | 10 |
+| bookbuilder-N-C4 | 4 | $0.1359 | 7 |
+| bookbuilder-N-W1 | 4 | $0.7615 | 11 |
+| munarium-A1 | 1 | $0.9440 | 11 |
+| munarium-C2 | 1 | $0.4352 | 10 |
+| munarium-T1 | 1 | $0.7255 | 13 |
+| munarium-N-A1 | 4 | $0.3987 | 9 |
+| munarium-N-A2 | 4 | $1.0716 | 10 |
+| munarium-N-C1 | 4 | $0.5325 | 10 |
+| munarium-N-C2 | 4 | $0.1194 | 6 |
+| munarium-N-C3 | 4 | $0.3431 | 9 |
+| munarium-N-C4 | 4 | $0.4408 | 8 |
+| munarium-N-W1 | 4 | $0.5438 | 11 |
+
+- Across the 60 sessions: round trips 4 to 20, median 10. Tokens: 33,641,776 read from cache, 5,663,011 written to cache, 816,730 output, 1,244 uncached input. Tool uses: Read 909, Grep 900, Edit 356, Glob 67, Write 36, about 38 a session, so an agent issues several tool calls in one round trip. Median bytes an agent read through its own tools, over the 57 sessions that recorded it: 151,965. Weighted mean of the tasks' median cost, a narrow task counting four: $0.5034.
+- Reading. No task finished in two round trips or fewer, so none is dropped as having nothing to save. Cost is carried almost entirely by context read again on each round trip, which is what a smaller reply and fewer round trips both reduce. The spread of one task's cost across its three repeats has a median of 23 percent of that task's median and reaches 49 percent, so a difference between arms smaller than about a quarter on a single task is not a finding; the weighted figure over 20 tasks is the one to read.
+- Correctness of the baseline sessions is not judged yet. `agent_cost_judge.py` lays each session beside its frozen truth for the reviewer.
+- Side effect: the client left 33 empty folders named after session work folders under the user's `.claude\projects`. They are left in place and reported to the user.
