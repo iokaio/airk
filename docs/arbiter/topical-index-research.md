@@ -132,6 +132,18 @@ brought in where an experiment calls for choosing among what is gathered.
   baseline cost or truth. Declining is itself tested as an experiment:
   a declined call costs the agent one round trip, and that cost is
   measured on the tasks the rule would decline.
+- *Teach the agent when not to call (user, 27 November 2026).* The same
+  cases are used to rewrite the tool's description, so the agent itself
+  chooses the tool only where a gain is likely. This is better than a
+  decline where it works, because a call that is never made costs
+  nothing, while a declined call costs a round trip. In `tool-firstcall-r1`
+  every one of the 20 agents called the tool in its first round trip,
+  including on the tasks where it can only lose: the current description
+  says "use first", and the agents do. A description is tested like any
+  other change: the measure is cost, and beside it the share of sessions
+  that call the tool on tasks where it should and should not be used.
+  The decline rule stays as the backstop for calls the description does
+  not prevent.
 - *Stop rule.* If a task's best result stays under half of its oracle
   saving after its set, that is recorded as the finding for that task and
   work moves on. If that happens on three tasks running, the series stops
