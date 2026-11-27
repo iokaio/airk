@@ -364,6 +364,12 @@ fn eight_needs_and_forty_records_fit_a_small_map_with_whole_passages() {
     }
     assert!(size <= BRIEF_PASSAGE_BYTES);
     assert!(brief.passages.len() > 7, "room for second passages");
+    // The one allowed assurance, verbatim (27 November 2026).
+    assert_eq!(
+        brief.assurance.as_deref(),
+        Some("These passages are exact text taken from the files referenced.")
+    );
+    assert!(text.contains("\"use\":\"These passages are exact text taken from the files referenced.\""));
     // Every cited location without its text here is listed as omitted.
     let carried: BTreeSet<&str> = brief.passages.iter().map(|row| row.at.as_str()).collect();
     let mut expected = Vec::new();
@@ -473,6 +479,8 @@ fn a_reply_too_large_for_one_passage_keeps_the_map_and_omits_every_location() {
     let (brief, text) = brief(&rendered(&canned.reply));
     assert!(text.len() <= MAX_BRIEF_BYTES, "{} bytes", text.len());
     assert!(brief.passages.is_empty());
+    // No passages, nothing to assure.
+    assert!(brief.assurance.is_none() && !text.contains("\"use\""));
     let mut every = Vec::new();
     for cited in &canned.cited {
         every.extend(cited.iter().cloned());
@@ -595,5 +603,16 @@ fn transport_fields_are_carried_and_verification_is_one_line() {
         Some(
             "report_complete: 8 sources checked, 7 matched, 1 differ, 2 not checked (differ: src/need1/file0.rs)"
         )
+    );
+    // A returned source differs from the index: the assurance would be false.
+    assert!(!brief.passages.is_empty());
+    assert!(brief.assurance.is_none() && !text.contains("\"use\""));
+    // The same reply with every checked source matching keeps it.
+    value["source_verification"]["counts"]["mismatched_sources"] = json!(0);
+    value["source_verification"]["sources"][0]["state"] = json!("matched");
+    let (matched, _) = self::brief(&value);
+    assert_eq!(
+        matched.assurance.as_deref(),
+        Some("These passages are exact text taken from the files referenced.")
     );
 }
