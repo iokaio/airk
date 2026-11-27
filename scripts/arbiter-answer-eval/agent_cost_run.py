@@ -160,6 +160,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="oracle: the tool answers with the task's truth (gather_context_oracle.py); "
                              "live: it answers from the live files and --live-map (live_gather.py)")
     parser.add_argument("--live-map", type=Path, help="topical map of the snapshot, for the live arm")
+    parser.add_argument("--oracle-layout", default="passages", help="oracle arm: passages or ranges")
+    parser.add_argument("--oracle-trust", action="store_true", help="oracle arm: add the line saying what need not be read again")
     parser.add_argument("--model", required=True)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--handle", type=Path)
@@ -190,7 +192,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.dose > 0:
             server += ["--judge", str(args.judge.resolve(strict=True)), "--dose", str(args.dose)]
         if args.arm == "oracle":
-            server += ["--oracle-task", str(args.task.resolve()), "--oracle-snapshot", str(snapshot)]
+            server += ["--oracle-task", str(args.task.resolve()), "--oracle-snapshot", str(snapshot),
+                       "--oracle-layout", args.oracle_layout] + (["--oracle-trust"] if args.oracle_trust else [])
         if args.arm == "live":
             server += ["--live-source", str(snapshot), "--live-map", str(args.live_map.resolve(strict=True))]
         servers[SERVER] = {"command": server[0], "args": server[1:]}

@@ -132,10 +132,11 @@ def fixture_backend(handle: common.Handle, timeout: float):
     return call
 
 
-def oracle_backend(task: dict, snapshot: Path):
+def oracle_backend(task: dict, snapshot: Path, layout: str = "passages", trust: bool = False):
     """Answer every call with the oracle brief of ``task`` (``gather_context_oracle.py``); no service is called."""
     def call(native: str, repo: str, arguments: dict) -> tuple[str, bool, bytes]:
-        text = json.dumps(gather_context_oracle.brief(task, snapshot, arguments), ensure_ascii=False, separators=(",", ":"))
+        text = json.dumps(gather_context_oracle.brief(task, snapshot, arguments, layout, trust), ensure_ascii=False,
+                          separators=(",", ":"))
         return text, False, text.encode("utf-8")
     return call
 
@@ -166,6 +167,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--call-timeout", type=float, default=330.0)
     parser.add_argument("--oracle-task", type=Path, help="serve the oracle brief of this task instead of calling the service")
     parser.add_argument("--oracle-snapshot", type=Path)
+    parser.add_argument("--oracle-layout", choices=gather_context_oracle.LAYOUTS, default="passages")
+    parser.add_argument("--oracle-trust", action="store_true")
     parser.add_argument("--live-source", type=Path, help="answer from these live files and --live-map instead of the service")
     parser.add_argument("--live-map", type=Path)
     parser.add_argument("--judge", type=Path, help="state file of a running arbiter_judge_service.py")
@@ -180,7 +183,8 @@ def main(argv: list[str] | None = None) -> int:
     tool = json.loads(args.tool_file.read_text(encoding="utf-8"))
     instructions = args.instructions_file.read_text(encoding="utf-8").strip() if args.instructions_file else None
     server = Server(tool=tool, repo=args.repo, log_dir=args.log_dir, instructions=instructions,
-                    backend=(oracle_backend(json.loads(args.oracle_task.read_text(encoding="utf-8")), args.oracle_snapshot)
+                    backend=(oracle_backend(json.loads(args.oracle_task.read_text(encoding="utf-8")), args.oracle_snapshot,
+                                            args.oracle_layout, args.oracle_trust)
                              if args.oracle_task else live_backend(args.live_source, args.live_map) if args.live_source
                              else fixture_backend(handle, args.call_timeout)), max_calls=args.max_calls,
                     score=score, dose=args.dose)
