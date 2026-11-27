@@ -1362,13 +1362,63 @@ Tests: `a_request_without_caller_inputs_keeps_its_bytes` and
 `caller_inputs_round_trip_and_keep_their_bounds` in `answer_loop::tests`, and
 the reviewed schema capture `packages/contracts-gen/arbiter.schema.json`.
 
-Not done yet, each with its owner: the kernel uses `needs` and `anchors`
-(kernel `arbiter/CONTRACT.md`); `deliverable` and `known` are accepted and
-validated and do not yet change gathering. The public Answer tool's schema is
+Not done yet, each with its owner: the kernel uses `needs`, `anchors` and
+`deliverable` (kernel `arbiter/CONTRACT.md`, "Gathering rules"); `known` is
+accepted and validated and does not yet change gathering. The public Answer tool's schema is
 generated from this request type, so it now advertises the four fields
 (`fixtures/split/arbiter/public_answer_cases.json`, 70 lines added). The
 description asking callers to fill them and the `task` argument followed in
 change-log entry 74 ("Public Answer call" below).
+
+### Gathering rules on the wire (user decision, 26 November 2026)
+
+The user approved building the gathering rules a prototype proved into the
+kernel loop (kernel CONTRACT "Gathering rules", change-log entry 75). The
+request is unchanged: its bytes, digest and schema stay as they are. The
+reply changes three ways.
+
+- **Standing sub-needs.** `SubNeedOrigin` gains `standing`: a sub-need the
+  kernel added by the request's `deliverable`. A part's own sub-needs are
+  still all derived or all the caller's; up to `MAX_STANDING_NEEDS` (4)
+  standing sub-needs follow them, with the next ids, in a one-part reply
+  only ("Answer standing sub-needs follow the others, in a one-part reply").
+  The own sub-needs keep their bounds: `MAX_NEEDS` (8) for the caller's, the
+  budget's `max_sub_needs` for derived ones. `MAX_SUB_NEEDS` and
+  `MAX_NEEDS` keep their names and values. One part of eight caller and
+  four standing sub-needs takes 1 + 1 + 3 x 12 x 2 = 74 decisions, inside
+  `MAX_DECISIONS` (101); a reply with standing sub-needs is one part, so
+  the multi-part bound is unchanged.
+- **Round-one bound.** Round one of a part may hold `PART_SEARCHES` (1) +
+  `MAX_ANCHORS` (16) + `GATHERING_READS_PER_PART` (48) + sub-needs x
+  (`FIRST_ROUND_READS_PER_SUB_NEED` (6) + `SEARCH_LANES_PER_SUB_NEED` (2))
+  reads; it was 1 + 16 + sub-needs x 6. The reason: each sub-need's code
+  and configuration lanes, and the part's guidance, cited-file and
+  structure reads and lookups. The reply does not carry its request, so the
+  bound holds for every reply; the request's `calls` budget (default 132,
+  unchanged) still bounds the reads actually made, and the kernel keeps one
+  follow-up read per sub-need and later round out of the gathering.
+- **`gathering`** (optional, omitted when absent; absent on a ticket):
+  `rules` (the `GatheringRule`s on: `search_lanes`, `standing_needs`,
+  `project_guidance`, `cited_files`, `structure_following`,
+  `every_passage_to_every_need`, `delivery_by_need`) and `stages`, one per
+  `GatheringStageKind` at most (`retrieve`, `guidance`, `cited`,
+  `structure`, `coverage`, `follow_up`, `delivery`), each with `reads`
+  (one count above zero per `LoopRead`), `lookups`, `passages_fetched`,
+  `passages_offered`, `passages_delivered`, `model_judgments` and
+  `elapsed_ms`. The stages are disjoint spans of the one run, so their times
+  together are at most `deadline_ms` + `DEADLINE_TOLERANCE_MS`; they are not
+  compared with the reply's `elapsed_ms`, which the service's job table sets
+  to the caller's own wait when a call attaches to a running job. The reads
+  and lookups of all stages equal `work.calls`. It is disclosure only: no record id,
+  digest or decision binds it, and it is outside the loop semantics digest
+  (`answer_loop.rs` is not one of its sources).
+
+Tests: `a_gathering_report_accounts_for_every_call_and_names_each_stage_once`
+and the refusal cases `standing_need_in_a_two_part_reply`,
+`gathering_calls_differ_from_the_work` and `round_reads_over_structure`
+(now at 74) in `answer_loop::tests`; regenerated
+`packages/contracts-gen/arbiter.schema.json`, the TypeScript views and
+`fixtures/split/arbiter/answer_loop_cases.json`.
 
 ### Public Answer call (user decision, 25 November 2026)
 

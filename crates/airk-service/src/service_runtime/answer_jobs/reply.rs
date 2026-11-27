@@ -43,6 +43,8 @@ pub(crate) fn pending_reply(
         omitted_evidence: vec![],
         // No read ran for a ticket, so it has no per-read status.
         read_status: None,
+        // No gathering ran for a ticket.
+        gathering: None,
         record_uses: vec![],
         paragraphs: vec![],
         union: UnionSummary::default(),

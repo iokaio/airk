@@ -118,6 +118,8 @@ pub(crate) struct Dispatch {
     pub(crate) subject: String,
     /// Deterministic dispatch order over the whole Answer.
     pub(crate) seq: u32,
+    /// The gathering stage that planned the read (`v3::GatheringReport`).
+    pub(crate) stage: v3::GatheringStageKind,
 }
 impl Dispatch {
     fn use_of(&self) -> Use {
@@ -176,6 +178,8 @@ pub(crate) struct Record {
     pub(crate) uses: Vec<Use>,
     /// A canonical failure receipt of an optional read.
     pub(crate) failure: bool,
+    /// The gathering stage that planned the read.
+    pub(crate) stage: v3::GatheringStageKind,
 }
 impl Record {
     pub(crate) fn used_by(&self, part: u8, need: Option<u8>, round: u8) -> bool {
@@ -262,6 +266,11 @@ pub(crate) struct Gathering {
     pub(crate) failed: usize,
     next_seq: u32,
     pub(crate) stop: Option<GlobalStop>,
+    /// The gathering stage new dispatches are planned in; a follow-up read
+    /// is always the follow-up stage's.
+    pub(crate) stage: v3::GatheringStageKind,
+    /// Reads admitted (and not released) per stage and operation.
+    pub(crate) taken: BTreeMap<(v3::GatheringStageKind, v3::LoopRead), usize>,
 }
 
 impl Gathering {
@@ -284,7 +293,23 @@ impl Gathering {
             failed: 0,
             next_seq: 0,
             stop: None,
+            stage: v3::GatheringStageKind::Retrieve,
+            taken: BTreeMap::new(),
         })
+    }
+
+    /// Reads the Answer may still admit beyond those already queued: the
+    /// smaller of the calls and candidates left.
+    pub(crate) fn room(&self) -> usize {
+        self.budget
+            .calls
+            .saturating_sub(self.calls)
+            .min(
+                self.budget
+                    .candidates
+                    .saturating_sub(self.admitted_candidates()),
+            )
+            .saturating_sub(self.queue.len())
     }
 
     /// A dispatch at this revision, numbered in offer order.
@@ -319,6 +344,11 @@ impl Gathering {
             step,
             subject: subject.to_owned(),
             seq: self.next_seq,
+            stage: if cause == Cause::FollowUp {
+                v3::GatheringStageKind::FollowUp
+            } else {
+                self.stage
+            },
         })
     }
 
@@ -431,6 +461,10 @@ impl Gathering {
                 self.reads.insert(dispatch.key, Entry::Pending(uses));
             }
             self.calls += 1;
+            *self
+                .taken
+                .entry((dispatch.stage, dispatch.operation))
+                .or_default() += 1;
             self.pending.insert(dispatch.seq, dispatch.clone());
             taken.push(dispatch);
         }
@@ -445,6 +479,13 @@ impl Gathering {
                 self.reads.insert(dispatch.key, Entry::Queued(uses));
             }
             self.calls -= 1;
+            let key = (dispatch.stage, dispatch.operation);
+            if let Some(count) = self.taken.get_mut(&key) {
+                *count -= 1;
+                if *count == 0 {
+                    self.taken.remove(&key);
+                }
+            }
             self.queue.push_front(dispatch);
         }
     }
@@ -593,6 +634,7 @@ impl Gathering {
             seq: dispatch.seq,
             uses: Vec::new(),
             failure,
+            stage: dispatch.stage,
         });
         for item in uses {
             self.records[index].attach(item);

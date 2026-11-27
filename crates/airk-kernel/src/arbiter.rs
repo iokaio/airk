@@ -1254,8 +1254,10 @@ mod joint;
 pub mod software;
 pub use answer::{
     AdmissionPlan, AnswerCustody, AnswerEnv, AnswerOutcome, AnswerPostExecutionStale,
-    AnswerProgress, CanonicalReadFn, CustodyRecord,
+    AnswerProgress, CanonicalReadFn, CustodyRecord, GatheringRules,
 };
+#[cfg(feature = "test-support")]
+pub use answer::bind_gathering_rules;
 pub use focus::FocusPostExecutionStale;
 pub use joint::JointPostExecutionStale;
 #[cfg(test)]

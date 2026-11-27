@@ -140,6 +140,36 @@ pub(crate) fn anchor_search(gather: &mut Gathering, part: u8, anchor: &str) -> R
     )
 }
 
+/// Hits of a sub-need's configuration lane (rule 1).
+const CONFIGURATION_LANE_HITS: usize = 4;
+
+/// One more round-one search of a sub-need in its own words, restricted to
+/// one evidence kind (rule 1, search lanes): source code, so documents
+/// cannot crowd code out of its candidates, or configuration for a standing
+/// sub-need about tests and builds. Its hits come whole and are spans.
+pub(crate) fn lane_search(
+    gather: &mut Gathering,
+    part: u8,
+    need: &Need,
+    kind: airk_core::search_filters::EvidenceKind,
+) -> Result<Dispatch> {
+    let limit = match kind {
+        airk_core::search_filters::EvidenceKind::Configuration => CONFIGURATION_LANE_HITS,
+        _ => SHAPE.need_hits,
+    };
+    let mut arguments = search_args(&need.query, limit, true);
+    arguments["evidence_kind"] = serde_json::to_value(kind)?;
+    gather.dispatch(
+        ("search", v3::LoopRead::Search),
+        arguments,
+        (part, Some(need.id), 1),
+        Cause::NeedSearch,
+        FollowUp::Keyword,
+        Step::Leaf,
+        &need.query,
+    )
+}
+
 /// The first reads of a sub-need in round one.
 pub(crate) fn initial(gather: &mut Gathering, part: u8, need: &Need) -> Result<Vec<Dispatch>> {
     let at = (part, Some(need.id), 1);

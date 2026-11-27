@@ -177,6 +177,73 @@ fn a_request_without_caller_inputs_keeps_its_bytes() -> Result<()> {
 }
 
 #[test]
+fn a_gathering_report_accounts_for_every_call_and_names_each_stage_once() -> Result<()> {
+    let stage = |kind, count, lookups| GatheringStage {
+        stage: kind,
+        reads: vec![GatheringReads {
+            operation: LoopRead::Search,
+            count,
+        }],
+        lookups,
+        passages_fetched: 3,
+        passages_offered: 3,
+        passages_delivered: 1,
+        model_judgments: 0,
+        elapsed_ms: 100,
+    };
+    // The valid reply makes six calls: four searches and two lookups.
+    let mut packet = response();
+    packet.gathering = Some(GatheringReport {
+        rules: vec![GatheringRule::SearchLanes, GatheringRule::DeliveryByNeed],
+        stages: vec![
+            stage(GatheringStageKind::Retrieve, 3, 0),
+            stage(GatheringStageKind::Structure, 1, 2),
+        ],
+    });
+    packet.validate(&budget())?;
+    let raw = serde_json::to_value(&packet)?;
+    assert_eq!(
+        raw["gathering"]["rules"],
+        serde_json::json!(["search_lanes", "delivery_by_need"])
+    );
+    assert_eq!(raw["gathering"]["stages"][1]["stage"], "structure");
+    // Absent, it is omitted, so a reply without it keeps its bytes.
+    assert!(serde_json::to_value(response())?.get("gathering").is_none());
+    let refuse = |change: &dyn Fn(&mut GatheringReport), error: &str| {
+        let mut wrong = packet.clone();
+        change(wrong.gathering.as_mut().unwrap());
+        let found = wrong.validate(&budget()).unwrap_err().to_string();
+        assert!(found.contains(error), "{found}");
+    };
+    refuse(
+        &|report| report.stages[1].stage = GatheringStageKind::Retrieve,
+        "names a rule or stage twice",
+    );
+    refuse(
+        &|report| report.rules.push(GatheringRule::SearchLanes),
+        "names a rule or stage twice",
+    );
+    refuse(
+        &|report| report.stages[0].reads[0].count = 0,
+        "not one count per operation",
+    );
+    // The stages are spans of one run: together at most the 300,000 ms
+    // deadline and its 1,000 ms tolerance, whatever the reply's own wait.
+    let mut attached = packet.clone();
+    attached.elapsed_ms = 5;
+    attached.validate(&budget())?;
+    refuse(
+        &|report| report.stages[0].elapsed_ms = 300_901,
+        "outlast the deadline and its tolerance",
+    );
+    refuse(
+        &|report| report.stages[1].lookups = 3,
+        "differ from the reply's calls",
+    );
+    Ok(())
+}
+
+#[test]
 fn caller_inputs_round_trip_and_keep_their_bounds() -> Result<()> {
     let mut full = request();
     full.needs = (0..8).map(|n| format!("need {n}")).collect();
@@ -748,6 +815,7 @@ fn response() -> ContextResponseV3 {
             reason: "Compact on CUDA".into(),
         }],
         read_status: None,
+        gathering: None,
     }
 }
 fn ticket() -> ContextResponseV3 {
@@ -899,9 +967,37 @@ fn refusals() -> Vec<(&'static str, Mutation, &'static str)> {
         ),
         (
             "round_reads_over_structure",
-            // One part search, sixteen anchor lookups and six reads for the one sub-need allow 23.
-            |r| r.parts[0].rounds[0].calls = 24,
+            // One part search, sixteen anchor lookups, 48 gathering reads and
+            // six recipe reads and two lane searches for the one sub-need allow 73.
+            |r| r.parts[0].rounds[0].calls = 74,
             "Answer round reads exceed its structural limit",
+        ),
+        (
+            "standing_need_in_a_two_part_reply",
+            |r| r.parts[1].sub_needs[0].origin = SubNeedOrigin::Standing,
+            "Answer standing sub-needs follow the others, in a one-part reply",
+        ),
+        (
+            "gathering_calls_differ_from_the_work",
+            |r| {
+                r.gathering = Some(GatheringReport {
+                    rules: vec![GatheringRule::SearchLanes],
+                    stages: vec![GatheringStage {
+                        stage: GatheringStageKind::Retrieve,
+                        reads: vec![GatheringReads {
+                            operation: LoopRead::Search,
+                            count: 5,
+                        }],
+                        lookups: 0,
+                        passages_fetched: 4,
+                        passages_offered: 4,
+                        passages_delivered: 2,
+                        model_judgments: 0,
+                        elapsed_ms: 10,
+                    }],
+                })
+            },
+            "Answer gathering reads and lookups differ from the reply's calls",
         ),
         (
             "fanout_over_budget",
@@ -1338,7 +1434,7 @@ fn valid_two_part_response_and_ticket_are_accepted() -> Result<()> {
 #[test]
 fn each_rule_refuses_only_its_own_violation() -> Result<()> {
     let cases = refusals();
-    assert_eq!(cases.len(), 73);
+    assert_eq!(cases.len(), 75);
     for (id, mutate, expected) in cases {
         let mut packet = response();
         mutate(&mut packet);

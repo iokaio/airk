@@ -4310,3 +4310,67 @@ need `node scripts/build-explorer.cjs --write-help-manifest` in
 packages' installed dependencies. The evaluation harness still supplies
 Answer's `schema` and `budget` and sends `question`; frozen offers and
 retained fixtures are unchanged.
+
+### 75. The gathering rules a prototype proved, built into the kernel loop
+
+The user approved building the proven gathering rules into the kernel on 26
+November 2026. On four real tasks with 21 required passages the kernel loop
+without a model delivered 1; a prototype outside the runtime that changed
+what is fetched and how it is offered delivered 14
+([prototype tool](../../scripts/arbiter-answer-eval/README.md#single-stage-arbiter-loop-prototype);
+its results page, `docs/arbiter/gather-context-loop.md`, is not on this
+branch yet).
+
+**Kernel.** Seven rules, each a switch (`GatheringRules`), all on in a
+product build; a test-support build may bind another set once for its
+process, and the private evaluation fixture reads it from
+`AIRK_ARBITER_EVALUATION_ANSWER_GATHERING` (`all`, `none`, or a list with
+`-name` removals). They apply only to a one-part request with caller needs
+or a deliverable that brings standing sub-needs; every other request makes
+the same reads as before.
+
+1. Search lanes: each sub-need's round-one search also runs on source code
+   only, and the test-command and build-file standing sub-needs also on
+   configuration only.
+2. Standing sub-needs by deliverable: project rules, the test command, the
+   build file and, for a code change, the error path, after the caller's or
+   derived sub-needs.
+3. Project guidance and cited files: one listing per guidance folder, head
+   reads of `CLAUDE.md`, `AGENTS.md`, `CONTRIBUTING.md` and `README.md`
+   found there, then the files they and the best passages name by path.
+4. Structure following from code facts (line-range and minimal rows):
+   enclosing definitions, callees (same file first, then by name), call
+   sites and users of inherited types, read once per file where ranges are
+   near.
+5. Every passage offered to every sub-need, after a cheap rare-word cut.
+6. Delivery by need inside one byte budget, half the reply frame.
+7. Per-stage counts and timings in every reply.
+[Kernel contract](../../crates/airk-kernel/src/arbiter/CONTRACT.md#gathering-rules-user-decision-26-november-2026)
+
+**Contract.** The request is unchanged. `SubNeedOrigin` gains `standing`
+(at most `MAX_STANDING_NEEDS`, 4, after the others, one-part replies only).
+The round-one bound was 1 + 16 + sub-needs x 6 and is now 1 + 16 + 48
+(`GATHERING_READS_PER_PART`) + sub-needs x (6 + 2,
+`SEARCH_LANES_PER_SUB_NEED`). The reply gains the optional `gathering`
+report, whose reads and lookups equal `work.calls`. `MAX_SUB_NEEDS`,
+`MAX_NEEDS`, `MAX_DECISIONS`, the default and maximum calls and every card
+policy and digest source are unchanged.
+[Core contract](../../crates/airk-core/src/arbiter/CONTRACT.md#gathering-rules-on-the-wire-user-decision-26-november-2026)
+
+**Generated.** The reviewed schema capture gained 175 lines and lost none;
+`arbiter.ts` and `arbiter.d.ts` were regenerated from it (73 lines added and
+one changed in each: the `SubNeedOrigin` union). The Rust-emitted cases
+(46 lines added, one changed) gained two
+refusals (`standing_need_in_a_two_part_reply`,
+`gathering_calls_differ_from_the_work`), and `round_reads_over_structure`
+moved its boundary from 24 to 74 reads.
+
+**Behaviour change for caller needs.** A request with caller needs and no
+deliverable now also carries three standing sub-needs, so its part holds
+up to eleven sub-needs; the caller test was updated to say so.
+
+**Not done.** `known` still does not change gathering. The public Answer
+tool's description still says `deliverable` does not change gathering; it
+belongs to the public tool surface and was left to that change. The rules
+were run only on canned reads in kernel tests, not on the real indexes, and
+nothing was measured on the four tasks.
