@@ -27,7 +27,6 @@ Stop early session expiry.
 ## Before you start
 
 - Read this whole plan before acting.
-- Verify every cited file against the current workspace; treat excerpts as candidates, not facts.
 - Do only the task you were asked to do. Stop and report if a dependency is not complete or evidence is stale.
 - Report changed files and test results, then ask before continuing.
 

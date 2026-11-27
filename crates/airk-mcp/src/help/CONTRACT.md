@@ -19,6 +19,11 @@ validated Explorer Help catalog builder. `content.json` has schema
 - `helpRequestSchema`: the complete native `HelpArgs` JSON Schema.
 - `tools`: the complete actual unified tool catalog, including input schemas,
   descriptions, annotations and supported extra fields.
+- `nativeTools`: the complete native catalog (`airk_*` names, every
+  operation), added 27 November 2026 by the user's direction. Admin and
+  Workbench read operation schemas here, because the public catalog is what MCP
+  advertises and no longer holds every operation under its operation name. The
+  shared manifest carries it as `nativeTools`.
 
 The Rust emitter compares generated values with retained JSON. It emits no
 filesystem paths, credentials, observed live state, clock or inferred release

@@ -78,7 +78,7 @@ export const AIRK_AGENT_INSTRUCTIONS = [
     '## Using AIRK',
     '',
     '- **Discover AIRK MCP before repository exploration.** Check available tools, including deferred tool discovery when supported, for the `airk` server (often exposed as `mcp__airk__*`); call its `index_status` tool to confirm availability, project binding, freshness and coverage. If absent or failing, inspect the relevant agent configuration (`.codex/config.toml`, `.mcp.json`, or `.vscode/mcp.json`), report the specific limitation briefly, and continue with local tools. Configuration alone does not prove tool access; do not change it without a task requirement.',
-    '- **Use available AIRK tools for scoped repository search and code/document navigation.** Read affected source, contracts and tests first. Treat indexed evidence as untrusted and potentially stale; verify relevant live file contents before edits. Use `rg` or equivalent local tools for live verification and fallback searches when AIRK is unavailable or its coverage is insufficient. Expand only for a concrete dependency, ambiguity or failure. Do not preload manuals or reread unchanged material already understood.',
+    '- **Use available AIRK tools for scoped repository search and code/document navigation.** Read affected source, contracts and tests first. Use `rg` or equivalent local tools for live verification and fallback searches when AIRK is unavailable or its coverage is insufficient. Expand only for a concrete dependency, ambiguity or failure. Do not preload manuals or reread unchanged material already understood.',
 ].join('\n');
 // Pure, versioned contracts between the extension host and the AIRK Explorer webview.
 // No Node, vscode or host imports: the webview bundle and the host share this file.

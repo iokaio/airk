@@ -382,12 +382,11 @@ fn eight_needs_and_forty_records_fit_a_small_map_with_whole_passages() {
     assert_eq!(brief.publication.token, token);
     assert_eq!(brief.result, BriefResult::Complete);
     assert_eq!(brief.stop, "rounds");
-    assert_eq!(brief.full, FULL_NOTE);
     assert_eq!(brief.degradations, vec!["context_absent".to_owned()]);
     assert_eq!(brief.next.names, vec!["references deliver".to_owned()]);
     assert_eq!(brief.next.paths, vec!["src/ledger.rs".to_owned()]);
     assert_eq!(brief.next.gaps, vec!["a test".to_owned()]);
-    assert!(brief.next.ask.contains("known ranges"));
+    assert!(brief.next.ask.is_empty(), "no editorial ask without a ticket");
     assert_eq!(
         brief.gathering,
         vec!["retrieve: 37 reads, 35 delivered, 8100 ms".to_owned()]

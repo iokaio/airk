@@ -93,7 +93,6 @@ pub fn helper_unavailable_receipt(error: &anyhow::Error) -> Option<serde_json::V
             "action": "retry_later_without_replay"
         }),
     );
-    crate::guidance::annotate(&mut value);
     Some(value)
 }
 
@@ -110,9 +109,9 @@ mod tests {
                 semantic_readiness: None,
                 discovery_readiness: None,
             });
-        let mut receipt = helper_unavailable_receipt(&error).unwrap();
+        let receipt = helper_unavailable_receipt(&error).unwrap();
         assert!(!receipt.to_string().contains("private model"));
-        receipt.as_object_mut().unwrap().remove("guidance");
+        assert!(receipt.get("guidance").is_none());
         assert_eq!(
             receipt,
             serde_json::json!({

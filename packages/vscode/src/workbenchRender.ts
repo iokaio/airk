@@ -348,7 +348,7 @@ export function markdown(turn: WorkbenchTurn, selected?: Set<string>,projection=
         ...(turn.envelope ? [`### ${selected?'Complete selected response':'Complete response'}\n\n${fenced(canonical(selected?selectedEnvelope(turn,selected,e):turn.envelope))}`] : []),
         ...(turn.nativeFailure?[`### Complete original native refusal\n\n${fenced(canonical(turn.nativeFailure))}`]:[]),
         `Warnings: ${escape(JSON.stringify(e.warnings ?? []))}`, `Completeness: ${escape(JSON.stringify(e.completeness ?? []))}`,
-        ...(e.source_verification?[verificationLabel(e.source_verification),'Saved-byte observations retain their original dates. Extraction, coverage, relevance and unsaved buffers remain unverified; recheck before later edits.']:['Untrusted indexed evidence. Verify relevant live files before edits.'])].join('\n\n');
+        ...(e.source_verification?[verificationLabel(e.source_verification),'Saved-byte observations retain their original dates.']:[])].join('\n\n');
 }
 export function renderExport(session: WorkbenchSession, format: 'json'|'markdown', turnId?: string, selection?: string[],resolve:(turn:WorkbenchTurn)=>Value|undefined=turn=>turn.envelope): string {
     const turns = session.turns.filter(turn => !turnId || turn.id === turnId);

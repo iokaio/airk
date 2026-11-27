@@ -142,7 +142,7 @@ async function declarations(context: ReviewContext, paths: readonly string[]): P
     const total = groups.reduce((count, group) => count + group.length, 0);
     truncated ||= paths.length > selected.length || total > items.length;
     const notes = [`Examined ${selected.length} of ${paths.length} changed/current-or-old paths, prioritizing source files; sampled ${items.length} of ${total} returned declarations across files.`];
-    if (truncated) { notes.push('Review is bounded: some paths, declarations or symbol pages were omitted. An empty or partial checklist is not proof of no impact.'); }
+    if (truncated) { notes.push('Review is bounded: some paths, declarations or symbol pages were omitted.'); }
     if (!items.length && selected.length) { notes.push('No usable indexed declarations were returned for the inspected paths. Check index freshness, extraction detail and parser support; changed tests are still listed separately.'); }
     return { items, truncated, publication, examined: selected.length, notes };
 }

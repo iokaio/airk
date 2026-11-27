@@ -123,7 +123,7 @@ export function SearchScreen(props: ScreenProps) {
                         <span role="status" aria-live="polite" aria-atomic="true">{page * 20 + 1}–{Math.min((page + 1) * 20, result.hits.length)} of {result.hits.length} results · Page {page + 1} of {Math.ceil(result.hits.length / 20)}</span>
                         <button class="ghost" disabled={(page + 1) * 20 >= result.hits.length} onClick={() => editSearchPage(page + 1)}>Next</button>
                     </nav>}
-                    {!result.hits.length && <p class="callout">No indexed evidence matched. That is not proof the text is absent from unindexed or changed files.</p>}
+                    {!result.hits.length && <p class="callout">No indexed evidence matched.</p>}
                     <ol class="hits" start={page * 20 + 1}>
                         {searchPage(result.hits, page).map(hit => {
                             const outcome = opened[hit.ref];

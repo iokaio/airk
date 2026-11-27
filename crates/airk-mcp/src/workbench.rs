@@ -124,7 +124,6 @@ fn answer_verification_owner(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anyhow::Context;
 
     #[test]
     fn answer_inner_reads_cannot_mint_verification_budgets_but_parse_keeps_explicit_controls() {
@@ -268,14 +267,7 @@ mod tests {
                     .call(tool.into(), args.as_object().unwrap().clone())
                     .await?,
             )?;
-            assert!(
-                result["guidance"]["observations"]
-                    .as_array()
-                    .context("guidance missing")?
-                    .iter()
-                    .any(|v| v["reason"] == reason),
-                "{result}"
-            );
+            assert!(result.get("guidance").is_none(), "{}: {result}", reason);
         }
         assert_eq!(kernel.status_summary()?["publication"], publication);
         assert_eq!(
@@ -332,14 +324,7 @@ mod tests {
                     )
                     .await?,
             )?;
-            assert!(
-                result["guidance"]["observations"]
-                    .as_array()
-                    .context("guidance missing")?
-                    .iter()
-                    .any(|v| v["reason"] == expected),
-                "{result}"
-            );
+            assert!(result.get("guidance").is_none(), "{}: {result}", expected);
             assert_eq!(result["freshness"]["live_source_verified"], false);
             assert_eq!(result["freshness"]["requested_watermark"], 2);
             assert_eq!(result["freshness"]["completed_watermark"], 1);

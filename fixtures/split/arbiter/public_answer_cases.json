@@ -333,7 +333,7 @@
             "type": "null"
           }
         ],
-        "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results; it does not resolve calls or verify live source."
+        "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results."
       },
       "schema": {
         "description": "Existing full request only; supplied by the service for task.",

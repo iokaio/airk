@@ -148,6 +148,11 @@ Every other public tool, including `file_info`, keeps its name.
   typed retry beyond the limit) lives in the `index_status` description, by
   the user's decision of 26 November 2026. The server guidance is limited to
   512 bytes and now carries routing.
+- The guidance no longer opens with "Untrusted index; verify live bytes before
+  edits.", and the `read_indexed_range` and `find_references` descriptions no
+  longer end their next step with "verify live source before edits", by the
+  user's decision of 27 November 2026
+  ([MCP response contract](../crates/airk-mcp/src/response/CONTRACT.md#guidance-without-the-untrusted-index-sentence-user-decision-27-november-2026)).
 
 
 

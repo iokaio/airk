@@ -31,7 +31,7 @@ test('Inspector preserves complete predecessor provenance for details and copies
     assert.match(view.legacyAvailabilityMessage!,/Original saved profile bytes: unavailable/);
     assert.match(view.legacyAvailabilityMessage!,/Vector selection: unavailable/);
     assert.match(view.legacyAvailabilityMessage!,/Current profile-family reads: unavailable/);
-    assert.match(view.legacyAvailabilityMessage!,/does not establish current profile or vector readiness/);
+    assert.match(view.legacyAvailabilityMessage!,/Current profile-family reads: /);assert.doesNotMatch(view.legacyAvailabilityMessage!,/does not establish|verify the live source/);
     const copied = JSON.stringify(view.nativeResult,null,2);
     assert.deepEqual(JSON.parse(copied).legacy_saved_evidence,legacy);
     const raw = {content:[{type:'text',text:JSON.stringify(payload)}],structuredContent:payload,future_envelope:{retained:true}};

@@ -191,7 +191,7 @@ function project(row: RecordValue, state: ServiceConsoleState): { rows: FactRow[
         : semantic.state === 'disabled' && snapshot.vectors_enabled === true
         ? { severity: 'warn', title: 'Semantic setup incomplete', detail: 'Semantic mode is enabled, but the inspected publication has no semantic coverage and no active request was observed. Complete setup prepares the selected offline model and queues indexing.', action: 'enableSemantic', actionLabel: 'Complete semantic setup' }
         : snapshot.index_state === 'available' || snapshot.index_state === 'ready'
-        ? { severity: 'ok', title: 'Published index available', detail: 'A published index is available. This does not prove that saved source files still match it.' }
+        ? { severity: 'ok', title: 'Published index available', detail: 'A published index is available.' }
         : { severity: 'info', title: 'Index status not checked', detail: 'Check index and storage to collect a native inspection. Refresh only reloads cached observations.', action: 'inspect', actionLabel: 'Check index & storage' };
     return {
         rows: rows([['Index format', formats.index === 1 ? 'Index format 1 (index-v1)' : undefined], ['Index data', registration.data_root], ['Project identity', binding], ['Source observation', watch.enabled === true && watch.failure === 'backend_unavailable' && typeof watch.observed_unix_ms !== 'number'

@@ -52,7 +52,7 @@ for supported flags, conflicts, parse defaults and Workbench equivalents.
 Equivalent CLI, MCP and Workbench reads share the canonical handlers and retain complete result data. `tools call` emits the MCP envelope; `tools shell` pretty-prints its text payload; dedicated aliases build arguments with their documented defaults. Direct status/diagnostics report `query_concurrency` at the result's top level; executed parse plans retain it inside each completed status/diagnostics step. [The parity audit](read-interface-parity.md) records all 17 read mappings, supported inputs and the actual-process regressions. Separate requests retain their own request IDs, observation times and cache ages.
 
 - Select the canonical source root, separate index data directory and collection/binding. A UI dropdown does not redirect a native query. Keep index/control/log storage outside source roots.
-- Published evidence is an indexed snapshot. Preserve publication tokens, hashes, validators, original locations, continuation filters and byte budgets. Verify live files separately before editing.
+- Published evidence is an indexed snapshot. Preserve publication tokens, hashes, validators, original locations, continuation filters and byte budgets.
 - Ordinary queries print JSON; failures exit nonzero with diagnostics on stderr (`--output json` selects JSON error lines). Help/text/CSV/Markdown output, the interactive tools shell and the window session (`airkctl session`) have their documented output/lifetime contracts.
 - Source files remain read-only. Management commands can change owned registry, settings, jobs, indexes, logs and agent configuration entries. The service also maintains caches/accounting metadata.
 - Honor exact typed retry hints only for the eligible read. Unknown submission outcomes require the saved durable request/nonce contract; do not submit a new operation identity to guess whether a mutation succeeded.
@@ -612,7 +612,7 @@ Usage: airkctl projects [OPTIONS]
 
 **Purpose:** Read an indexed file's lines (--start-line/--end-line) from the published revision, with a citation
 
-**Behavior and developer use:** Returns indexed text, not current filesystem contents. Retain its publication, hash, citation and original location, then verify live bytes separately before editing.
+**Behavior and developer use:** Returns indexed text, not current filesystem contents. Retain its publication, hash, citation and original location.
 
 ```text
 Usage: airkctl read [OPTIONS] --start-line <START_LINE> --end-line <END_LINE> <PATH>

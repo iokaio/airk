@@ -100,12 +100,15 @@ accounted for and all distinct referenced sources matched under the publication
 and scope fence. An unknown denominator remains unknown. Metadata or output
 limits cannot silently turn an incomplete inventory into a verified subset.
 
-Only a corresponding saved-source freshness warning is replaced by a dated match
-observation. Scope, search coverage, extraction/OCR, unresolved-language and
-relevance qualifications remain. Collection `freshness.live_source_verified`
-continues to be false: checking returned files does not verify the entire index.
-Recheck live files before later edits; serialized receipts are not signatures or
-transferable source-read authority.
+A plan result whose receipt is verified carries that receipt in
+`source_verification` and no sentence about it among its warnings. Until 27
+November 2026 a plan result opened with "Untrusted indexed evidence; verify live
+files before edits." and a dated sentence replaced it after a match; the user
+removed both that day, deciding that what an agent receives is content and
+file references without editorial (see the
+[Core contract](../crates/airk-core/src/verification/CONTRACT.md#plan-warnings-user-decision-27-november-2026)).
+Collection `freshness.live_source_verified` continues to be false: checking
+returned files does not verify the entire index.Serialized receipts are not signatures or transferable source-read authority.
 
 ## Work and limits
 

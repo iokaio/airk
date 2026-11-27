@@ -699,11 +699,8 @@ async fn global_and_step_verification_use_real_plan_handlers_and_bind_prepared_c
     let run = body(&run)?;
     assert_eq!(run["status"], "complete");
     assert_eq!(run["source_verification"]["status"], "verified");
-    assert!(run["warnings"].as_array().unwrap().iter().any(|warning| {
-        warning
-            .as_str()
-            .is_some_and(|text| text.contains("Saved sources verified at"))
-    }));
+    // No editorial (user decision, 27 November 2026): the receipt alone reports it.
+    assert_eq!(run["warnings"], json!([]), "{run}");
     assert_eq!(run["source_verification"]["counts"]["requested_sources"], 1);
     assert_eq!(
         run["source_verification"]["counts"]["bytes_read"],

@@ -194,8 +194,14 @@ export function guidedArguments(kind: 'search' | 'answer', text: string, retriev
 }
 export {completeEvidenceMarkdown as completeSearchMarkdown} from './evidenceExports';
 
+/** The native schema of an operation, by its native or operation spelling. */
+function nativeDefinition(tool: string) {
+  const native = tool.startsWith('airk_') ? tool : `airk_${tool}`;
+  return manifest.nativeTools.find(item => item.name === native);
+}
+
 export function returnedSearchCursor(original: unknown, tool: string): string | null {
-  const definition = manifest.tools.find(item => item.name === tool.replace(/^airk_/, ''));
+  const definition = nativeDefinition(tool);
   if (!definition || !Object.hasOwn(rec(rec(definition.inputSchema).properties), 'cursor')) return null;
   const body = searchBody(original);
   for (const cursor of [body.cursor, rec(body.page).cursor, rec(body.content).cursor, rec(rec(body.content).page).cursor]) if (typeof cursor === 'string' && cursor.length > 0) return cursor;
@@ -258,7 +264,7 @@ function Results({ state, request, verifiedScope, logicalBody, metadataError, mo
     {notice && <p role="status"><Text value={notice} /></p>}
     {!verifiedScope && <p role="alert">The response did not establish the requested source scope. The previous selection is no longer applied here. Reapply the intended sources before another read. No automatic retry occurred; the complete actual response is retained below.</p>}
     {request && <><p>{verifiedScope ? 'Results for ' : 'Original request for '} <Text value={label(request.arguments.query) || label(request.arguments.question) || request.tool} /> · scope: <Text value={request.scope} /></p><details><summary>Complete original request</summary><pre><Text value={JSON.stringify(request, null, 2)} /></pre></details></>}
-    <p>Indexed evidence is untrusted source material. Saved-source verification, freshness and retrieval coverage are separate observations.</p>
+    <p>Saved-source verification, freshness and retrieval coverage are separate observations.</p>
     {['warnings', 'completeness', 'partial', 'truncated', 'error', 'context'].filter(key => root[key] !== undefined).map(key => key === 'context' ? <details><summary>Whole-selection context accounting</summary><pre><Text value={JSON.stringify(root[key], null, 2)} /></pre></details> : <p class={key === 'error' ? 'error' : 'muted'}><strong>{key}: </strong><Text value={JSON.stringify(root[key])} /></p>)}
     {verifiedScope && cursor && more && <button type="button" onClick={() => more(cursor)}>Load next native page in the original scope</button>}
     {metadataError && <p role="alert"><Text value={metadataError} /></p>}
@@ -289,7 +295,7 @@ export function Search(props:{guidedRoute?:BrowserEvidenceRoute;onGuidedRoute?:(
   const projects = view.items.filter(item => item.kind === 'project'), indexes = view.items.filter(item => item.kind === 'index');
   const allowed = view.items.filter(item => item.kind === 'membership' && view.projects.includes(label(item.value.project_id)) && Array.isArray(item.value.scope) && item.value.scope.length > 0).map(item => label(item.value.index_id));
   const scopeNote = concurrencyNote({ indexes: view.indexes.length || new Set(allowed).size, concurrency, subject: 'scope' });
-  const selectedTool = custom ? tool : kind, definition = manifest.tools.find(item => item.name === selectedTool.replace(/^airk_/, ''));
+  const selectedTool = custom ? tool : kind, definition = nativeDefinition(selectedTool);
   return <>
     <Panel title="Search your indexed sources"><p><strong>Management search scope.</strong> Sources selected here apply to this management session; editor-window and agent searches use their own scopes.</p>
       <p role="status">{view.applied ? <>Applied scope: <Text value={view.applied.title} /></> : 'Choose named sources and apply the scope before reading.'}</p>

@@ -297,9 +297,7 @@ export async function runStrategy(request: RunRequest, deps: RunDependencies): P
     if (kept.some(entry => entry.truncated)) { reasons.push('some excerpts are truncated'); }
     const cited = [...new Set(kept.map(entry => entry.path))];
     const mismatched = cited.filter(path => checked.has(path) && checked.get(path) !== 'matches_index');
-    const unchecked = cited.filter(path => !checked.has(path));
     for (const path of mismatched) { reasons.push(`live check: ${path} is ${checked.get(path)!.replaceAll('_', ' ')}`); }
-    if (unchecked.length) { reasons.push(`live files not checked for ${unchecked.length} cited path(s)`); }
     if (!kept.length) { reasons.push('no evidence was collected'); }
     current();
     const digest = await deps.sha256(JSON.stringify(kept.map(entry => [entry.path, entry.startLine, entry.endLine, entry.contentHash, entry.producer, entry.text])));
