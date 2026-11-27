@@ -23,7 +23,7 @@ What was measured that day, on 20 tasks over two repositories:
 | Current Gather Context reply, 113 truth items | 7 carried, 16 named at their lines, 9 nearby, 32 file only, 49 file never reached |
 | Index lookups by exact name, 97 named truth items | definition lookup 84, exact lexical search 79, either 90 |
 | Index semantic search, given the truth's own description | 62 of 97 |
-| Oracle arm: a perfect reply from the truth (one repeat of 20 tasks so far) | about 10 percent lower cost, unweighted; 5 percent weighted four to one for narrow tasks |
+| Oracle arm: a perfect reply from the truth (60 sessions, medians of 3) | 22.0 percent lower cost weighted four to one for narrow tasks; cheaper on all 20 tasks; round trips 8.8 percent lower |
 
 Three readings follow.
 
@@ -33,11 +33,19 @@ Three readings follow.
 2. **The largest gap is the file, not the line.** For 49 of 113 items the
    current reply never reached the right file. A map of files is aimed at
    that gap.
-3. **The ceiling is low on tasks like these, and the reason is the agent,
-   not retrieval.** Given a perfect reply, agents still made about 14 reads
-   and 13 searches a task, against 15 and 16 without it. They check before
-   they act, and a file must be read before it can be edited. See
-   "The ceiling" below. This limits any design, this one included.
+3. **A perfect reply saves about a fifth, and the agent's own checking is
+   what limits it.** Given a perfect reply, agents still made about 15 reads
+   and 14 searches a task, against 15 and 16 without it. They check before
+   they act, and a file must be read before it can be edited. The saving
+   came from reading less in each read (153 KB against 192 KB) and one
+   fewer round trip. See "The ceiling" below. This limits any design, this
+   one included.
+
+Correction, same day: the first reading of the oracle, taken when one
+repeat of each task had finished, was about 5 percent weighted. With all
+three repeats the figure is 22.0 percent. A single repeat of a task varies
+by a quarter of its cost, so the early figure should not have been stated
+as a result.
 
 ## The ceiling
 
@@ -230,8 +238,9 @@ task set.
 ## Open questions for the user
 
 1. Is the ceiling result enough to change the goal? The stated win was
-   about 30 percent lower cost. The first oracle pass shows about 5 to 10
-   percent from a perfect reply in the current layout.
+   about 30 percent lower cost. A perfect reply in the current layout
+   saves 22 percent, so 30 percent needs a reply that also changes how
+   much the agent checks for itself, which step C tests.
 2. Should the task set gain harder cases (larger repositories, questions
    with no name) before judging the design, since the current tasks are
    ones a plain agent already does well and cheaply?
