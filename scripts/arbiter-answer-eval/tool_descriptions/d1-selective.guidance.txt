@@ -1,0 +1,1 @@
+gather_context finds where a task's code and documents are. Use it once at the start when the task does not say where the work is, spans several parts of the system, or asks for every place something occurs. When the task names its file, type or function, or is confined to one or two files, read them directly instead.
