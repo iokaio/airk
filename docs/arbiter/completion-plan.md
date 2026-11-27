@@ -222,9 +222,10 @@ Dated entries record the user's choices. The remaining proposals are open.
 11. **Default MCP tool profile and leaner default schemas:** decided on the
     free-choice comparison, after the Windows review. The CLI stays full
     featured either way.
-12. **Public tool names:** the proposed renames, tested in the free-choice
-    arm, and whether an old name stays callable for a release or the rename
-    is clean at 1.9.
+12. **Public tool names (decided 26 November 2026).** Adopt the nine
+    proposed names now, without first testing them in the free-choice arm.
+    The rename is clean at 1.9: an old public name is not callable.
+    [Public tool names](../unified-mcp.md#public-tool-names)
 13. **Autonomous index repair (decided 25 November 2026).** Add post-index
     and idle checks plus retrieval-triggered tickets. A proven, bounded
     repair can improve the triggering reply within twice the
@@ -1131,8 +1132,10 @@ current name misleads or collides.
   the public tool name changes.
 - Prepared Parse plans, the extension, Workbench and the harness catalog
   name public operations. Update each with the rename.
-- Whether an old public name stays callable for a release, or the rename is
-  clean at 1.9, is the user's decision.
+- The user adopted these names on 26 November 2026 without first running
+  the free-choice comparison, as a clean rename at 1.9 (decision 12). Parse
+  plan steps keep operation names, because prepared plans are digest-bound
+  and a retained fixture pins one.
 
 **Rules for narrowing.**
 

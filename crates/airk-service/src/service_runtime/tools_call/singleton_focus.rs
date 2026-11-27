@@ -32,7 +32,7 @@ fn admit_resolved(
     indexes: &[IndexId],
     limits_for: impl FnOnce(IndexId) -> Result<Option<FocusProfileLimits>>,
 ) -> Result<ReadAttemptContext> {
-    if !matches!(tool, "search" | "airk_search")
+    if airk_core::tool_names::operation(tool) != "search"
         || context.context_partition().is_some()
         || uses_combined_arguments(arguments)
     {

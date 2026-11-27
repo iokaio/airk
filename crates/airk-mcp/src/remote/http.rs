@@ -653,8 +653,9 @@ impl HttpReadService {
             };
             let tools = session.read_catalog();
             let aliases:Vec<_>=tools.iter().filter_map(|tool| {
-                let canonical=tool.name.strip_prefix("airk_").unwrap_or(&tool.name);
-                crate::local::tools().iter().find(|native|native.name.strip_prefix("airk_")==Some(canonical)).map(|native|serde_json::json!({"canonical":tool.name,"aliases":[if tool.name==native.name {canonical}else{native.name.as_ref()}]}))
+                // The other spelling of the same native tool: its public name
+                // for a native entry, its native name for a public entry.
+                crate::local::tools().iter().find(|native|native.name==tool.name||airk_core::tool_names::public_name_of_native(&native.name)==Some(tool.name.as_ref())).map(|native|{let public=airk_core::tool_names::public_name_of_native(&native.name).unwrap_or(&native.name);serde_json::json!({"canonical":tool.name,"aliases":[if tool.name==native.name {public}else{native.name.as_ref()}]})})
             }).collect();
             return json(
                 StatusCode::OK,

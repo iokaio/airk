@@ -70,7 +70,7 @@ impl OpenStatusSession {
         let explicit = full
             || result.get("isError").and_then(Value::as_bool) == Some(true)
             || matches!(
-                tool.strip_prefix("airk_").unwrap_or(tool),
+                airk_core::tool_names::operation(tool),
                 "status" | "diagnostics" | "capabilities" | "changes"
             )
             || explicit_status(

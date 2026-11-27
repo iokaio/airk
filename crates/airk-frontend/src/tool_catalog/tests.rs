@@ -39,18 +39,22 @@ fn the_names_only_list_has_every_tool_with_two_fields() {
 #[test]
 fn help_accepts_the_prefixed_name_and_keeps_field_order() {
     let plain = document(ToolsCatalogDetail::Help {
-        tool: "search".into(),
+        tool: "search_passages".into(),
     });
     let prefixed = document(ToolsCatalogDetail::Help {
         tool: "airk_search".into(),
     });
     assert_eq!(plain, prefixed);
-    assert!(plain.starts_with("{\n  \"name\": \"search\",\n"), "{plain}");
+    assert!(
+        plain.starts_with("{\n  \"name\": \"search_passages\",\n"),
+        "{plain}"
+    );
 }
 
 #[test]
 fn an_unknown_tool_is_a_typed_failure() {
-    for name in ["airk_", "airk_missing", "Search", ""] {
+    // "search" is the pre-1.9 public name: not callable after the clean rename.
+    for name in ["airk_", "airk_missing", "Search", "search", ""] {
         assert!(matches!(
             response(&ToolsCatalogDetail::Help { tool: name.into() }).unwrap(),
             ControlResponse::Failure { code } if code == "unknown_tool"

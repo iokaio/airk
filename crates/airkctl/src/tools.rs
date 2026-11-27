@@ -96,7 +96,7 @@ pub fn help_text(tool: &Value, name: &str) -> Option<String> {
         "\nSave arguments as query.json, then run with your collection options:\n  airkctl tools call {name} --args-file query.json\nInside the tools console:\n  call {name} --args-file query.json\n  call {name} {}\n",
         Value::Object(template)
     ));
-    if matches!(name, "airk_search" | "search") {
+    if airk_core::tool_names::operation(name) == "search" {
         text.push_str(
             "\nExplicit vector search (requires a published model/index and discloses partial coverage):\n  call airk_search {\"query\":\"how is a forgotten password recovered\",\"mode\":\"vector\",\"limit\":5}\nOmit mode for the saved collection search policy.\n",
         );

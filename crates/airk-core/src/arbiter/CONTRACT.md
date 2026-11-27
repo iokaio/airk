@@ -290,8 +290,8 @@ calibration returns unsupported; it cannot silently reuse a different head.
 budget: calls, rounds, fanout, input tokens, candidate count, output bytes and
 deadline. It cannot enroll indexes, choose an arbitrary executable operation,
 increase authority or change the selected model. Instructions are data.
-The composed public read is `answer` (`airk_answer` internally). Existing
-`context` retains its neighboring-lines contract. Management uses typed
+The composed public read is `gather_context` (`airk_answer` internally; public `answer` before 1.9). Existing
+`read_around` (`airk_context`) retains its neighboring-lines contract. Management uses typed
 status/configure/provision/cancel/remove/recover requests over the authorized
 service control plane. A public read never exposes service-wide enrollment;
 the answer reports application only for its authorized index partitions.

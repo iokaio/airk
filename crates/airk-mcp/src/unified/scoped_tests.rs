@@ -200,7 +200,11 @@ async fn selection_native_window_and_admin_routes_keep_complete_handler_results(
                 "airk_help",
                 json!({"tool":"airk_search","response_mode":"full"}),
             ),
-            ("status", "airk_status", json!({"response_mode":"full"})),
+            (
+                "index_status",
+                "airk_status",
+                json!({"response_mode":"full"}),
+            ),
             (
                 "airk_status",
                 "airk_status",
@@ -260,7 +264,7 @@ async fn selection_native_window_and_admin_failures_keep_selector_and_submission
             (3, "scoped_status_timeout", Value::Null),
         ] {
             native.mode.store(mode, Ordering::SeqCst);
-            let actual = call(&unified, "status", json!({})).await?;
+            let actual = call(&unified, "index_status", json!({})).await?;
             let detail = body(&actual).unwrap();
             assert_eq!(actual["isError"], true);
             assert_eq!(detail["error"]["code"], code);
@@ -285,7 +289,7 @@ async fn selection_native_window_and_admin_failures_keep_selector_and_submission
             native.mode.store(2, Ordering::SeqCst);
             let before = native.calls.load(Ordering::SeqCst);
             let args = if name.ends_with("help") {
-                json!({"tool":"search"})
+                json!({"tool":"search_passages"})
             } else {
                 json!({})
             };
@@ -305,7 +309,7 @@ async fn selection_native_window_and_admin_failures_keep_selector_and_submission
             .await
             .unwrap_err();
         let expected = serde_json::to_value(crate::response::typed_error_result(&error).unwrap())?;
-        assert_eq!(call(&unified, "status", json!({})).await?, expected);
+        assert_eq!(call(&unified, "index_status", json!({})).await?, expected);
         assert_eq!(ui.0.load(Ordering::SeqCst), 0);
     }
     Ok(())
@@ -315,14 +319,20 @@ async fn selected_native_help_and_status_keep_actual_handler_scope_without_ui_en
 -> Result<()> {
     let (_dir, unified, native, ui) = fixture()?;
     for (name, args) in [
-        ("help", json!({"tool":"search","response_mode":"full"})),
-        ("airk_help", json!({"tool":"search","response_mode":"full"})),
-        ("status", json!({"response_mode":"full"})),
+        (
+            "help",
+            json!({"tool":"search_passages","response_mode":"full"}),
+        ),
+        (
+            "airk_help",
+            json!({"tool":"search_passages","response_mode":"full"}),
+        ),
+        ("index_status", json!({"response_mode":"full"})),
         ("diagnostics", json!({"response_mode":"full"})),
     ] {
         let native_name = match name {
             "help" => "airk_help",
-            "status" => "airk_status",
+            "index_status" => "airk_status",
             "diagnostics" => "airk_diagnostics",
             name => name,
         };
@@ -352,7 +362,7 @@ async fn selected_public_help_and_native_alias_preserve_typed_scope_receipts_wit
 -> Result<()> {
     let (_dir, unified, native, ui) = fixture()?;
     native.mode.store(6, Ordering::SeqCst);
-    let arguments = json!({"tool":"search","response_mode":"full"});
+    let arguments = json!({"tool":"search_passages","response_mode":"full"});
     let error = native
         .call("airk_help".into(), arguments.as_object().unwrap().clone())
         .await
@@ -421,7 +431,7 @@ async fn selected_public_help_tool_aliases_return_complete_successful_native_sch
     // These calls reach real scoped LocalTools separately: retaining a previous
     // error would miss unsupported aliases and cannot satisfy these assertions.
     for name in ["help", "airk_help"] {
-        for tool in ["search", "airk_search"] {
+        for tool in ["search_passages", "airk_search"] {
             let actual = call(
                 &unified,
                 name,
@@ -446,7 +456,7 @@ async fn selected_status_setup_observation_failures_and_native_refusals_stay_dis
         (3, "scoped_status_timeout", Value::Null),
     ] {
         native.mode.store(mode, Ordering::SeqCst);
-        let reply = call(&unified, "status", json!({})).await?;
+        let reply = call(&unified, "index_status", json!({})).await?;
         assert_eq!(reply["isError"], true);
         let value = body(&reply).unwrap();
         assert_eq!(value["error"]["code"], code);
@@ -477,7 +487,7 @@ async fn selected_status_setup_observation_failures_and_native_refusals_stay_dis
     }
     native.mode.store(4, Ordering::SeqCst);
     let expected = native.call("airk_status".into(), Map::new()).await?;
-    assert_eq!(call(&unified, "status", json!({})).await?, expected);
+    assert_eq!(call(&unified, "index_status", json!({})).await?, expected);
     assert_eq!(ui.0.load(Ordering::SeqCst), 0);
     Ok(())
 }
@@ -556,13 +566,16 @@ async fn selected_public_routes_preserve_original_attempt_and_lifetime() -> Resu
     use std::time::{Duration, Instant};
     let (_dir, unified, native, ui) = fixture()?;
     for (name, args) in [
-        ("help", json!({"tool":"search"})),
-        ("airk_help", json!({"tool":"search"})),
-        ("status", json!({})),
+        ("help", json!({"tool":"search_passages"})),
+        ("airk_help", json!({"tool":"search_passages"})),
+        ("index_status", json!({})),
         ("airk_status", json!({})),
         ("diagnostics", json!({})),
         ("airk_diagnostics", json!({})),
-        ("search", json!({"query":"Fixture","mode":"lexical"})),
+        (
+            "search_passages",
+            json!({"query":"Fixture","mode":"lexical"}),
+        ),
         ("airk_search", json!({"query":"Fixture","mode":"lexical"})),
         ("query_scope", json!({"view":"projects"})),
         ("airk_query_scope", json!({"view":"projects"})),
@@ -607,7 +620,7 @@ async fn selected_public_routes_preserve_original_attempt_and_lifetime() -> Resu
     }
     assert_eq!(ui.0.load(Ordering::SeqCst), 0);
     let before = native.calls.load(Ordering::SeqCst);
-    for name in ["search", "help", "get_template", "query_scope"] {
+    for name in ["search_passages", "help", "get_template", "query_scope"] {
         let expired = ReadAttemptContext::new(
             Instant::now() - Duration::from_millis(1),
             Default::default(),
@@ -665,7 +678,13 @@ async fn combined_public_routes_keep_exact_selector_capacity_and_attempt() -> Re
         unified.combined_scope().map(|scope| scope.requested),
         Some(selection.requested.clone())
     );
-    for name in ["search", "airk_search", "help", "airk_help", "query_scope"] {
+    for name in [
+        "search_passages",
+        "airk_search",
+        "help",
+        "airk_help",
+        "query_scope",
+    ] {
         let context = crate::read_attempt::ReadAttemptContext::new(
             std::time::Instant::now() + std::time::Duration::from_secs(1),
             Default::default(),

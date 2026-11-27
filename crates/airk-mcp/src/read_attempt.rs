@@ -150,7 +150,7 @@ impl ReadAttemptContext {
         let arrival = Instant::now();
         let allowance = airk_core::read_attempt::read_budget_for_tool(tool);
         let mut context = Self::new(arrival + allowance, canceled).with_read_ceiling(allowance);
-        if matches!(tool, "search" | "airk_search") {
+        if airk_core::tool_names::operation(tool) == "search" {
             context.standalone_lexical_repair = Some(Arc::new(
                 lexical_repair::StandaloneLexicalRepair::new(arrival, allowance),
             ));
@@ -741,7 +741,7 @@ fn admit_tool_context_at(
     context: ReadAttemptContext,
     admitted: Instant,
 ) -> ReadAttemptContext {
-    if !matches!(tool, "airk_answer" | "answer") {
+    if airk_core::tool_names::operation(tool) != "answer" {
         return context;
     }
     let Some(payload) = crate::tool_catalog::native_answer_arguments(arguments) else {

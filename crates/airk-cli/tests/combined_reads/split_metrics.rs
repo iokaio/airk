@@ -377,7 +377,7 @@ impl Capture {
                 // native read: one timed sample retains typed overload instead of replaying it.
                 // U110: the session names the selected index per call: a
                 // one-index open read whose body is that index's own result.
-                let reply=session.request((1000+wave*4+client)as u64,"tools/call",json!({"name":"search","arguments":{
+                let reply=session.request((1000+wave*4+client)as u64,"tools/call",json!({"name":"search_passages","arguments":{
                     "query":"boundaryneedle","mode":"lexical","path_prefix":"api/","limit":1,"max_bytes":16384,"verification":"off","response_mode":"full"}}))?;
                 Ok((reply,started.elapsed().as_micros()))}));
             }

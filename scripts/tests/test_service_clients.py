@@ -949,7 +949,7 @@ class ServiceClientTests(unittest.TestCase):
 
     def test_public_answer_is_in_both_catalogs_without_replaying_finite_context_gathering(self):
         self.assertIn("airk_answer", CLIENTS.TOOLS)
-        self.assertIn("answer", CLIENTS.MCP_TOOLS)
+        self.assertIn("gather_context", CLIENTS.MCP_TOOLS)
         self.assertNotIn("airk_answer", CLIENTS.RETRYABLE_TOOLS)
         self.assertNotIn("airk_parse", CLIENTS.RETRYABLE_TOOLS)
 
@@ -1571,7 +1571,7 @@ class TokenlessHttpsTests(unittest.TestCase):
     def test_https_catalogs_list_scopes_instead_of_a_bound_project(self):
         self.assertIn("list_scopes", CLIENTS.HTTPS_MCP_TOOLS)
         self.assertNotIn("projects", CLIENTS.HTTPS_MCP_TOOLS)
-        self.assertIn("search", CLIENTS.HTTPS_MCP_TOOLS)
+        self.assertIn("search_passages", CLIENTS.HTTPS_MCP_TOOLS)
         self.assertEqual(len(CLIENTS.HTTPS_MCP_TOOLS), 30)
         self.assertIn("list_scopes", CLIENTS.HTTPS_API_READ_NAMES)
         self.assertNotIn("projects", CLIENTS.HTTPS_API_READ_NAMES)

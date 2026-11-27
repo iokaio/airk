@@ -42,6 +42,7 @@ import time
 
 import common
 import evidence
+import tool_names
 from arbiter_pair_probe import PREFIX, SUFFIX, pair_text
 from arbiter_probe_cases import ACTION, PASSAGE
 
@@ -203,7 +204,8 @@ class Tools:
         self.pool = concurrent.futures.ThreadPoolExecutor(workers)
 
     def _spans(self, tool: str, arguments: dict) -> list[dict]:
-        outcome = common.call_tool_retrying(self.handle, tool, self.repository,
+        # Native names select the same tool on pre-1.9 and 1.9 images (tool_names).
+        outcome = common.call_tool_retrying(self.handle, tool_names.native(tool), self.repository,
                                             {**arguments, "response_mode": "full"}, self.timeout)
         outcome = outcome[0] if isinstance(outcome, tuple) else outcome
         self.calls += 1
@@ -217,7 +219,7 @@ class Tools:
                 if span.start is not None and span.end is not None and span.text]
 
     def _body(self, tool: str, arguments: dict):
-        outcome, _ = common.call_tool_retrying(self.handle, tool, self.repository,
+        outcome, _ = common.call_tool_retrying(self.handle, tool_names.native(tool), self.repository,
                                                {**arguments, "response_mode": "full"}, self.timeout)
         self.calls += 1
         if not outcome.ok:

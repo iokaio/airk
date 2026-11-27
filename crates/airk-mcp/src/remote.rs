@@ -362,7 +362,7 @@ impl Admission {
         canceled: impl Future<Output = ()>,
         expires: tokio::time::Instant,
     ) -> Result<BridgePermit, AdmissionFailure> {
-        let status = matches!(tool, "status" | "airk_status");
+        let status = airk_core::tool_names::operation(tool) == "status";
         let lane = &self.calls;
         let admitted = async {
             if tokio::time::Instant::now() >= expires {
@@ -455,7 +455,10 @@ pub enum ReadCallError {
 fn canonical_read_name(name: &str) -> bool {
     crate::local::tools()
         .iter()
-        .any(|tool| tool.name == name || tool.name.strip_prefix("airk_") == Some(name))
+        .any(|tool| {
+            tool.name == name
+                || airk_core::tool_names::public_name_of_native(&tool.name) == Some(name)
+        })
         // U105: the open connection's list tool (`open::LIST_SCOPES`); the
         // backend's catalog still decides whether a session offers it.
         || name == airk_core::agent_scope::LIST_SCOPES
@@ -500,8 +503,10 @@ impl ReadSession {
             .into_iter()
             .find(|tool| {
                 tool.name == name
-                    || tool.name.strip_prefix("airk_") == Some(name.as_str())
-                    || name.strip_prefix("airk_") == Some(tool.name.as_ref())
+                    || airk_core::tool_names::public_name_of_native(&tool.name)
+                        == Some(name.as_str())
+                    || airk_core::tool_names::public_name_of_native(&name)
+                        == Some(tool.name.as_ref())
             })
             .map(|tool| tool.name.into_owned())
             .ok_or(ReadCallError::UnknownTool)?;
@@ -846,10 +851,7 @@ async fn call_at_capacity(
         ),
         Err(_) => direct_observation_failure("direct_observation_unavailable"),
     };
-    if matches!(
-        tool.as_str(),
-        "answer" | "airk_answer" | "search" | "airk_search"
-    ) {
+    if matches!(airk_core::tool_names::operation(&tool), "answer" | "search") {
         context.retain_delivery_for(&value)?;
     }
     let mut result = serde_json::from_value::<CallToolResult>(value).unwrap_or_else(|_| {
@@ -905,8 +907,8 @@ fn report_query_concurrency(result: &mut CallToolResult, tool: &str, limit: usiz
         return;
     }
     if !matches!(
-        tool,
-        "parse" | "airk_parse" | "status" | "airk_status" | "diagnostics" | "airk_diagnostics"
+        airk_core::tool_names::operation(tool),
+        "parse" | "status" | "diagnostics"
     ) {
         return;
     }
@@ -967,8 +969,8 @@ fn report_query_concurrency(result: &mut CallToolResult, tool: &str, limit: usiz
         return;
     }
     if !matches!(
-        tool,
-        "status" | "airk_status" | "diagnostics" | "airk_diagnostics"
+        airk_core::tool_names::operation(tool),
+        "status" | "diagnostics"
     ) {
         return;
     }

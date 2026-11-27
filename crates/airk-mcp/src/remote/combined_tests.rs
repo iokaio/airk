@@ -346,7 +346,7 @@ async fn actual_combined_mcp_and_public_routes_preserve_complete_native_results(
     let drafts = Arc::new(Drafts::default());
     let unified = crate::unified::Unified::combined(backend.clone(), Some(drafts.clone()))?;
     let public = unified
-        .call("search".into(), args.as_object().unwrap().clone())
+        .call("search_passages".into(), args.as_object().unwrap().clone())
         .await?;
     assert_eq!(public, backend.result);
     assert_eq!(backend.arguments.lock().unwrap()[1].0, "airk_search");
@@ -358,7 +358,7 @@ async fn actual_combined_mcp_and_public_routes_preserve_complete_native_results(
         unified
             .catalog()
             .iter()
-            .find(|tool| tool.name == "search")
+            .find(|tool| tool.name == "search_passages")
             .unwrap()
             .input_schema["properties"]["project_ids"],
         search.input_schema["properties"]["project_ids"]
@@ -397,7 +397,7 @@ async fn actual_combined_mcp_and_public_routes_preserve_complete_native_results(
         .unwrap_err();
     let expected =
         serde_json::to_value(crate::response::typed_error_result(&native_error).unwrap())?;
-    for tool in ["help", "airk_help", "search", "airk_search"] {
+    for tool in ["help", "airk_help", "search_passages", "airk_search"] {
         let before = backend.calls.load(Ordering::SeqCst);
         let actual = unified.call(tool.into(), Map::new()).await?;
         assert_eq!(actual, expected, "complete typed {tool} refusal");
@@ -409,7 +409,7 @@ async fn actual_combined_mcp_and_public_routes_preserve_complete_native_results(
     }
     backend.typed_failure.store(false, Ordering::SeqCst);
     backend.failed.store(true, Ordering::SeqCst);
-    for tool in ["help", "airk_help", "search", "airk_search"] {
+    for tool in ["help", "airk_help", "search_passages", "airk_search"] {
         let before = backend.calls.load(Ordering::SeqCst);
         let actual = unified.call(tool.into(), Map::new()).await?;
         let body = &actual["structuredContent"];
@@ -448,7 +448,7 @@ async fn actual_combined_mcp_and_public_routes_preserve_complete_native_results(
         async { Ok::<_, anyhow::Error>(().serve(client_io).await?) },
         async { Ok::<_, anyhow::Error>(bridge.serve(server_io).await?) }
     )?;
-    for tool in ["status", "airk_status", "parse", "airk_parse"] {
+    for tool in ["index_status", "airk_status", "parse", "airk_parse"] {
         let reply = client.call_tool(CallToolRequestParams::new(tool)).await?;
         assert_ne!(reply.is_error, Some(true), "{reply:?}");
         assert_eq!(finalized.observed_capacity.load(Ordering::SeqCst), 32);

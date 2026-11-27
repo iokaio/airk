@@ -415,7 +415,7 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
     } else {
         None
     };
-    let answer_delivery = matches!(&request.method,ControlMethod::ToolsCall {tool,..} if matches!(tool.as_str(),"answer"|"airk_answer"));
+    let answer_delivery = matches!(&request.method,ControlMethod::ToolsCall {tool,..} if airk_core::tool_names::operation(tool)=="answer");
     if answer_delivery && let Some(context) = &delivery_context {
         source_delivery::retain_epoch(&state, context)?;
     }

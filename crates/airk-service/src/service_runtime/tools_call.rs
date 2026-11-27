@@ -49,7 +49,7 @@ pub(super) fn admit_context(
 ) -> Result<ReadAttemptContext> {
     let context = airk_mcp::read_attempt::admit_tool_context(tool, arguments, context);
     require_live(&context)?;
-    if !matches!(tool, "answer" | "airk_answer") {
+    if airk_core::tool_names::operation(tool) != "answer" {
         return Ok(context);
     }
     let id = match context.request_id() {
@@ -229,17 +229,14 @@ pub(super) async fn selection_read(
 ) -> std::result::Result<Value, SelectionRead> {
     let mut context = admit_context(&tool, &arguments, context).map_err(SelectionRead::Failed)?;
     require_live(&context).map_err(SelectionRead::Failed)?;
-    if matches!(
-        tool.as_str(),
-        "answer" | "airk_answer" | "search" | "airk_search"
-    ) {
+    if matches!(airk_core::tool_names::operation(&tool), "answer" | "search") {
         super::source_delivery::retain_selection(state, &context, grant.selection_ref)
             .map_err(SelectionRead::Failed)?;
     }
     let (backend, arguments) = match grant.selection.index_ids.as_slice() {
         [index_id] if !uses_combined_arguments(&arguments) => {
             let standalone_lexical = context.can_bind_standalone_lexical_repair()
-                && matches!(tool.as_str(), "search" | "airk_search")
+                && airk_core::tool_names::operation(&tool) == "search"
                 && arguments.get("mode").and_then(Value::as_str) == Some("lexical")
                 && !["revision", "publication", "limit_per_index"]
                     .iter()

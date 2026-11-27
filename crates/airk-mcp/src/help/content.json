@@ -211,7 +211,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Use first for a whole task that needs evidence from several places in the index; for a known identifier or path, call symbols or read_file directly. Pass the task text as task. Fill needs (up to 8 short statements of what you must learn, each at most 400 bytes): stating needs improves the result. Add anchors (up to 16 exact strings from the task: identifiers, routes, quoted text, numbers with units; each at most 200 bytes), deliverable (code_change, test, document or analysis) and known (ranges you already read); deliverable and known are checked but do not change gathering yet. Omit budget for the service default. Runs bounded canonical reads and returns cited indexed records by need, with gaps, budgets and stop reasons; without a local model, gathering is deterministic and the reply says so. Next: read_file or context on cited ranges you need in full. Use response_mode=full for provenance/coverage audits; verification report/require checks returned saved sources.",
+      "description": "Use first for a whole task that needs evidence from several places in the index; for a known identifier or path, call find_definition or read_indexed_range directly. Pass the task text as task. Fill needs (up to 8 short statements of what you must learn, each at most 400 bytes): stating needs improves the result. Add anchors (up to 16 exact strings from the task: identifiers, routes, quoted text, numbers with units; each at most 200 bytes), deliverable (code_change, test, document or analysis) and known (ranges you already read); deliverable and known are checked but do not change gathering yet. Omit budget for the service default. Runs bounded canonical reads and returns cited indexed records by need, with gaps, budgets and stop reasons; without a local model, gathering is deterministic and the reply says so. Next: read_indexed_range or read_around on cited ranges you need in full. Use response_mode=full for provenance/coverage audits; verification report/require checks returned saved sources.",
       "inputSchema": {
         "$defs": {
           "BudgetV3": {
@@ -517,7 +517,7 @@
         ],
         "type": "object"
       },
-      "name": "answer"
+      "name": "gather_context"
     },
     {
       "annotations": {
@@ -595,7 +595,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Use to see what the index observed changing since an exact token, or to validate remembered evidence. Supply since or selectors; returns bounded change observations. Check independent coverage and freshness; this does not verify live source. Consume every needed cursor page before advancing the baseline. index-current describes the index, not live files. Baselines retain bounded metadata across up to 64 publications/24 hours; pressure can advance explicit coverage floors. Moves are content-based candidates, not proof of filesystem intent. Next: read_file on changed ranges. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+      "description": "Use to see what the index observed changing since an exact token, or to validate remembered evidence. Supply since or selectors; returns bounded change observations. Check independent coverage and freshness; this does not verify live source. Consume every needed cursor page before advancing the baseline. index-current describes the index, not live files. Baselines retain bounded metadata across up to 64 publications/24 hours; pressure can advance explicit coverage floors. Moves are content-based candidates, not proof of filesystem intent. Next: read_indexed_range on changed ranges. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
       "inputSchema": {
         "$defs": {
           "ResponseMode": {
@@ -829,7 +829,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Use when a definition needs its signature, scope, written types, call/framework candidates or a symbol ID for relationships. Exact name is default, including qualified names and terminal native call method names; name_match=suffix/contains explicitly broadens case-sensitive simple/qualified names. A durable symbol_key is exclusive of filters, matching and count options. Compact discovery is the default under Agent Lean; expand selected candidates with compact=false. Cursors bind the exact query/publication; include_count reports bounded precision, not a guessed total. Check basis/coverage; native syntax and optional source-bound producer assertions do not prove resolved calls or runtime behavior. Next: relationships with a symbol ID, read_file for the source. Use response_mode=full for provenance/coverage audits.",
+      "description": "Use when a definition needs its signature, scope, written types, call/framework candidates or a symbol ID for relationships. Exact name is default, including qualified names and terminal native call method names; name_match=suffix/contains explicitly broadens case-sensitive simple/qualified names. A durable symbol_key is exclusive of filters, matching and count options. Compact discovery is the default under Agent Lean; expand selected candidates with compact=false. Cursors bind the exact query/publication; include_count reports bounded precision, not a guessed total. Check basis/coverage; native syntax and optional source-bound producer assertions do not prove resolved calls or runtime behavior. Next: relationships with a symbol ID, read_indexed_range for the source. Use response_mode=full for provenance/coverage audits.",
       "inputSchema": {
         "$defs": {
           "NameMatch": {
@@ -1013,7 +1013,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Use to widen one search or fact hit. Returns bounded neighboring indexed lines around its line coordinate, from the last successful index. PDF/DOCX/PPTX lines are extracted-text coordinates; keep the request within one original page/block/slide. Next: read_file for an exact larger range. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+      "description": "Use to widen one search or fact hit. Returns bounded neighboring indexed lines around its line coordinate, from the last successful index. PDF/DOCX/PPTX lines are extracted-text coordinates; keep the request within one original page/block/slide. Next: read_indexed_range for an exact larger range. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
       "inputSchema": {
         "$defs": {
           "ResponseMode": {
@@ -1159,7 +1159,7 @@
         ],
         "type": "object"
       },
-      "name": "context"
+      "name": "read_around"
     },
     {
       "annotations": {
@@ -1167,7 +1167,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Troubleshoot AIRK: full published coverage, runtime versions and process identities, scoped job/queue state, worker progress, source watcher and sampled waits. The MCP frontend adds configured query_concurrency from admission. Read-only; may be slower and larger than status. Use status for routine readiness checks. response_mode=full detail is always included; does not start indexing or repair.",
+      "description": "Troubleshoot AIRK: full published coverage, runtime versions and process identities, scoped job/queue state, worker progress, source watcher and sampled waits. The MCP frontend adds configured query_concurrency from admission. Read-only; may be slower and larger than index_status. Use index_status for routine readiness checks. response_mode=full detail is always included; does not start indexing or repair.",
       "inputSchema": {
         "$defs": {
           "ResponseMode": {
@@ -1225,7 +1225,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Use to find repository requirements, dates, features, architecture/design/decision language, headings, configuration keys and asset facts. Select a durable document_key alone, or filter by exact kind, language/profile, literal path prefix or statement/name substring. Prose cues include heading context, written bounds/units and modality; they are evidence candidates, not inferred obligations. Documents retain original locations; explicitly published local OCR evidence carries its own provenance and recognition limitations. Next: read_file or context on a cited line. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+      "description": "Use to find repository requirements, dates, features, architecture/design/decision language, headings, configuration keys and asset facts. Select a durable document_key alone, or filter by exact kind, language/profile, literal path prefix or statement/name substring. Prose cues include heading context, written bounds/units and modality; they are evidence candidates, not inferred obligations. Documents retain original locations; explicitly published local OCR evidence carries its own provenance and recognition limitations. Next: read_indexed_range or read_around on a cited line. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
       "inputSchema": {
         "$defs": {
           "ResponseMode": {
@@ -1386,7 +1386,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Use before interpreting one file's evidence. Returns its indexed language/profile, extraction method, syntax quality, hash and line basis, distinguishing source lines from extracted document coordinates; does not compare the live file for freshness. Next: outline or read_file. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+      "description": "Use before interpreting one file's evidence. Returns its indexed language/profile, extraction method, syntax quality, hash and line basis, distinguishing source lines from extracted document coordinates; does not compare the live file for freshness. Next: outline_file or read_indexed_range. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
       "inputSchema": {
         "$defs": {
           "ResponseMode": {
@@ -1605,7 +1605,7 @@
             "type": "integer"
           },
           "tool": {
-            "description": "Exact public MCP tool name, for example search; returns its current description and input schema.",
+            "description": "Exact public MCP tool name, for example search_passages; returns its current description and input schema.",
             "type": [
               "string",
               "null"
@@ -1633,7 +1633,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Use to see what code declares it depends on: returns written import/use/include declarations by indexed language/profile, literal path prefix and optional name. Omitted name_match keeps the existing case-insensitive substring behavior; explicit exact/suffix/contains is case-sensitive. Use cursor continuation and optional include_count for bounded count precision. These are syntax candidates, not a resolved, transitive or dynamic dependency graph. Next: outline or read_file on a declaring file. Use response_mode=full for provenance/coverage audits.",
+      "description": "Use to see what code declares it depends on: returns written import/use/include declarations by indexed language/profile, literal path prefix and optional name. Omitted name_match keeps the existing case-insensitive substring behavior; explicit exact/suffix/contains is case-sensitive. Use cursor continuation and optional include_count for bounded count precision. These are syntax candidates, not a resolved, transitive or dynamic dependency graph. Next: outline_file or read_indexed_range on a declaring file. Use response_mode=full for provenance/coverage audits.",
       "inputSchema": {
         "$defs": {
           "NameMatch": {
@@ -1802,7 +1802,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Use when you know a directory but not the file. Filter by literal relative-path prefix, not glob; count and bytes are bounded. Returns the snapshot inventory, not all live workspace files or indexing coverage. Next: outline or read_file on a chosen path. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+      "description": "Use when you know a directory but not the file. Filter by literal relative-path prefix, not glob; count and bytes are bounded. Returns the snapshot inventory, not all live workspace files or indexing coverage. Next: outline_file or read_indexed_range on a chosen path. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
       "inputSchema": {
         "$defs": {
           "ResponseMode": {
@@ -1909,7 +1909,7 @@
         },
         "type": "object"
       },
-      "name": "list_files"
+      "name": "list_indexed_files"
     },
     {
       "annotations": {
@@ -1917,7 +1917,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Use for one known file's structure before reading it. Takes one exact path; returns its imports, definitions, call candidates and document facts with locations in file order, paged by cursor. Compact minimal navigation is default; compact=false expands facts and IDs. A first page may not reach a given definition, so locate one with scoped symbols/code_facts. Bounded or empty output is not a whole-file or complete-language claim. Read-only source evidence; suggest_view proposes an Explorer screen instead. Next: read_file on a listed range. Use response_mode=full for provenance audits.",
+      "description": "Use for one known file's structure before reading it. Takes one exact path; returns its imports, definitions, call candidates and document facts with locations in file order, paged by cursor. Compact minimal navigation is default; compact=false expands facts and IDs. A first page may not reach a given definition, so locate one with scoped find_definition/code_facts. Bounded or empty output is not a whole-file or complete-language claim. Read-only source evidence; suggest_view proposes an Explorer screen instead. Next: read_indexed_range on a listed range. Use response_mode=full for provenance audits.",
       "inputSchema": {
         "$defs": {
           "ResponseMode": {
@@ -2065,7 +2065,7 @@
         ],
         "type": "object"
       },
-      "name": "outline"
+      "name": "outline_file"
     },
     {
       "annotations": {
@@ -2073,7 +2073,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Prepare or execute a bounded read-only AIRK evidence plan. Supply schema airk.parse.request/1, mode prepare or execute, and exactly one of text, recipe, plan. Explicit plans contain steps {id,tool,args,bind}; public operation names only. Bindings use earlier step IDs and named selectors. At most 6 steps, 12 reads, a 30-second budget checked between reads, 512 KiB. Learned text in this review build returns an inert proposed plan with needs_input; review its arguments and resubmit the explicit plan to execute. Other uncertainty, partial coverage and failures stay explicit. No writes, commands, management, recursive plans or agent reasoning. Works without Explorer. Use response_mode=full for provenance/coverage audits; raw inner evidence retains its full kernel representation.",
+      "description": "Prepare or execute a bounded read-only AIRK evidence plan. Supply schema airk.parse.request/1, mode prepare or execute, and exactly one of text, recipe, plan. Explicit plans contain steps {id,tool,args,bind}; native operation names only, such as symbols or read_file. Bindings use earlier step IDs and named selectors. At most 6 steps, 12 reads, a 30-second budget checked between reads, 512 KiB. Learned text in this review build returns an inert proposed plan with needs_input; review its arguments and resubmit the explicit plan to execute. Other uncertainty, partial coverage and failures stay explicit. No writes, commands, management, recursive plans or agent reasoning. Works without Explorer. Use response_mode=full for provenance/coverage audits; raw inner evidence retains its full kernel representation.",
       "inputSchema": {
         "$defs": {
           "ResponseMode": {
@@ -2329,7 +2329,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Use when you know the path and lines: from a hit, a citation or the task. Returns an inclusive 1-based indexed line range from the last successful snapshot, the revision citations point to, not a live filesystem read. For PDF/DOCX/PPTX, use extracted lines within one page/block/slide. Next: context to widen around one line, outline for the file's structure; verify live source before edits. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+      "description": "Use when you know the path and lines: from a hit, a citation or the task. Returns an inclusive 1-based indexed line range from the last successful snapshot, the revision citations point to, not a live filesystem read. For PDF/DOCX/PPTX, use extracted lines within one page/block/slide. Next: read_around to widen around one line, outline_file for the file's structure; verify live source before edits. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
       "inputSchema": {
         "$defs": {
           "ResponseMode": {
@@ -2470,7 +2470,7 @@
         ],
         "type": "object"
       },
-      "name": "read_file"
+      "name": "read_indexed_range"
     },
     {
       "annotations": {
@@ -2478,7 +2478,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Use after symbols to find where an exact identifier appears. Returns exact-case whole-identifier matching lines in retained indexed text, including definitions, strings and comments. Markdown, HTML, scripts and source can all match; scope by path_prefix, exact indexed language or metadata-based evidence_kind for impact work. These are textual candidates, never resolved references. Omit new paging options for legacy index ordering; explicit order=index/path/code_first, filters, cursor, include_files or include_count select bounded pageable scanning. Page file summaries/counts disclose their scope and matching-line unit; incomplete scans never imply an exact corpus total. Consume continuation and check truncation/coverage before concluding no impact. Next: read_file or context on chosen lines; verify live source before edits. Use response_mode=full for provenance/coverage audits.",
+      "description": "Textual occurrences of an exact identifier: use after find_definition to find where it appears. Returns exact-case whole-identifier matching lines in retained indexed text, including definitions, strings and comments. Markdown, HTML, scripts and source can all match; scope by path_prefix, exact indexed language or metadata-based evidence_kind for impact work. These are textual candidates, never resolved references. Omit new paging options for legacy index ordering; explicit order=index/path/code_first, filters, cursor, include_files or include_count select bounded pageable scanning. Page file summaries/counts disclose their scope and matching-line unit; incomplete scans never imply an exact corpus total. Consume continuation and check truncation/coverage before concluding no impact. Next: read_indexed_range or read_around on chosen lines; verify live source before edits. Use response_mode=full for provenance/coverage audits.",
       "inputSchema": {
         "$defs": {
           "EvidenceKind": {
@@ -2654,7 +2654,7 @@
         ],
         "type": "object"
       },
-      "name": "references"
+      "name": "find_references"
     },
     {
       "annotations": {
@@ -2662,7 +2662,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Use for impact work from a known symbol: returns bounded incoming/outgoing structural candidates with path scope and 1..3 hops. Written targets such as Type::new or obj.method identify textual caller candidates; a struct symbol ID alone does not prove a complete caller set. Verified type/method suggestions, when available, are navigation candidates rather than resolved associations. Agent Lean/Rich Structure retain supported calls; SCIP assertions are not calls. Check coverage and truncation: absent edges never prove no impact. Next: read_file on candidates, references for textual uses. Use response_mode=full for provenance/coverage audits.",
+      "description": "Use for impact work from a known symbol: returns bounded incoming/outgoing structural candidates with path scope and 1..3 hops. Written targets such as Type::new or obj.method identify textual caller candidates; a struct symbol ID alone does not prove a complete caller set. Verified type/method suggestions, when available, are navigation candidates rather than resolved associations. Agent Lean/Rich Structure retain supported calls; SCIP assertions are not calls. Check coverage and truncation: absent edges never prove no impact. Next: read_indexed_range on candidates, find_references for textual uses. Use response_mode=full for provenance/coverage audits.",
       "inputSchema": {
         "$defs": {
           "ResponseMode": {
@@ -2800,7 +2800,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Use for one concept, behavior or phrase when you have no exact identifier or path; prose, comments and code rank together. For a named type or function use symbols; for a whole task use answer. Returns ranked cited snippets (full_chunks for whole indexed chunks) with served mode, readiness and limitations; bounded definition pointers may accompany identifiers. Scope by literal path_prefix, exact indexed language, metadata-based evidence_kind or exclude_path_prefix; documents alone do not prove application behavior. Omitted mode keeps the saved hybrid/vector policy and may serve lexical evidence during a helper outage, recording semantic incompleteness; explicit vector/hybrid and saved RequireComplete refuse the outage. Vector/hybrid need the indexed local model; semantic=true aliases vector. Explicit lexical turns punctuation and quotes into AND terms (no phrase matching) in stable-id order, not relevance. Empty matches alone establish no cause. Next: read_file or context on a hit. Check truncation and use response_mode=full for provenance audits.",
+      "description": "Use for one concept, behavior or phrase when you have no exact identifier or path; prose, comments and code rank together. For a named type or function use find_definition; for a whole task use gather_context. Returns ranked cited snippets (full_chunks for whole indexed chunks) with served mode, readiness and limitations; bounded definition pointers may accompany identifiers. Scope by literal path_prefix, exact indexed language, metadata-based evidence_kind or exclude_path_prefix; documents alone do not prove application behavior. Omitted mode keeps the saved hybrid/vector policy and may serve lexical evidence during a helper outage, recording semantic incompleteness; explicit vector/hybrid and saved RequireComplete refuse the outage. Vector/hybrid need the indexed local model; semantic=true aliases vector. Explicit lexical turns punctuation and quotes into AND terms (no phrase matching) in stable-id order, not relevance. Empty matches alone establish no cause. Next: read_indexed_range or read_around on a hit. Check truncation and use response_mode=full for provenance audits.",
       "inputSchema": {
         "$defs": {
           "EvidenceKind": {
@@ -2973,7 +2973,7 @@
         ],
         "type": "object"
       },
-      "name": "search"
+      "name": "search_passages"
     },
     {
       "annotations": {
@@ -2981,7 +2981,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Quick version, health and project-index check: counts, publication, source-update state, semantic readiness and configured query_concurrency at frontend admission. Obtain before broad evidence fan-out; lightweight does not mean exempt from bounded admission. Completed same-authority observations superseded by scalar invalidation return successfully with status_observation.superseded and their original publication/time. Successful snapshots may be cached for five seconds; observed_unix_ms, cache_age_ms and cached disclose their age. Allows up to ten seconds for shared cold runtime setup, followed by a two-second observation budget; expiry reports unknown readiness and null evidence. Always skips process diagnostics and editor probes. Call diagnostics for detailed work, runtime versions and Explorer attachment. Counts are saved evidence, not proof that live files match. Does not start indexing or repair.",
+      "description": "Quick version, health and project-index check: counts, publication, source-update state, semantic readiness and configured query_concurrency at frontend admission. Evidence reads run at that concurrency: 16 by default, or 4, 8, 16, 32 or 64 as set in the Management Service; connection channels and worker query slots match it, plus one slot kept for status, so status still answers when every read slot is busy. A read beyond the limit waits in a bounded queue and gets a typed retry reply (retryable, retry_after_ms) when the queue is full or its deadline passes. Obtain before broad evidence fan-out; lightweight does not mean exempt from bounded admission. Completed same-authority observations superseded by scalar invalidation return successfully with status_observation.superseded and their original publication/time. Successful snapshots may be cached for five seconds; observed_unix_ms, cache_age_ms and cached disclose their age. Allows up to ten seconds for shared cold runtime setup, followed by a two-second observation budget; expiry reports unknown readiness and null evidence. Always skips process diagnostics and editor probes. Call diagnostics for detailed work, runtime versions and Explorer attachment. Counts are saved evidence, not proof that live files match. Does not start indexing or repair.",
       "inputSchema": {
         "$defs": {
           "ResponseMode": {
@@ -3031,7 +3031,7 @@
         },
         "type": "object"
       },
-      "name": "status"
+      "name": "index_status"
     },
     {
       "annotations": {
@@ -3039,7 +3039,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Use first for a known type, function or other written definition name, before text search. Exact name is default: Session does not match OwnerSession. Explicit name_match=suffix/contains matches simple/qualified names case-sensitively; omit name to list within indexed language/profile or literal path_prefix. Returns definition locations; keep compact discovery for candidates, then request compact=false on a selected scope for rich IDs/details. Consume cursor pages; include_count reports bounded count precision. Does not resolve dynamic/cross-file names. Next: references for uses, read_file or context for the body, code_facts for more fact categories. Use response_mode=full for provenance audits.",
+      "description": "Use first for a known type, function or other written definition name, before text search. Exact name is default: Session does not match OwnerSession. Explicit name_match=suffix/contains matches simple/qualified names case-sensitively; omit name to list within indexed language/profile or literal path_prefix. Returns definition locations; keep compact discovery for candidates, then request compact=false on a selected scope for rich IDs/details. Consume cursor pages; include_count reports bounded count precision. Does not resolve dynamic/cross-file names. Next: find_references for uses, read_indexed_range or read_around for the body, code_facts for more fact categories. Use response_mode=full for provenance audits.",
       "inputSchema": {
         "$defs": {
           "NameMatch": {
@@ -3200,7 +3200,7 @@
         },
         "type": "object"
       },
-      "name": "symbols"
+      "name": "find_definition"
     },
     {
       "annotations": {
@@ -4298,7 +4298,7 @@
     },
     {
       "id": "overview",
-      "text": "AIRK indexes local code and documents and returns bounded evidence with original locations, hashes and exact indexed revision identities. Sources remain read-only.\nOne per-user airk service hosts index owners, source watching and local inference in-process. airkctl owns public commands; VS Code uses one airkctl session per window. Agents connect directly to loopback HTTP MCP with no token; each read names its scope or a workspace default. Stdio MCP and the stable launcher are retired; no resident process runs per index or agent.\nUse status for published readiness, diagnostics for runtime/work observations, and help for documentation. Use topic=topics, topic=commands, command=\"service\" or tool=\"search\" for current guidance and actual schemas.\nInstall and verify the service separately from the extension. Extension activation does not silently install/update/remove the service or register/index folders. Offered automatic installation requires explicit user choice; manual installation and deferral remain available. Set up the index/set, intentionally prepare models/index work, then connect an agent; its reads name their indexes or use the scope applied for their workspace.\nBundled Help is not live configuration, source-freshness proof or platform qualification.",
+      "text": "AIRK indexes local code and documents and returns bounded evidence with original locations, hashes and exact indexed revision identities. Sources remain read-only.\nOne per-user airk service hosts index owners, source watching and local inference in-process. airkctl owns public commands; VS Code uses one airkctl session per window. Agents connect directly to loopback HTTP MCP with no token; each read names its scope or a workspace default. Stdio MCP and the stable launcher are retired; no resident process runs per index or agent.\nUse status for published readiness, diagnostics for runtime/work observations, and help for documentation. Use topic=topics, topic=commands, command=\"service\" or tool=\"search_passages\" for current guidance and actual schemas.\nInstall and verify the service separately from the extension. Extension activation does not silently install/update/remove the service or register/index folders. Offered automatic installation requires explicit user choice; manual installation and deferral remain available. Set up the index/set, intentionally prepare models/index work, then connect an agent; its reads name their indexes or use the scope applied for their workspace.\nBundled Help is not live configuration, source-freshness proof or platform qualification.",
       "title": "What AIRK does"
     },
     {
@@ -4313,7 +4313,7 @@
     },
     {
       "id": "cli",
-      "text": "airkctl is the public service client; airk owns native service/setup roles and has no public user command tree. Use airkctl --help or append --help to an exact command path. Selectors include --service-runtime-dir, --service-project, --root, --data-dir and --collection; reviewed catalog/combined sessions differ from open index/set selection.\nairkctl tools list --json prints actual schemas; airkctl tools help search describes a tool. airkctl tools call airk_help --args '{\"topic\":\"overview\"}' reads guidance through the service without resolving a project. Tool catalog/call reads are online; CLI --help and bundled UI/static Help remain available offline. --args-file avoids shell quoting errors.\nOrdinary online commands may start an exited service using the verified matching pair and honor saved Stop. version, service status/health, lifecycle and offline diagnostics do not automatically start it. Root airkctl status is selected-index evidence and keeps online admission.\nPreserve complete --output json results, error lines, truncation, continuation and retry details. Acceptance is not completion; never replay uncertain mutations with a new identity. Private roles and the tools console are not a general shell.",
+      "text": "airkctl is the public service client; airk owns native service/setup roles and has no public user command tree. Use airkctl --help or append --help to an exact command path. Selectors include --service-runtime-dir, --service-project, --root, --data-dir and --collection; reviewed catalog/combined sessions differ from open index/set selection.\nairkctl tools list --json prints actual schemas; airkctl tools help search_passages describes a tool. airkctl tools call airk_help --args '{\"topic\":\"overview\"}' reads guidance through the service without resolving a project. Tool catalog/call reads are online; CLI --help and bundled UI/static Help remain available offline. --args-file avoids shell quoting errors.\nOrdinary online commands may start an exited service using the verified matching pair and honor saved Stop. version, service status/health, lifecycle and offline diagnostics do not automatically start it. Root airkctl status is selected-index evidence and keeps online admission.\nPreserve complete --output json results, error lines, truncation, continuation and retry details. Acceptance is not completion; never replay uncertain mutations with a new identity. Private roles and the tools console are not a general shell.",
       "title": "CLI scope and invocation"
     },
     {

@@ -75,7 +75,7 @@ Use runtime identities to check that frontend, worker and service versions/build
         title: "What AIRK does",
         text: r#"AIRK indexes local code and documents and returns bounded evidence with original locations, hashes and exact indexed revision identities. Sources remain read-only.
 One per-user airk service hosts index owners, source watching and local inference in-process. airkctl owns public commands; VS Code uses one airkctl session per window. Agents connect directly to loopback HTTP MCP with no token; each read names its scope or a workspace default. Stdio MCP and the stable launcher are retired; no resident process runs per index or agent.
-Use status for published readiness, diagnostics for runtime/work observations, and help for documentation. Use topic=topics, topic=commands, command="service" or tool="search" for current guidance and actual schemas.
+Use status for published readiness, diagnostics for runtime/work observations, and help for documentation. Use topic=topics, topic=commands, command="service" or tool="search_passages" for current guidance and actual schemas.
 Install and verify the service separately from the extension. Extension activation does not silently install/update/remove the service or register/index folders. Offered automatic installation requires explicit user choice; manual installation and deferral remain available. Set up the index/set, intentionally prepare models/index work, then connect an agent; its reads name their indexes or use the scope applied for their workspace.
 Bundled Help is not live configuration, source-freshness proof or platform qualification."#,
     },
@@ -96,7 +96,7 @@ Use airkctl agents --help for headless setup, or Explorer > Agents for an open c
         id: "cli",
         title: "CLI scope and invocation",
         text: r#"airkctl is the public service client; airk owns native service/setup roles and has no public user command tree. Use airkctl --help or append --help to an exact command path. Selectors include --service-runtime-dir, --service-project, --root, --data-dir and --collection; reviewed catalog/combined sessions differ from open index/set selection.
-airkctl tools list --json prints actual schemas; airkctl tools help search describes a tool. airkctl tools call airk_help --args '{"topic":"overview"}' reads guidance through the service without resolving a project. Tool catalog/call reads are online; CLI --help and bundled UI/static Help remain available offline. --args-file avoids shell quoting errors.
+airkctl tools list --json prints actual schemas; airkctl tools help search_passages describes a tool. airkctl tools call airk_help --args '{"topic":"overview"}' reads guidance through the service without resolving a project. Tool catalog/call reads are online; CLI --help and bundled UI/static Help remain available offline. --args-file avoids shell quoting errors.
 Ordinary online commands may start an exited service using the verified matching pair and honor saved Stop. version, service status/health, lifecycle and offline diagnostics do not automatically start it. Root airkctl status is selected-index evidence and keeps online admission.
 Preserve complete --output json results, error lines, truncation, continuation and retry details. Acceptance is not completion; never replay uncertain mutations with a new identity. Private roles and the tools console are not a general shell."#,
     },

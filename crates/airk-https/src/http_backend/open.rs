@@ -196,7 +196,7 @@ mod tests {
         );
         assert!(!backend.local_help());
         assert!(!backend.uses_response_mode("list_scopes"));
-        assert!(backend.uses_response_mode("search"));
+        assert!(backend.uses_response_mode("search_passages"));
         assert!(!backend.uses_response_mode("query_scope"));
         Ok(())
     }
@@ -214,7 +214,10 @@ mod tests {
         let arguments = json!({"query":"q","index_ids":["docs","idx_01010101010101010101010101010101"],
             "index_set_ids":["web"]});
         let answer = backend
-            .call("search".into(), arguments.as_object().unwrap().clone())
+            .call(
+                "search_passages".into(),
+                arguments.as_object().unwrap().clone(),
+            )
             .await?;
         assert_eq!(answer, result);
         let calls = seen.lock().unwrap().clone();
@@ -226,14 +229,14 @@ mod tests {
                     "idx_01010101010101010101010101010101".to_owned()
                 ],
                 vec!["web".to_owned()],
-                "search".to_owned(),
+                "search_passages".to_owned(),
                 json!({"query":"q"}).as_object().unwrap().clone(),
             )]
         );
         // A malformed selector never reaches the service.
         for bad in [json!({"index_ids":"docs"}), json!({"index_set_ids":[1]})] {
             let answer = backend
-                .call("search".into(), bad.as_object().unwrap().clone())
+                .call("search_passages".into(), bad.as_object().unwrap().clone())
                 .await?;
             assert_eq!(
                 answer["structuredContent"]["error"]["code"],
@@ -248,7 +251,7 @@ mod tests {
                 code: "scope_required".into(),
             },
         ))()?;
-        let answer = refusing.call("search".into(), Map::new()).await?;
+        let answer = refusing.call("search_passages".into(), Map::new()).await?;
         assert_eq!(answer["isError"], true);
         assert_eq!(
             answer["structuredContent"]["error"]["code"],
@@ -280,8 +283,11 @@ mod tests {
         let first = factory()?;
         let second = factory()?;
         let args = json!({"index_ids":["one"]}).as_object().unwrap().clone();
-        assert_eq!(first.call("search".into(), args.clone()).await?, result);
-        let repeated = first.call("search".into(), args.clone()).await?;
+        assert_eq!(
+            first.call("search_passages".into(), args.clone()).await?,
+            result
+        );
+        let repeated = first.call("search_passages".into(), args.clone()).await?;
         let mut expected = body.clone();
         expected.as_object_mut().unwrap().remove("freshness");
         expected
@@ -291,14 +297,20 @@ mod tests {
         assert_eq!(repeated, airk_mcp::unified::success(expected));
         // The same built-in service connection does not share observations
         // between independently initialized MCP protocol sessions.
-        assert_eq!(second.call("search".into(), args.clone()).await?, result);
+        assert_eq!(
+            second.call("search_passages".into(), args.clone()).await?,
+            result
+        );
         let mut explicit = args.clone();
         explicit.insert("include_status".into(), true.into());
-        assert_eq!(first.call("search".into(), explicit).await?, result);
+        assert_eq!(
+            first.call("search_passages".into(), explicit).await?,
+            result
+        );
         let mut full = args.clone();
         full.insert("response_mode".into(), "full".into());
-        assert_eq!(first.call("search".into(), full).await?, result);
-        assert_eq!(first.call("status".into(), args).await?, result);
+        assert_eq!(first.call("search_passages".into(), full).await?, result);
+        assert_eq!(first.call("index_status".into(), args).await?, result);
         Ok(())
     }
 }

@@ -515,7 +515,7 @@ impl Connection {
         let _lexical_repair_offer = if query.native.is_none()
             && query.context_partition.is_none()
             && query.answer_partition.is_none()
-            && matches!(query.tool.as_str(), "search" | "airk_search")
+            && airk_core::tool_names::operation(&query.tool) == "search"
         {
             query
                 .read_attempt

@@ -35,7 +35,7 @@ records defaults, legacy conflicts and per-step plan selection.
 
 
 
-Tool names are unique within this server; the client may add its own server namespace. Repeating `airk_` on every tool adds no distinction between reading evidence and proposing a form. Verbs and descriptions carry that distinction. Previously saved `airk_*` and `airk_explorer_*` calls remain callable compatibility aliases; they are omitted from discovery so agents see one catalog. Native `airkctl tools` exposes eighteen read-only aliases including `airk_parse`; Explorer retains its seventeen direct evidence operations.
+Tool names are unique within this server; the client may add its own server namespace. Repeating `airk_` on every tool adds no distinction between reading evidence and proposing a form. Verbs and descriptions carry that distinction. Previously saved `airk_*` and `airk_explorer_*` calls remain callable compatibility aliases; they are omitted from discovery so agents see one catalog. From 1.9 nine public names changed (see [Public tool names](#public-tool-names)); their earlier public spellings are not callable. Native `airkctl tools` exposes eighteen read-only aliases including `airk_parse`; Explorer retains its seventeen direct evidence operations.
 
 
 
@@ -47,23 +47,23 @@ Tool names are unique within this server; the client may add its own server name
 
 | `parse` | Prepare (default) or execute text, a named recipe or explicit bounded steps/bindings. Returns exact publication, per-step outcomes, citations and completeness; never writes sources or runs an agent. See [Workbench contracts](workbench/implementation.md). |
 
-| `status` | Quick published counts, exact publication, freshness and semantic readiness. No editor or runtime/job probes. |
+| `index_status` | Quick published counts, exact publication, freshness and semantic readiness. No editor or runtime/job probes. |
 
 | `diagnostics` | Detailed coverage, runtime/process identities, job progress, queues, watcher/waits and optional editor attachment. May take longer; does not index or repair. |
 
 | `capabilities` | Describe extraction adapters and supported evidence capabilities. |
 
-| `search` | Search indexed code/documents and return bounded, cited lexical, vector or hybrid evidence. |
+| `search_passages` | Search indexed code/documents and return bounded, cited lexical, vector or hybrid evidence. |
 
-| `read_file` | Read an indexed line range with its revision and source identity. |
+| `read_indexed_range` | Read an indexed line range with its revision and source identity. |
 
-| `list_files` | List indexed paths, with bounded continuation. |
+| `list_indexed_files` | List indexed paths, with bounded continuation. |
 
 | `file_info` | Inspect indexed file metadata, extraction basis and hash. |
 
-| `outline` | Read one indexed file's declaration or document outline. |
+| `outline_file` | Read one indexed file's declaration or document outline. |
 
-| `symbols` | Find native definition names and their indexed locations. |
+| `find_definition` | Find native definition names and their indexed locations. |
 
 | `imports` | Find selected import/use/include declarations. |
 
@@ -71,11 +71,11 @@ Tool names are unique within this server; the client may add its own server name
 
 | `document_facts` | Retrieve structured document facts with original locations and extraction qualifiers. |
 
-| `references` | Find exact-case textual identifier occurrences; does not claim resolved references. |
+| `find_references` | Find exact-case textual identifier occurrences; does not claim resolved references. |
 
 | `relationships` | Retrieve supported structural candidates or producer assertions with their basis. |
 
-| `context` | Read bounded neighboring indexed lines. |
+| `read_around` | Read bounded neighboring indexed lines. |
 
 | `changes` | Validate remembered evidence or page through observed indexed changes. |
 
@@ -99,17 +99,67 @@ Tool names are unique within this server; the client may add its own server name
 
 | `get_handoff` | Read only the complete snapshot explicitly shared by the user through an expiring token. |
 
+## Public tool names
+
+On 26 November 2026 the user adopted the nine proposed public names
+([completion plan decision 12](arbiter/completion-plan.md#decisions-for-the-user-at-this-review)).
+The user chose to adopt them without first running the plan's free-choice
+comparison, and chose a clean rename at 1.9: the earlier public name of a
+renamed tool is not callable and is not an alias.
+
+| Native | Operation (pre-1.9 public name) | Public name from 1.9 |
+|---|---|---|
+| `airk_answer` | `answer` | `gather_context` |
+| `airk_search` | `search` | `search_passages` |
+| `airk_symbols` | `symbols` | `find_definition` |
+| `airk_references` | `references` | `find_references` |
+| `airk_read_file` | `read_file` | `read_indexed_range` |
+| `airk_context` | `context` | `read_around` |
+| `airk_outline` | `outline` | `outline_file` |
+| `airk_list_files` | `list_files` | `list_indexed_files` |
+| `airk_status` | `status` | `index_status` |
+
+Every other public tool, including `file_info`, keeps its name.
+
+- The rename changes the public name layer only. Native names, CLI commands
+  (`airkctl search`, `read`, `refs` and the rest), Rust types, schema
+  identifiers and receipts are unchanged. The feature is still called Answer.
+  Each operation keeps one canonical handler.
+- `airk-core::tool_names::RENAMED_PUBLIC_TOOLS` is the single owner of the
+  table. Public catalog construction, dispatch, help selection, the CLI
+  `tools help`/`tools call` selector and the HTTP alias listing read it.
+  Routing that must treat every spelling of one operation alike, such as
+  Answer's read budget or the reserved status lane, uses
+  `tool_names::operation`. The test
+  `emitted_public_tool_names_match_the_rust_owner` emits the table to
+  `fixtures/split/catalog/public_tool_names.json` for tooling outside Rust
+  (`AIRK_WRITE_PUBLIC_TOOL_NAMES=1 cargo test -p airk-core --lib tool_names`).
+- Parse plan steps, Workbench recipes and the slash-command parser keep
+  operation names (`symbols`, `read_file`). A prepared plan
+  (`airk.parse.plan/1`) is digest-bound over its steps, and the retained
+  pre-split parity fixture `airkctl_reads_print_what_airk_printed.json`
+  pins a prepared plan whose step names `symbols`. Renaming step names would
+  change that identity and need a new plan schema version, so they are not
+  renamed; Parse's description says it takes operation names.
+- `find_references` opens with "Textual occurrences", because the name
+  suggests resolved references.
+- The concurrency note (evidence reads at a configured 16 by default; 4, 8,
+  16, 32 or 64; matching channels and worker slots; one extra status slot;
+  typed retry beyond the limit) lives in the `index_status` description, by
+  the user's decision of 26 November 2026. The server guidance is limited to
+  512 bytes and now carries routing.
+
 
 
 ## Identifier routing and bounded admission
 
 
 
-For a named identifier, prefer compact `symbols`, scoped `references`, then a bounded `read_file`/`context` expansion. Use `search` for concepts and supplementary code/document passages. `outline` returns indexed file structure in source order; `suggest_view` returns only a reviewed UI proposal, even when its route is named `code/outline`. Exact tokens, citations and original locations remain usable outside the connection. Terse status receipts suppress repeated observations without replacing evidence identity.
+For a task needing evidence from several places, call `gather_context` first with `task` and `needs`. For a named identifier, prefer compact `find_definition`, scoped `find_references`, then a bounded `read_indexed_range`/`read_around` expansion. Use `search_passages` for concepts and supplementary code/document passages. `outline_file` returns indexed file structure in source order; `suggest_view` returns only a reviewed UI proposal, even when its route is named `code/outline`. Exact tokens, citations and original locations remain usable outside the connection. Terse status receipts suppress repeated observations without replacing evidence identity.
 
 
 
-The bridge admits the configured concurrent evidence requests (default 16, choices 4, 8, 16, 32 and 64) and one additional reserved `status`/`airk_status` lane. Evidence, native-channel and worker waiting stages each have a finite 128-waiter bound and two-second admission deadline. Frontends lease independent authenticated evidence channels instead of serializing one stream; the worker receives the same configured allowance plus status/control headroom. Additional status observations can borrow idle evidence capacity, but never queue behind evidence before their existing cold/observation budgets. Capacity is a maximum, not a promise that ownership, publication or resource contention cannot refuse a request. Cancellation, authorization expiry and Stop/drain retain their fences; submitted or uncertain work is never blindly replayed.
+The bridge admits the configured concurrent evidence requests (default 16, choices 4, 8, 16, 32 and 64) and one additional reserved `index_status`/`airk_status` lane. Evidence, native-channel and worker waiting stages each have a finite 128-waiter bound and two-second admission deadline. Frontends lease independent authenticated evidence channels instead of serializing one stream; the worker receives the same configured allowance plus status/control headroom. Additional status observations can borrow idle evidence capacity, but never queue behind evidence before their existing cold/observation budgets. Capacity is a maximum, not a promise that ownership, publication or resource contention cannot refuse a request. Cancellation, authorization expiry and Stop/drain retain their fences; submitted or uncertain work is never blindly replayed.
 
 
 
@@ -133,7 +183,7 @@ The native frontend owns stdio and direct evidence reads. The CLI composes an op
 
 
 
-`status` keeps compact publication/readiness fields and adds the configured `project` scope. In the 1.8.0 F06a candidate, it has a ten-second cold-setup allowance followed by a two-second observation allowance. Setup keeps the original shared attempt start time. Expiration reports readiness as unknown, null evidence, and `index_error.stage` identifying setup or observation. Hidden `airk_status` follows the same dispatch, schema and deadline contract. Genuine preparation/verification failures remain errors for both names: the internal/native chain is preserved, while the MCP bridge returns its existing generic `isError` response. Only deadline expiry is reported as an unknown setup-timeout observation. `diagnostics` adds detailed native observations and `explorer`. Neither response mode nor include_status makes status run diagnostics. Each component retains its own availability and observation age. A successful status envelope can report unavailable evidence; callers must require `index_state: available`, the expected collection and a publication token before treating results as indexed evidence. Source publication and semantic coverage remain separate observations. Native usage accounting stays at the evidence boundary; optional editor calls and the added UI portion of composite status are not measured as native evidence bytes.
+`index_status` keeps compact publication/readiness fields and adds the configured `project` scope. In the 1.8.0 F06a candidate, it has a ten-second cold-setup allowance followed by a two-second observation allowance. Setup keeps the original shared attempt start time. Expiration reports readiness as unknown, null evidence, and `index_error.stage` identifying setup or observation. Hidden `airk_status` follows the same dispatch, schema and deadline contract. Genuine preparation/verification failures remain errors for both names: the internal/native chain is preserved, while the MCP bridge returns its existing generic `isError` response. Only deadline expiry is reported as an unknown setup-timeout observation. `diagnostics` adds detailed native observations and `explorer`. Neither response mode nor include_status makes status run diagnostics. Each component retains its own availability and observation age. A successful status envelope can report unavailable evidence; callers must require `index_state: available`, the expected collection and a publication token before treating results as indexed evidence. Source publication and semantic coverage remain separate observations. Native usage accounting stays at the evidence boundary; optional editor calls and the added UI portion of composite status are not measured as native evidence bytes.
 
 
 
@@ -220,7 +270,7 @@ Management → Service → Concurrent requests… sets the service-host policy: 
 
 ## Request capacity in status, diagnostics and plans
 
-Successful MCP `status` and `diagnostics` responses (including the `airk_status` and `airk_diagnostics` aliases) include top-level `query_concurrency`, for example `"query_concurrency": 16`, in both JSON text and structured content. It is the evidence request limit read by the frontend for this request's admission: default 16, configured choices 4, 8, 16, 32 and 64. The separate reserved status/control slot is additional. It does not report free permits, queue depth or guaranteed admission. For a multi-project bridge, it is the minimum configured backend limit used by that bridge.
+Successful MCP `index_status` and `diagnostics` responses (including the `airk_status` and `airk_diagnostics` aliases) include top-level `query_concurrency`, for example `"query_concurrency": 16`, in both JSON text and structured content. It is the evidence request limit read by the frontend for this request's admission: default 16, configured choices 4, 8, 16, 32 and 64. The separate reserved status/control slot is additional. It does not report free permits, queue depth or guaranteed admission. For a multi-project bridge, it is the minimum configured backend limit used by that bridge.
 
 CLI status/diagnostics include top-level `query_concurrency`. Workbench `/status` and `/diagnostics`, CLI-executed plans and MCP `parse` retain it inside each completed step result. The shared frontend/CLI response adapter reuses the outer request's admission observation; payload accounting and output limits still apply. Previously saved replies retain their original fields; rerun them with 1.8.7 or later to obtain the new data.
 

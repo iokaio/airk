@@ -77,6 +77,7 @@ pub mod source_control;
 pub mod source_observations;
 pub mod source_policy;
 pub mod stage_timing;
+pub mod tool_names;
 pub mod usage;
 pub mod vector_evidence;
 pub mod vector_selection;
