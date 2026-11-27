@@ -125,6 +125,57 @@ fn agent_lean_skips_fingerprint_work_but_keeps_private_signatures() -> anyhow::R
 }
 
 #[test]
+fn agent_lean_retains_exception_handlers_in_csharp_python_and_java() -> anyhow::Result<()> {
+    use airk_core::retention::{RetainedFamily, RetainedProfile};
+    assert!(IndexDetail::AgentLean.retains_fact("exception_handler"));
+    assert!(RetainedProfile::Lean.retains_fact(RetainedFamily::Code, "exception_handler"));
+    assert!(!IndexDetail::Essential.retains_fact("exception_handler"));
+    for (path, adapter, text, line) in [
+        (
+            "Sample.cs",
+            "csharp",
+            "class Sample {\n  void Run() {\n    try { Work(); }\n    catch (InvalidOperationException error) { Log(error); }\n  }\n}\n",
+            4,
+        ),
+        (
+            "sample.py",
+            "python",
+            "def run():\n    try:\n        work()\n    except ValueError as error:\n        log(error)\n",
+            4,
+        ),
+        (
+            "Sample.java",
+            "java",
+            "class Sample {\n  void run() {\n    try { work(); }\n    catch (IllegalStateException error) { log(error); }\n  }\n}\n",
+            4,
+        ),
+    ] {
+        for detail in [IndexDetail::AgentLean, IndexDetail::Detailed] {
+            let selected = analyze_selected_with_detail(path, text, adapter, detail)?;
+            let handlers = selected
+                .analysis
+                .facts
+                .iter()
+                .filter(|fact| fact.kind == "exception_handler")
+                .collect::<Vec<_>>();
+            assert_eq!(handlers.len(), 1, "{path}: {detail:?}");
+            assert_eq!(handlers[0].start_line, line, "{path}: {detail:?}");
+            assert!(handlers[0].code.is_some(), "{path}: {detail:?}");
+        }
+        let essential = analyze_selected_with_detail(path, text, adapter, IndexDetail::Essential)?;
+        assert!(
+            essential
+                .analysis
+                .facts
+                .iter()
+                .all(|fact| fact.kind != "exception_handler"),
+            "{path}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn common_grammar_selected_payloads_match_full_reference_including_ids_and_locations()
 -> anyhow::Result<()> {
     for (path, adapter, text) in [

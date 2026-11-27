@@ -146,7 +146,7 @@ impl IndexDetail {
     pub fn coverage(self) -> &'static str {
         match self {
             Self::AgentLean => {
-                "Selected declarations, imports, call occurrences, local structure, entry points and document facts. Broad framework facts, standalone dates and fine-grained continuity are deliberately omitted. Call targets are written syntax candidates, not resolved; exact text and semantic inputs remain independently available."
+                "Selected declarations, imports, call occurrences, exception handlers, local structure, entry points and document facts. Broad framework facts, standalone dates and fine-grained continuity are deliberately omitted. Call targets are written syntax candidates, not resolved; exact text and semantic inputs remain independently available."
             }
             Self::Essential => {
                 "Native structured facts, relationships and fine-grained continuity are not indexed at Essential detail. Text and exact citations remain available. Explicit imported analysis is separate."
@@ -170,6 +170,7 @@ impl IndexDetail {
                     | "dynamic_call"
                     | "import"
                     | "inherits"
+                    | "exception_handler"
                     | "key"
                     | "section"
                     | "requirement"

@@ -22,7 +22,7 @@ Each collection selects how much derived evidence to retain. **Agent Lean (`agen
 |---|---|---|
 | Search Only (`essential`) | Searchable text, source paths/hashes, exact original locations | Structured facts, relationships and symbol/document-unit continuity |
 | Rich Structure (`balanced`) | Essential plus adapter-supported declarations, signatures, imports, structural/configuration/document facts, call occurrences and declaration continuity | Document-unit continuity |
-| Agent Lean (`agent_lean`) | Searchable text, exact locations, declarations/signatures/imports, supported call occurrences, selected local structure and document facts | Continuity fingerprints and broad document inventories |
+| Agent Lean (`agent_lean`) | Searchable text, exact locations, declarations/signatures/imports, supported call occurrences, exception handlers, selected local structure and document facts | Continuity fingerprints and broad document inventories |
 | Detailed | The full existing adapter-supported fact/relationship and continuity output | Adapter limitations still apply; no claim of complete resolution |
 
 Start lean and fast. Move to Rich Structure when broader structural facts or declaration continuity help the task, or Detailed when document-unit tracking or its other supported evidence is needed. Search Only suits workflows that require text and citations without structured facts. Richer detail can add extraction work and retained data; semantic inference remains separate, so this is not a guarantee of faster vector indexing.

@@ -581,7 +581,8 @@ impl AdapterRegistry {
                         "native-facts/7"
                     }
                     .to_owned()
-                        + "/sizing-1/detail-2",
+                        // detail-3: Agent Lean also retains exception handlers.
+                        + "/sizing-1/detail-3",
                     language: id.into(),
                     dialect: match id {
                         "sql-postgresql" => Some("postgresql".into()),
