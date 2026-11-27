@@ -76,7 +76,10 @@ fn help_content_manifest_matches_native_owners() {
         );
     }
     let value = json!({"schema":"airk.help.native-content/1","version":env!("CARGO_PKG_VERSION"),
-        "topics":topics,"cliCommands":commands,"helpRequestSchema":rmcp::schemars::schema_for!(HelpArgs),"tools":tools});
+        "topics":topics,"cliCommands":commands,"helpRequestSchema":rmcp::schemars::schema_for!(HelpArgs),"tools":tools,
+        // Every native operation under its native name: Admin and Workbench read
+        // their schemas here, whatever the public MCP catalog advertises.
+        "nativeTools":crate::local::tools()});
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/help/content.json");
     if std::env::var_os("AIRK_WRITE_HELP_CONTENT").as_deref() == Some(std::ffi::OsStr::new("1")) {
         std::fs::write(&path, serde_json::to_string_pretty(&value).unwrap() + "\n").unwrap();

@@ -58,7 +58,7 @@ Prioritize repeated evidence gathering that otherwise spends agent turns issuing
 | Explore a component | Scoped file inventory → selected outlines/imports; a navigable file and declaration map | Bounded inventory may be incomplete; no fabricated architecture narrative. |
 | Check evidence after indexing updates | `changes` from an exact baseline or remembered selectors → changed/removed/unknown entries and optional current excerpts | Indexed change observations are not a Git diff or historical source read; coverage floors and expiry remain explicit. |
 | Diagnose why retrieval is incomplete | Status/capabilities, then diagnostics only on request; readiness, extraction and policy facts | A successful connection is not proof of available evidence. Reads do not start model setup or repair. |
-| Prepare a focused agent handoff | Selected evidence cards → deduplicated excerpts, source hashes, original locations, scope, warnings and the user's objective | Exported source text is untrusted context. The agent verifies relevant live files before editing and supplies its own reasoning. |
+| Prepare a focused agent handoff | Selected evidence cards → deduplicated excerpts, source hashes, original locations, scope, warnings and the user's objective | The agent supplies its own reasoning. |
 
 Offer these as **Collect evidence** starters with parameter forms and an editable plan, using the existing Strategies concepts instead of a second workflow language. The classifier's 13 primitive intents remain small; these recipes are named compositions, not new learned intents. Ship definition exploration, document evidence and handoff selection with phase 2; add wider impact/test/component recipes in phase 3 after their budgets and evidence quality are measured.
 

@@ -20,8 +20,7 @@ function legacyAvailability(value: Value): string {
     const origin = obj(value.origin);
     const availability = (input: unknown) => input === true ? 'available' : input === false ? 'unavailable' : 'not reported';
     return `Original saved source bytes: ${availability(origin.source_available)}. Original saved profile bytes: ${availability(origin.profile_available)}. `
-        + `Vector selection: ${availability(value.vector_selection_available)}. Current profile-family reads: ${availability(value.profile_families_available)}. `
-        + 'Saved predecessor evidence does not establish current profile or vector readiness, or verify the live source.';
+        + `Vector selection: ${availability(value.vector_selection_available)}. Current profile-family reads: ${availability(value.profile_families_available)}.`;
 }
 
 const LIVE_MESSAGE: Record<LiveCheck, string> = {

@@ -80,7 +80,7 @@ function run(records: readonly LedgerRecord[], strategy: Strategy): RunResult {
     const { kept, omitted } = clipRecords(ordered, strategy.budgets.evidenceBytes);
     return { records: kept, omitted, manifest: { schema: RUN_SCHEMA, extensionVersion: '1.5.0', project: 'ab'.repeat(32), publication: 'airk-r1:fixture:7',
         template: `${strategy.id}@${strategy.version}`, params: { query: 'renew', symbol: 'refresh' }, scope: {}, steps: [], evidenceDigest: 'c'.repeat(64),
-        outcome: 'partial', reasons: ['live files not checked'], startedAt: 1, finishedAt: 2 } };
+        outcome: 'partial', reasons: ['some excerpts are truncated'], startedAt: 1, finishedAt: 2 } };
 }
 
 test('the prompt compiler is deterministic regardless of service result order', () => {
@@ -126,7 +126,7 @@ test('plans validate dependencies, derive Blocked and Stale, render front matter
     assert.equal(effectiveState(PLAN, staleTask, 'airk-r1:fixture:8'), 'stale');
     golden('session-renewal.plan.md', renderPlan(PLAN, { workspace: 'fixture', extensionVersion: '1.5.0', currentPublication: 'airk-r1:fixture:7' }));
     assert.equal(handoffPrompt('.airk/plans/session-renewal.md', PLAN, 'T2'),
-        'Read `.airk/plans/session-renewal.md` in this workspace. Do T2 only. Verify current files. Report changed files and test results, then ask before T3.');
+        'Read `.airk/plans/session-renewal.md` in this workspace. Do T2 only. Report changed files and test results, then ask before T3.');
 });
 
 test('search recipes accept only the documented fields', () => {

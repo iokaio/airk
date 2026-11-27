@@ -58,7 +58,7 @@ function nativeHelpContent(file = path.resolve(root, '../..', 'crates/airk-mcp/s
     const content = JSON.parse(fs.readFileSync(file, 'utf8'));
     if (!content || content.schema !== 'airk.help.native-content/1' || content.version !== expectedVersion
         || !Array.isArray(content.topics) || content.topics.length < 20 || !Array.isArray(content.tools)
-        || !content.tools.length || !content.cliCommands || typeof content.cliCommands !== 'object' || Array.isArray(content.cliCommands)
+        || !content.tools.length || !Array.isArray(content.nativeTools) || !content.nativeTools.length || !content.cliCommands || typeof content.cliCommands !== 'object' || Array.isArray(content.cliCommands)
         || !content.helpRequestSchema || typeof content.helpRequestSchema !== 'object' || Array.isArray(content.helpRequestSchema)) {
         throw new Error('Native Help content is missing, malformed or version-mismatched; regenerate it through its Rust owner.');
     }
@@ -69,7 +69,7 @@ function nativeHelpContent(file = path.resolve(root, '../..', 'crates/airk-mcp/s
         }
         ids.add(topic.id);
     }
-    for (const tool of content.tools) {
+    for (const tool of [...content.tools, ...content.nativeTools]) {
         if (!tool || typeof tool.name !== 'string' || !tool.inputSchema || typeof tool.inputSchema !== 'object' || Array.isArray(tool.inputSchema)) throw new Error('Native Help contains an invalid complete tool schema.');
     }
     return content;
@@ -85,7 +85,7 @@ function sharedHelpManifest(catalog, content = nativeHelpContent()) {
     return { schema: 'airk.help.manifest/1', catalogVersion: catalog.catalogVersion,
         productVersion: content.version, extensionVersion: catalog.extensionVersion, channel: null,
         topics: catalog.topics, cliCommands: content.cliCommands, helpRequestSchema: content.helpRequestSchema,
-        tools: content.tools, native: content };
+        tools: content.tools, nativeTools: content.nativeTools, native: content };
 }
 
 /** Compile src/explorerHelp/*.md into one validated, version-matched catalog. */

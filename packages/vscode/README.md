@@ -69,7 +69,7 @@ Explorer brings search, code navigation, document facts, evidence review and ind
 1. **Install AIRK Service** on your workspace host (see *Requires AIRK Service* above), then install this extension. VS Code 1.140 or newer is required. No Docker, Rust toolchain or separate API key is needed.
 2. **Create an index.** Open **AIRK Explorer** and use the Index library to review source, storage and watching choices and create the index. Opening a folder alone does not register or index it. Explorer shows progress, readiness and skipped or failed work.
 3. **Try Workbench.** It opens once after successful setup, or run **AIRK: Open Workbench**. Start with `/files` to see indexed paths. Then try `/search retry --mode lexical`, replacing `retry` with a term in your project, and open a cited result.
-4. **Connect an agent when you want one.** Run **AIRK: Connect Coding Agent**, review its scoped configuration, and enable or approve AIRK in that client. Ask the agent to discover AIRK’s tools, check `index_status`, search the relevant scope and verify the cited live files before editing.
+4. **Connect an agent when you want one.** Run **AIRK: Connect Coding Agent**, review its scoped configuration, and enable or approve AIRK in that client. Ask the agent to discover AIRK’s tools, check `index_status` and search the relevant scope.
 
 Success means a query returns evidence for the intended project and its citations open the expected source. Indexing or connection failures remain visible; an enabled-server badge alone does not prove that your agent can retrieve evidence.
 

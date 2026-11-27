@@ -43,7 +43,7 @@ export function sidebarContent(state: ExplorerViewState | undefined, folders: nu
     return `<h1>AIRK</h1>
 <p role="status"><span class="pill ${severity}">${esc(word)}</span> ${registered} registered project${registered === 1 ? '' : 's'}</p>
 <dl>${facts.map(([name, value]) => `<dt>${esc(name)}</dt><dd>${esc(value)}</dd>`).join('')}</dl>
-<p class="note">Readiness is the published index; it is not proof that live files match. Counts come from AIRK; missing values stay unobserved.</p>
+<p class="note">Readiness is the published index. Counts come from AIRK; missing values stay unobserved.</p>
 <form id="search" role="search"><label for="query">Search indexed evidence</label><input id="query" name="query" maxlength="4096" placeholder="Words that must all appear" required>
 <button type="submit">Search</button></form>
 <button type="button" class="primary" data-action="open">Open AIRK Explorer</button>

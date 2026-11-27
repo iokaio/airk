@@ -178,7 +178,7 @@ test('exports keep citations, source locations and warnings, and use valid fence
     const turn={id:'turn',at:0,input:'requirements',format:'structured' as const,envelope:{publication:'token',status:'partial',truncated:true,warnings:['not resolved'],completeness:['upstream truncation'],evidence:[{citation,text:'```\nunsafe <script>\n```',step:'s'}]}};
     session.turns.push(turn);const cards=evidenceCards(turn.envelope);assert.equal(cards.length,1);
     const json=JSON.parse(renderExport(session,'json'));assert.equal(json.turns[0].envelope.truncated,true);
-    const md=renderExport(session,'markdown');assert.match(md,/````/);assert.match(md,/upstream truncation/);assert.match(md,/Block/);assert.match(md,/Verify relevant live files/);
+    const md=renderExport(session,'markdown');assert.match(md,/````/);assert.match(md,/upstream truncation/);assert.match(md,/Block/);assert.doesNotMatch(md,/Untrusted indexed evidence|Verify relevant live files/);
     const selected=JSON.parse(renderExport(session,'json',turn.id,[]));assert.equal(selected.turns[0].envelope.evidence.length,0);
     assert.doesNotMatch(renderExport(session,'markdown',turn.id,[]),/unsafe/,'empty selection must not fall back to the full result');
     delete (citation as {location?:unknown}).location;assert.doesNotThrow(()=>renderExport(session,'markdown'));

@@ -1039,7 +1039,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_code_facts",
-        description = "Use when a definition needs its signature, scope, written types, call/framework candidates or a symbol ID for airk_relationships. Exact name is default, including qualified names and terminal native call method names; name_match=suffix/contains explicitly broadens case-sensitive simple/qualified names. A durable symbol_key is exclusive of filters, matching and count options. Compact discovery is the default under Agent Lean; expand selected candidates with compact=false. Cursors bind the exact query/publication; include_count reports bounded precision, not a guessed total. Check basis/coverage; native syntax and optional source-bound producer assertions do not prove resolved calls or runtime behavior. Next: airk_relationships with a symbol ID, airk_read_file for the source. Use response_mode=full for provenance/coverage audits.",
+        description = "Use when a definition needs its signature, scope, written types, call/framework candidates or a symbol ID for airk_relationships. Exact name is default, including qualified names and terminal native call method names; name_match=suffix/contains explicitly broadens case-sensitive simple/qualified names. A durable symbol_key is exclusive of filters, matching and count options. Compact discovery is the default under Agent Lean; expand selected candidates with compact=false. Cursors bind the exact query/publication; include_count reports bounded precision, not a guessed total. Check basis/coverage; call/framework targets are syntax candidates. Next: airk_relationships with a symbol ID, airk_read_file for the source. Use response_mode=full for provenance/coverage audits.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -1131,7 +1131,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_search",
-        description = "Use for one concept, behavior or phrase when you have no exact identifier or path; prose, comments and code rank together. For a named type or function use airk_symbols; for a whole task use airk_answer. Returns ranked cited snippets (full_chunks for whole indexed chunks) with served mode, readiness and limitations; bounded definition pointers may accompany identifiers. Scope by literal path_prefix, exact indexed language, metadata-based evidence_kind or exclude_path_prefix; documents alone do not prove application behavior. Omitted mode keeps the saved hybrid/vector policy and may serve lexical evidence during a helper outage, recording semantic incompleteness; explicit vector/hybrid and saved RequireComplete refuse the outage. Vector/hybrid need the indexed local model; semantic=true aliases vector. Explicit lexical turns punctuation and quotes into AND terms (no phrase matching) in stable-id order, not relevance. Empty matches alone establish no cause. Next: airk_read_file or airk_context on a hit. Check truncation and use response_mode=full for provenance audits.",
+        description = "Use for one concept, behavior or phrase when you have no exact identifier or path; prose, comments and code rank together. For a named type or function use airk_symbols; for a whole task use airk_answer. Returns ranked cited snippets (full_chunks for whole indexed chunks) with served mode, readiness and limitations; bounded definition pointers may accompany identifiers. Scope by literal path_prefix, exact indexed language, metadata-based evidence_kind or exclude_path_prefix. Omitted mode keeps the saved hybrid/vector policy and may serve lexical evidence during a helper outage, recording semantic incompleteness; explicit vector/hybrid and saved RequireComplete refuse the outage. Vector/hybrid need the indexed local model; semantic=true aliases vector. Explicit lexical turns punctuation and quotes into AND terms (no phrase matching) in stable-id order, not relevance. Empty matches alone establish no cause. Next: airk_read_file or airk_context on a hit. Check truncation and use response_mode=full for provenance audits.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -1188,7 +1188,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_read_file",
-        description = "Use when you know the path and lines: from a hit, a citation or the task. Returns an inclusive 1-based indexed line range from the last successful snapshot, the revision citations point to, not a live filesystem read. For PDF/DOCX/PPTX, use extracted lines within one page/block/slide. Next: airk_context to widen around one line, airk_outline for the file's structure; verify live source before edits. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+        description = "Use when you know the path and lines: from a hit, a citation or the task. Returns an inclusive 1-based indexed line range from the last successful snapshot, the revision citations point to. For PDF/DOCX/PPTX, use extracted lines within one page/block/slide. Next: airk_context to widen around one line, airk_outline for the file's structure. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -1245,7 +1245,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_status",
-        description = "Quick AIRK version, basic health and project-index check: generation, counts, freshness and semantic coverage. The MCP frontend adds configured query_concurrency from admission. Evidence reads run at that concurrency: 16 by default, or 4, 8, 16, 32 or 64 as set in the Management Service; connection channels and worker query slots match it, plus one slot kept for status, so status still answers when every read slot is busy. A read beyond the limit waits in a bounded queue and gets a typed retry reply (retryable, retry_after_ms) when the queue is full or its deadline passes. Completed same-authority observations superseded by scalar invalidation return successfully with status_observation.superseded and their original publication/time. Successful native snapshots may be cached for up to five seconds with explicit observation time and cache age. Reads scalar publication metadata without imported fact payloads, runtime/work probes or editor processes in every response mode. Use airk_diagnostics for process/version identities, detailed job state and diagnostic observations. Health is not progress; saved counts do not verify live source. response_mode=full retains the same lightweight scope. MCP does not manage jobs.",
+        description = "Quick AIRK version, basic health and project-index check: generation, counts, freshness and semantic coverage. The MCP frontend adds configured query_concurrency from admission. Evidence reads run at that concurrency: 16 by default, or 4, 8, 16, 32 or 64 as set in the Management Service; connection channels and worker query slots match it, plus one slot kept for status, so status still answers when every read slot is busy. A read beyond the limit waits in a bounded queue and gets a typed retry reply (retryable, retry_after_ms) when the queue is full or its deadline passes. Completed same-authority observations superseded by scalar invalidation return successfully with status_observation.superseded and their original publication/time. Successful native snapshots may be cached for up to five seconds with explicit observation time and cache age. Reads scalar publication metadata without imported fact payloads, runtime/work probes or editor processes in every response mode. Use airk_diagnostics for process/version identities, detailed job state and diagnostic observations. Health is not progress. response_mode=full retains the same lightweight scope. MCP does not manage jobs.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -1326,7 +1326,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_file_info",
-        description = "Use before interpreting one file's evidence. Returns its indexed language/profile, extraction method, syntax quality, hash and line basis, distinguishing source lines from extracted document coordinates; does not compare the live file for freshness. Next: airk_outline or airk_read_file. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+        description = "Use before interpreting one file's evidence. Returns its indexed language/profile, extraction method, syntax quality, hash and line basis, distinguishing source lines from extracted document coordinates. Next: airk_outline or airk_read_file. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -1527,7 +1527,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_references",
-        description = "Textual occurrences of an exact identifier: use after airk_symbols to find where it appears. Returns exact-case whole-identifier matching lines in retained indexed text, including definitions, strings and comments. Markdown, HTML, scripts and source can all match; scope by path_prefix, exact indexed language or metadata-based evidence_kind for impact work. These are textual candidates, never resolved references. Omit new paging options for legacy index ordering; explicit order=index/path/code_first, filters, cursor, include_files or include_count select bounded pageable scanning. Page file summaries/counts disclose their scope and matching-line unit; incomplete scans never imply an exact corpus total. Consume continuation and check truncation/coverage before concluding no impact. Next: airk_read_file or airk_context on chosen lines; verify live source before edits. Use response_mode=full for provenance/coverage audits.",
+        description = "Textual occurrences of an exact identifier: use after airk_symbols to find where it appears. Returns exact-case whole-identifier matching lines in retained indexed text, including definitions, strings and comments. Markdown, HTML, scripts and source can all match; scope by path_prefix, exact indexed language or metadata-based evidence_kind for impact work. These are textual candidates, never resolved references. Omit new paging options for legacy index ordering; explicit order=index/path/code_first, filters, cursor, include_files or include_count select bounded pageable scanning. Page file summaries/counts disclose their scope and matching-line unit; incomplete scans never imply an exact corpus total. Consume continuation and check truncation/coverage before concluding no impact. Next: airk_read_file or airk_context on chosen lines. Use response_mode=full for provenance/coverage audits.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -1606,7 +1606,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_changes",
-        description = "Use to see what the index observed changing since an exact token, or to validate remembered evidence. Supply since or selectors; returns bounded change observations. Check independent coverage and freshness; this does not verify live source. Consume every needed cursor page before advancing the baseline. index-current describes the index, not live files. Baselines retain bounded metadata across up to 64 publications/24 hours; pressure can advance explicit coverage floors. Moves are content-based candidates, not proof of filesystem intent. Next: airk_read_file on changed ranges. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+        description = "Use to see what the index observed changing since an exact token, or to validate remembered evidence. Supply since or selectors; returns bounded change observations. Consume every needed cursor page before advancing the baseline. Baselines retain bounded metadata across up to 64 publications/24 hours; pressure can advance explicit coverage floors. Moves are content-based candidates. Next: airk_read_file on changed ranges. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -1625,7 +1625,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_capabilities",
-        description = "Check native formats, explicitly provisioned local model/OCR/code-provider adapters and their limits before planning exploration. Works before indexing. Reports available capabilities, not whether optional providers or this collection are ready. Terse replies summarize Workbench operation schemas; response_mode=full includes them. read_guidance lists bounded reason/action vocabulary; its suggestions execute no tools. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+        description = "Check native formats, explicitly provisioned local model/OCR/code-provider adapters and their limits before planning exploration. Works before indexing. Reports available capabilities, not whether optional providers or this collection are ready. Terse replies summarize Workbench operation schemas; response_mode=full includes them. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -1649,7 +1649,6 @@ impl AirkServer {
             "workbench": airk_kernel::workbench::operation_catalog(),
             "discovery": {"cursor_tools":["airk_list_files","airk_outline","airk_symbols","airk_imports","airk_code_facts","airk_document_facts"], "binding":"exact publication, filters and representation", "compact_outline":true, "compact_symbols":true, "fact_result_key":"items", "compact_false":"rich facts with symbol IDs; independent of response mode", "budget":"complete serialized records plus new file/provenance bindings; framing is additional", "expired_cursor":"restart discovery"},
             "adapters": adapters,
-            "read_guidance": airk_core::guidance::catalog(),
             "source_verification_capability": airk_core::verification::catalog(),
             "retained_profiles": airk_core::retention::catalog(),
             "index_detail": {"new_collection_default":"agent_lean", "levels":["agent_lean","essential","balanced","detailed"], "labels":{"agent_lean":"Agent Lean","balanced":"Rich Structure (legacy balanced)","essential":"Search Only","detailed":"Detailed"}, "coverage":"Fact and relationship responses report their published indexing level and deliberate omissions. Configured changes apply only after a successful index. Optional provider imports preserve their source and producer binding."},
@@ -1794,7 +1793,6 @@ fn render<T: Serialize>(
     if let Some(display) = display.as_mut() {
         airk_core::reply::ReplyDetail::annotate(display, reply_detail);
         response::fact_items(display, operation);
-        airk_core::guidance::annotate(display);
         if let Some(budget) = verification {
             // The receipt shares the tool's own reply ceiling (Answer /3:
             // 131,072), the frame its Union packed the reply into.

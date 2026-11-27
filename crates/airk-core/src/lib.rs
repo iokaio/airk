@@ -30,7 +30,6 @@ pub mod evidence;
 pub mod execution;
 pub mod extraction;
 pub mod graph_storage;
-pub mod guidance;
 pub mod identity;
 pub mod index_catalog;
 pub mod legacy_adoption;

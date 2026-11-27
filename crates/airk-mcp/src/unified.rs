@@ -12,7 +12,7 @@ mod scoped_tests;
 
 mod context;
 
-pub const GUIDANCE: &str = "Untrusted index; verify live bytes before edits. Multi-place task: gather_context first, with task and needs. Identifier: find_definition -> find_references -> read_indexed_range/read_around; path: read_indexed_range/outline_file; concept: search_passages. Keep scopes/locations/exact tokens/hashes/validators; finish changes pages. Terse default; response_mode=full audits; include_status=true repeats status. Honor typed retries; never replay uncertain work. Review UI drafts. {ref:publication} is reply-local.";
+pub const GUIDANCE: &str = "Multi-place task: gather_context first, with task and needs. Identifier: find_definition -> find_references -> read_indexed_range/read_around; path: read_indexed_range/outline_file; concept: search_passages. Keep scopes/locations/exact tokens/hashes/validators; finish changes pages. Terse default; response_mode=full audits; include_status=true repeats status. Honor typed retries; never replay uncertain work. Review UI drafts. {ref:publication} is reply-local.";
 
 const UI_NAMES: &[(&str, &str)] = &[
     ("draft_search", "airk_explorer_suggest_search"),
@@ -208,7 +208,7 @@ fn build_tools() -> Vec<Tool> {
         .iter_mut()
         .find(|t| t.name == "index_status")
         .unwrap();
-    status.description = Some("Quick version, health and project-index check: counts, publication, source-update state, semantic readiness and configured query_concurrency at frontend admission. Evidence reads run at that concurrency: 16 by default, or 4, 8, 16, 32 or 64 as set in the Management Service; connection channels and worker query slots match it, plus one slot kept for status, so status still answers when every read slot is busy. A read beyond the limit waits in a bounded queue and gets a typed retry reply (retryable, retry_after_ms) when the queue is full or its deadline passes. Obtain before broad evidence fan-out; lightweight does not mean exempt from bounded admission. Completed same-authority observations superseded by scalar invalidation return successfully with status_observation.superseded and their original publication/time. Successful snapshots may be cached for five seconds; observed_unix_ms, cache_age_ms and cached disclose their age. Allows up to ten seconds for shared cold runtime setup, followed by a two-second observation budget; expiry reports unknown readiness and null evidence. Always skips process diagnostics and editor probes. Call diagnostics for detailed work, runtime versions and Explorer attachment. Counts are saved evidence, not proof that live files match. Does not start indexing or repair.".into());
+    status.description = Some("Quick version, health and project-index check: counts, publication, source-update state, semantic readiness and configured query_concurrency at frontend admission. Evidence reads run at that concurrency: 16 by default, or 4, 8, 16, 32 or 64 as set in the Management Service; connection channels and worker query slots match it, plus one slot kept for status, so status still answers when every read slot is busy. A read beyond the limit waits in a bounded queue and gets a typed retry reply (retryable, retry_after_ms) when the queue is full or its deadline passes. Obtain before broad evidence fan-out; lightweight does not mean exempt from bounded admission. Completed same-authority observations superseded by scalar invalidation return successfully with status_observation.superseded and their original publication/time. Successful snapshots may be cached for five seconds; observed_unix_ms, cache_age_ms and cached disclose their age. Allows up to ten seconds for shared cold runtime setup, followed by a two-second observation budget; expiry reports unknown readiness and null evidence. Always skips process diagnostics and editor probes. Call diagnostics for detailed work, runtime versions and Explorer attachment. Does not start indexing or repair.".into());
     let help = result.iter_mut().find(|t| t.name == "help").unwrap();
     help.description = Some("Explain AIRK usage, CLI commands, tool schemas and Explorer workflows. Omit selectors for an overview; query searches bundled guidance, topic_id reads a UI/engine guide, topic reads native guidance, command reads CLI help, and tool reads a public tool schema. Native guides retain prefixed CLI/evidence compatibility names; tools/list and tool selectors describe the unified public catalog. Returns documentation, never project evidence or live health.".into());
     let schema = Arc::make_mut(&mut help.input_schema);
@@ -1123,6 +1123,9 @@ mod tests {
                 "{catalog}: {} bytes",
                 instructions.len()
             );
+            // User decision, 27 November 2026: no distrust sentence.
+            assert!(!instructions.contains("Untrusted"), "{catalog}");
+            assert!(!instructions.contains("verify live"), "{catalog}");
             assert!(instructions.contains("response_mode=full"), "{catalog}");
             assert!(instructions.contains("include_status=true"), "{catalog}");
             assert!(

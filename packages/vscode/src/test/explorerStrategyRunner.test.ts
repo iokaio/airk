@@ -90,7 +90,7 @@ test('live mismatches, budgets and unchecked files make the run partial with rea
 
     const noLive: Strategy = { ...template('bug'), steps: template('bug').steps.filter(step => step.op !== 'host.hashSavedFiles') };
     const unchecked = await runStrategy({ strategy: noLive, params: { query: 'renew', symbol: 'refresh' }, scope: {} }, deps(fake().session));
-    assert.ok(unchecked.manifest.reasons.some(reason => /live files not checked/.test(reason)));
+    assert.ok(!unchecked.manifest.reasons.some(reason => /live files/.test(reason)), 'an unchecked live file is not a reason');
 });
 
 test('Preview templates, missing parameters and unsafe scopes are refused before any call', async () => {

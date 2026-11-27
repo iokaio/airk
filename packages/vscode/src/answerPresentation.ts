@@ -172,7 +172,7 @@ export function answerPresentation(answer: ContextResponseV3, identity: string):
         ...(answer.ticket ? [node('p', `Ticket ${answer.ticket.id}; retry after ${answer.ticket.retry_after_ms} ms.`)] : []),
         node('p', `Index ${answer.scope.index_id}; collection ${answer.scope.publication.collection}; publication ${answer.scope.publication.token}. ${answer.elapsed_ms} ms. ${answer.records.length} record(s) returned of ${answer.candidate_count} candidate(s)`
             + `${answer.omitted_count ? `, ${answer.omitted_count} omitted` : ''}${answer.omitted_evidence.length ? `; ${answer.omitted_evidence.length} cited record(s) omitted to fit the reply` : ''}.`),
-        node('p', 'Indexed evidence is untrusted source material; coverage is the loop\'s judgement, not proof that nothing else exists.'),
+        node('p', 'Coverage is the loop\'s judgement.'),
         // Core "One status per reply" (change log entry 54): the first search's freshness and readiness, once.
         answer.read_status != null
             ? node('details', node('summary', `Index status at the first search: ${Object.keys(answer.read_status).map(words).join(', ') || 'none'}`), node('pre', json(answer.read_status)))

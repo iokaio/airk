@@ -430,7 +430,7 @@ fn interactive_tools_show_help_and_recover_from_invalid_requests() {
     assert!(text.contains("Result:") && text.contains("\"search_modes\": ["));
     assert!(text.contains("\"reply_detail\": \"rich\""), "{text}");
     assert!(
-        text.contains("\"subject\": \"selected_adapter\"") && text.contains("\"read_guidance\""),
+        !text.contains("\"subject\": \"selected_adapter\"") && !text.contains("\"read_guidance\""),
         "{text}"
     );
     assert!(String::from_utf8_lossy(&output.stderr).contains("JSON object"));

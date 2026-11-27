@@ -184,7 +184,7 @@ export function searchView(project: string, message: WebviewMessageOf<'search.ru
     const hits = hitViews(project, payload, publication, refs);
     const warnings = applied.ordering === 'index_identity'
         ? ['Lexical results are ordered by index identity, not relevance. All query words must appear.']
-        : applied.ordering === 'fused_rank' ? ['Semantic and hybrid results are similarity candidates, not proof of meaning or relevance.'] : [];
+        : [];
     if (applied.ordering === 'fused_rank' && applied.semantic && applied.semantic !== 'ready') {
         warnings.push(`Semantic coverage is ${applied.semantic}; results may be incomplete or unavailable.`);
     }

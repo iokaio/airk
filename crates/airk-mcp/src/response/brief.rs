@@ -28,9 +28,6 @@ pub const BRIEF_PASSAGE_BYTES: usize = 16_000;
 pub const WHERE_PER_NEED: usize = 4;
 /// The task text the header repeats.
 pub const MAX_TASK_BYTES: usize = 512;
-/// The note that says where the complete reply is.
-pub const FULL_NOTE: &str = "response_mode=full returns the complete reply.";
-const ASK: &str = "Ask again with narrower needs for what is still open, the same anchors, and known ranges for what you already hold.";
 const ASK_TICKET: &str = "The job is queued or running: send the same request again after ticket.retry_after_ms; the ticket keeps its place.";
 const MAX_LABEL_BYTES: usize = 80;
 const MAX_KEY_BYTES: usize = 60;
@@ -149,6 +146,8 @@ pub struct BriefNext {
     /// Kinds of evidence a part still lacks.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub gaps: Vec<String>,
+    /// Only for a queued or running job: when to send the request again.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub ask: String,
 }
 
@@ -164,7 +163,6 @@ pub struct BriefReply {
     pub why: Option<String>,
     /// The parts' stop reasons.
     pub stop: String,
-    pub full: String,
     /// The kernel's ticket for a queued or running job, unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ticket: Option<Value>,
@@ -834,7 +832,6 @@ impl<'a> View<'a> {
             result,
             why,
             stop,
-            full: FULL_NOTE.into(),
             ticket: reply
                 .ticket
                 .as_ref()
@@ -850,11 +847,10 @@ impl<'a> View<'a> {
                 paths,
                 gaps,
                 ask: if reply.ticket.is_some() {
-                    ASK_TICKET
+                    ASK_TICKET.into()
                 } else {
-                    ASK
-                }
-                .into(),
+                    String::new()
+                },
             },
             gathering,
             elapsed_ms: reply.elapsed_ms,

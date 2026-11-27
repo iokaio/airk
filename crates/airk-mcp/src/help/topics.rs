@@ -31,7 +31,7 @@ An agent can read only a snapshot the user explicitly shared through its support
         id: "roles",
         title: "Developer, Tester, Architect and Writer",
         text: r#"Choose the user's purpose and source formats before recommending indexing changes. Ask when these are unknown. Read airk_status for the selected collection/publication and airk_capabilities for actual adapters. Overview's four role lenses are navigation aids, not automatic indexing presets. The Explorer Help screen has an offline guide for each role plus indexing-choices and document-types.
-Developer: start with Agent Lean for supported declarations/imports/call candidates; use lexical search for exact errors and names, then symbols, code_facts, references and bounded context. Inspect tests/specifications too. Rich Structure helps when broader supported structure or declaration continuity is needed. A Runnable bug/API/component strategy can prepare evidence; verify live files before edits and run the project's own checks outside AIRK.
+Developer: start with Agent Lean for supported declarations/imports/call candidates; use lexical search for exact errors and names, then symbols, code_facts, references and bounded context. Inspect tests/specifications too. Rich Structure helps when broader supported structure or declaration continuity is needed. A Runnable bug/API/component strategy can prepare evidence; run the project's own checks outside AIRK.
 Tester: retain code, tests and requirements sources. Agent Lean supplies useful syntax/prose facts; consider Rich Structure for broader document/table inventories. document_facts can find requirement/acceptance candidates, and references can find written IDs. Review Changes/Impact/Tests produces leads, not test execution or certified coverage. A Planner task should state expected behavior, boundary/negative cases and acceptance checks. Citation validation does not verify behavior.
 Architect: compare documented decisions with written imports and structural/candidate relationships. Agent Lean is a starting point; Rich Structure may add needed structure/continuity. Bound each investigation by component and collection; additional source roots need review. Inspect historical ADR status, unresolved edges, imported-producer claims and old rename/deletion paths. No absent edge proves absence of coupling or behavior.
 Writer: Search Only suits text/quotation lookup; choose Agent Lean or richer detail for requirements, decisions, headings and table facts. Verify actual implementation before documenting shipped behavior. Check PDF page/Office locations, OCR provenance and spreadsheet formula-cache limitations. Conceptual vector/hybrid discovery still needs cited source support. Review the complete prompt or task before sharing and check returned citations before publishing.
@@ -65,7 +65,7 @@ For uncertain submission outcomes, recover the exact saved request through servi
         title: "Explaining workspace index health",
         text: r#"Read airk_status for the actual selected collection. Publication identity and file/chunk counts describe committed queryable evidence. Discovery readiness and semantic readiness are independent; lexical evidence may be useful while selected vectors are pending or partial.
 An index with no index set can report not readable: no index set. Review its memberships in Indexes > Search scope or Admin before requesting evidence. Creating a set groups indexes; deleting that grouping preserves its member indexes and independent memberships/data. A split result is complete only when both result indexes and their intended set memberships are confirmed.
-Freshness watermarks/timestamps/failures describe observed source intent and indexing completion, not a complete live filesystem proof. Source watcher enabled and native/periodic backend coverage are separate. Check watch.failure, including root_limit or unavailable roots, instead of treating enabled=true as complete coverage.
+Freshness watermarks/timestamps/failures describe observed source intent and indexing completion. Source watcher enabled and native/periodic backend coverage are separate. Check watch.failure, including root_limit or unavailable roots, instead of treating enabled=true as complete coverage.
 The work bundle separately reports the sampled active/latest job, phase/counters, queued jobs/truncation, pause state, source watcher, progress sample age and exact-job waits. Check progress_current_worker before interpreting a cached phase as belonging to the serving worker. A successful health response and increasing heartbeat do not prove real work advancement.
 Unknown totals remain unknown. A missing applicable wait is not evidence of no wait. A native failure code, stale worker sample, failed_observations entry or long interval without progress calls for refreshed observations and scoped diagnosis; one sample alone does not prove a deadlock or corruption.
 Use runtime identities to check that frontend, worker and service versions/builds match when evidence is available. Use topic=job-management to explain CLI actions, topic=troubleshooting for symptoms, and topic=maintenance before proposing repairs or deletion."#,
@@ -110,7 +110,7 @@ Preserve complete --output json results, error lines, truncation, continuation a
         title: "MCP connections and response modes",
         text: r#"Agents connect directly to the discovered loopback HTTP /mcp endpoint. It takes no token or credential helper (U110): any Authorization header is ignored, and any local process that can reach 127.0.0.1 can read every index of this installation. Stdio MCP, the stable launcher and per-agent proxy processes are retired. VS Code is an optional setup interface, not a transport proxy. The service serves plain HTTP on 127.0.0.1 only, so there is no certificate to trust.
 Every read names its scope: index_ids and index_set_ids (ids or names, union, at most 32 each), or workspace (an absolute folder path) to read the default scope applied for that folder, or its nearest stored parent, in the AIRK Explorer. A read naming none refuses scope_required. list_scopes lists indexes, index sets and the stored workspace defaults. When the client offers MCP roots and a call names no scope, its first file root fills workspace. Results report read_scope.source (named or workspace_default).
-Inspect tools/list or airkctl tools list --json for current availability. A changed workspace default applies to the next call; a cached tool list may need refresh/reconnect. No live tools-list notification is promised. Terse is default; response_mode=full adds detailed provenance, coverage and readiness. Preserve full errors and continuations. Health/status do not prove live source freshness. Reconnect when a configuration or catalog update requires it."#,
+Inspect tools/list or airkctl tools list --json for current availability. A changed workspace default applies to the next call; a cached tool list may need refresh/reconnect. No live tools-list notification is promised. Terse is default; response_mode=full adds detailed provenance, coverage and readiness. Preserve full errors and continuations. Reconnect when a configuration or catalog update requires it."#,
     },
     Topic {
         id: "tools",
@@ -124,7 +124,7 @@ For CLI tool calls, pass a UTF-8 JSON object using --args-file. Inputs are bound
         title: "Choosing an evidence tool",
         text: r#"Start with a literal path prefix when a question concerns one component. Discover paths before reading them. Use focused lexical search for exact words or identifiers and vector/hybrid search for approximate conceptual matches when local vectors are ready.
 Use outlines or exact symbols to locate definitions. Expand the selected hit with context or a bounded read. Use file_info before interpreting partial syntax or extracted document coordinates. Retain citation hashes, read validators and exact publication tokens.
-Use changes for remembered evidence and independent freshness/coverage observations. Indexed evidence is not a live filesystem check. Verify live source before editing. An absent edge or search hit does not prove there is no relationship or behavior."#,
+Use changes for remembered evidence and independent freshness/coverage observations."#,
     },
     Topic {
         id: "search",
@@ -155,7 +155,7 @@ CLI management uses typed service RPC and durable request keys. Ask command=serv
         title: "Published state and source freshness",
         text: r#"Publication tokens bind collection, incarnation and revision; a generation number alone is not an identity. Reads describe the last successful indexed snapshot. Keep the exact token and citation source hash when connecting evidence across calls.
 Freshness contains requested/completed/running watermarks and observed timestamps/failures. These describe observed source intent and indexing work, not a filesystem proof that every current source byte matches. live_source_verified=false must not be presented as verified freshness.
-airk_changes checks indexed continuity and remembered selectors. Follow every needed cursor page before advancing a baseline. Its index-current validation is distinct from live-source verification. Moves are content-based candidates, not proof of filesystem intent.
+airk_changes checks indexed continuity and remembered selectors. Follow every needed cursor page before advancing a baseline. Moves are content-based candidates.
 Do not confuse runtime version, extractor version, publication identity and semantic pipeline identity. They answer different questions."#,
     },
     Topic {
@@ -279,7 +279,7 @@ Review exports/diagnostics before sharing: evidence can contain intentionally re
         id: "limits",
         title: "Budgets and interpretation limits",
         text: r#"Returned evidence is bounded by result counts, byte budgets and tool-specific traversal limits. Check truncation and continuation before claiming complete coverage. Literal path prefixes are not globs. Original source and extracted document coordinate systems differ.
-Native syntax targets are generally unresolved candidates. Textual references include definitions/comments/strings; similarity is approximate; imported assertions depend on their producers. Absence of evidence is not proof of absence of behavior.
+Native syntax targets are generally unresolved candidates. Textual references include definitions/comments/strings; similarity is approximate; imported assertions depend on their producers.
 Runtime responsiveness, source watcher coverage, indexed source freshness, lexical readiness and semantic readiness are separate. Cached observations can belong to an earlier worker generation. Missing data remains unknown, not zero.
 Help max_bytes bounds the complete JSON payload and next_line continues the selected article or schema. Ask an exact tool name for its actual current limits and input validation."#,
     },
@@ -308,7 +308,7 @@ Clients call owning native APIs rather than another authorization/retrieval engi
     Topic {
         id: "workflows",
         title: "Common user workflows",
-        text: r#"Find a definition: discover paths, request an outline or exact symbol/code fact, then read a bounded cited excerpt. Explain behavior: search one component, expand hits, check call candidates and verify live source before edits.
+        text: r#"Find a definition: discover paths, request an outline or exact symbol/code fact, then read a bounded cited excerpt. Explain behavior: search one component, expand hits and check call candidates.
 Check indexing: read airk_status, separate published readiness from work progress, compare sample age/worker/job identity, then inspect failures/waits. Use native Admin or typed CLI management for an intentional pause, cancellation or scoped repair.
 Manage installation: verify terminal resolution and runtime identities, reconnect agents separately, review ownership and retry deferred cleanup after old clients release files. Preserve project data and sources.
 Ask airk_help for a topic, an exact command path or tool schema before constructing management commands. Help supplies explanations and examples; the agent must still use actual observed paths/IDs and the required native approval guards."#,

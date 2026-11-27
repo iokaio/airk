@@ -37,6 +37,29 @@ Before, an Answer's receipt was measured against the 65,536 frame and the
 Union packed the plain encoding, so an Answer reply above about 61 KiB
 failed as a whole.
 
+## Plan warnings (user decision, 27 November 2026)
+
+On 27 November 2026 the user called "Untrusted index; verify live bytes before
+edits" an old artifact and decided it leaves everything an agent receives from
+AIRK's tools. Cost experiments suggested agents read again what a tool returned
+partly because the tools told them not to trust it.
+
+- **Removed.** The Kernel's Workbench/Parse result envelope no longer opens its
+  warnings with "Untrusted indexed evidence; verify live files before edits."
+- **Then: no editorial (same day).** The user decided that an agent gains
+  confidence from the content and the references to specific files, and that
+  no editorial is allowed in what it receives. The envelope's warnings
+  ("Syntax relationships are candidates, not resolved calls.", the
+  test-strategy and references notes) are gone, and `dated_warnings` with its
+  "Saved sources verified ..." sentence is deleted: a verified receipt is
+  reported only by `source_verification` itself.
+- **Stays.** The receipt, `source_verification`, `completeness` codes and
+  `freshness.live_source_verified`.
+
+`warnings` remains a list of strings, now empty for these results: no wire
+shape, digest input or persisted format changes. The retained pre-split capture
+`fixtures/split/parity/airkctl_reads_print_what_airk_printed.json` keeps the
+old sentence as recorded history. Tests: `verification_tests` in `airk-mcp`.
 Focused cases use the complete Rust-emitted two-member Answer fixture, then
 attach independently specified receipt locators. These pure cases prove
 projection semantics, not filesystem verification or transport qualification.

@@ -85,5 +85,6 @@ test('the Explorer accepts no instruction-file message and the instruction text 
     // Agent instructions moved with Management to AIRK Admin (U6, U97); the Explorer has no such message.
     assert.equal(parseWebviewMessage({ v: 1, type: 'instructions.open', requestId: 'test', project: 'a'.repeat(64), agent: 'copilot' }), undefined);
     assert.match(AIRK_AGENT_INSTRUCTIONS, /deferred tool discovery/);
-    assert.match(AIRK_AGENT_INSTRUCTIONS, /verify relevant live file contents before edits/);
+    assert.match(AIRK_AGENT_INSTRUCTIONS, /fallback searches when AIRK is unavailable/);
+    assert.doesNotMatch(AIRK_AGENT_INSTRUCTIONS, /untrusted|verify relevant live file contents/);
 });

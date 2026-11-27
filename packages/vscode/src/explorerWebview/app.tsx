@@ -232,7 +232,7 @@ function StatusPopover(props: { state: ExplorerViewState; project?: ProjectSumma
                 ['Published status observed', ago(status?.observedAt)],
                 ['Detailed observations', ago(status?.detailsObservedAt)],
             ]} />
-            <p class="muted">Health, published readiness, source freshness and semantic coverage are separate observations. Ready is not proof that saved files still match the index.</p>
+            <p class="muted">Health, published readiness, source freshness and semantic coverage are separate observations.</p>
             <div class="actions">
                 <button type="button" onClick={() => { void request('status.refresh', {}).catch(props.onError); }}>Refresh</button>
                 <button type="button" class="ghost" onClick={props.onClose}>Close</button>

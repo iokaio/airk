@@ -841,13 +841,7 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
         assert_eq!(mcp["status"], "complete", "{mcp}");
         assert_eq!(mcp["calls"], 4);
         if compact == Some(true) || detail == Some("lean") {
-            assert!(
-                mcp["steps"][0]["result"]["guidance"]["observations"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .any(|v| v["reason"] == "reply_omitted")
-            );
+            assert!(mcp["steps"][0]["result"].get("guidance").is_none(), "{mcp}");
         }
         fs::write(&file, serde_json::to_vec(&request)?)?;
         let cli = cli_call(
@@ -941,13 +935,7 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
             assert_eq!(returned, passage);
         } else {
             assert!(returned.len() <= 768);
-            assert!(
-                mcp["guidance"]["observations"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .any(|v| v["reason"] == "truncated")
-            );
+            assert!(mcp.get("guidance").is_none(), "{}: {mcp}", "truncated");
         }
         let open = native_payload(&open_call(
             root.path(),
@@ -996,13 +984,7 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
     .enumerate()
     {
         let mut mcp = decode(session.read_retry(70 + offset as u64, tool, args.clone())?)?;
-        assert!(
-            mcp["guidance"]["observations"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|v| v["reason"] == reason)
-        );
+        assert!(mcp.get("guidance").is_none(), "{}: {mcp}", reason);
         let mut cli = native_payload(&open_call(
             root.path(),
             state.path(),

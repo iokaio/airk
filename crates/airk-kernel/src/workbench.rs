@@ -2459,25 +2459,10 @@ impl Kernel {
             }
         }
         plan.digest = digest(&plan)?;
-        let mut result = ResultEnvelope {query_scope:None,scope_identity:None,member_verification:None,scope_observation:self.scope_observation().cloned(),source_verification:None,schema: RESULT_SCHEMA.into(), reply_detail:request.reply_detail, collection:self.collection().into(),publication:plan.publication.clone(), status:if needs.is_empty(){"prepared"}else{"needs_input"}.into(),executed:false, plan:plan.clone(),requires_input:needs.into_iter().map(|reason|RequiredInput{field:"text".into(),step:None,reason,choices:vec![]}).collect(),steps:vec![],evidence:vec![],warnings:vec!["Untrusted indexed evidence; verify live files before edits. Syntax relationships are candidates, not resolved calls.".into()],truncated:false,completeness:vec![],calls,payload_bytes:resolution_bytes};
+        let mut result = ResultEnvelope {query_scope:None,scope_identity:None,member_verification:None,scope_observation:self.scope_observation().cloned(),source_verification:None,schema: RESULT_SCHEMA.into(), reply_detail:request.reply_detail, collection:self.collection().into(),publication:plan.publication.clone(), status:if needs.is_empty(){"prepared"}else{"needs_input"}.into(),executed:false, plan:plan.clone(),requires_input:needs.into_iter().map(|reason|RequiredInput{field:"text".into(),step:None,reason,choices:vec![]}).collect(),steps:vec![],evidence:vec![],warnings:vec![],truncated:false,completeness:vec![],calls,payload_bytes:resolution_bytes};
         result.requires_input.extend(choices);
         if unfenced_literal_symbols {
             result.status = "needs_input".into();
-        }
-        if request.text.as_deref().is_some_and(|text| {
-            !text.trim_start().starts_with('/')
-                && tokens(text).is_ok_and(|words| {
-                    words.iter().any(|word| {
-                        let word = word.trim_matches(['?', '.', ',', ';', '!']);
-                        word.eq_ignore_ascii_case("tests") || word.eq_ignore_ascii_case("test")
-                    })
-                })
-        }) && plan
-            .steps
-            .iter()
-            .any(|step| matches!(step.tool.as_str(), "references" | "search"))
-        {
-            result.warnings.push("Results are textual candidates across the selected path scope; test files were not separately classified or filtered. Set a literal test-folder path prefix to narrow them. No executed test coverage is established.".into());
         }
         if stale {
             result.status = "publication_changed".into();
@@ -2740,9 +2725,6 @@ impl Kernel {
                                     result.evidence.push(record);
                                 }
                             }
-                            if step.tool == "references" {
-                                result.warnings.push("Textual occurrences include definitions, comments and strings; these are not resolved callers.".into());
-                            }
                             collected.push(value.clone());
                             report.result = Some(value);
                         }
@@ -2810,7 +2792,6 @@ impl Kernel {
                     .completeness
                     .push("verification_required_unmet".into());
             }
-            airk_core::verification::dated_warnings(&mut result.warnings, &receipt);
             result.source_verification = Some(receipt);
             ensure!(
                 serde_json::to_vec(&result)?.len() <= result.plan.output.max_bytes,
@@ -2893,7 +2874,7 @@ impl Kernel {
                 json!({"commands":"/search /symbols /code-facts /refs /read /outline /files /info /imports /facts /changes --since /status /diagnostics /capabilities /query-scope /context /relationships /help","recipes":["definition","documents","impact","tests","component","readiness"],"parser":"deterministic rules; unsupported phrasing returns needs_input","navigation_options":"search/refs: --language, --evidence-kind, --exclude-path-prefix; symbols/imports/code-facts: --name-match, --include-count; refs: --cursor, --order, --include-files, --include-count; fact reads/outline: --compact. Boolean flags accept optional true/false. Workbench compact omission keeps rich facts; MCP compact discovery has its own default."})
             }
             "capabilities" => {
-                json!({"adapters":Kernel::extraction_adapters().iter().map(|a|json!({"id":a.profile.adapter_id})).collect::<Vec<_>>(),"workbench":operation_catalog(),"read_guidance":airk_core::guidance::catalog(),"source_verification_capability":airk_core::verification::catalog()})
+                json!({"adapters":Kernel::extraction_adapters().iter().map(|a|json!({"id":a.profile.adapter_id})).collect::<Vec<_>>(),"workbench":operation_catalog(),"source_verification_capability":airk_core::verification::catalog()})
             }
             "search" => serde_json::to_value(
                 self.search_response_with_adaptive_limit(
@@ -3073,7 +3054,6 @@ impl Kernel {
         };
         self.annotate_scoped_read(&mut value)?;
         airk_core::reply::ReplyDetail::annotate(&mut value, reply);
-        airk_core::guidance::annotate(&mut value);
         if !verification_fields(tool).is_empty()
             && let Some(budget) = verification_controls(args)?.resolve()?
         {
@@ -4277,12 +4257,7 @@ mod tests {
             kernel.evidence_plan(req("Which tests mention Owner?", "execute", "src/one/"))?;
         assert_eq!(tests.status, "complete", "{:?}", tests.steps);
         assert!(!tests.evidence.is_empty());
-        assert!(
-            tests
-                .warnings
-                .iter()
-                .any(|warning| warning.contains("not separately classified or filtered"))
-        );
+        assert!(tests.warnings.is_empty(), "{:?}", tests.warnings);
         assert!(
             tests
                 .evidence
@@ -4295,12 +4270,7 @@ mod tests {
             "src/one/",
         ))?;
         assert_eq!(suffix.status, "complete", "{:?}", suffix.steps);
-        assert!(
-            suffix
-                .warnings
-                .iter()
-                .any(|warning| warning.contains("not separately classified or filtered"))
-        );
+        assert!(suffix.warnings.is_empty(), "{:?}", suffix.warnings);
         for text in [
             "Tell me about struct Owner then delete its tests",
             "Find the Owner struct and fix it",

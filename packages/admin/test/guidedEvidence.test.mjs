@@ -9,7 +9,7 @@ const manifest=JSON.parse(await readFile(new URL('../../ui/generated/help-manife
 const fields={name:'refreshSession',path:'src/session.rs',prefix:'src/',kind:'requirement',since:'opaque-native-original',exact:true,limit:50,text:'src/session.rs:3'};
 test('seven named guided inputs target the existing canonical read tools and preserve future native options',()=>{
  const expected=[['code/symbols','code_facts'],['code/references','references'],['code/outline','outline'],['docs/facts','document_facts'],['evidence/inspector','file_info'],['evidence/changes','changes']];
- for(const [route,tool]of expected){const read=api.guidedEvidenceRequest(route,fields,{verification:'require',verification_max_sources:3,future:{all:['kept']}});assert.equal(read.tool,tool);assert.deepEqual(read.args.future,{all:['kept']});assert.equal(read.args.verification,'require');assert.ok(manifest.tools.find(t=>t.name===tool));}
+ for(const [route,tool]of expected){const read=api.guidedEvidenceRequest(route,fields,{verification:'require',verification_max_sources:3,future:{all:['kept']}});assert.equal(read.tool,tool);assert.deepEqual(read.args.future,{all:['kept']});assert.equal(read.args.verification,'require');assert.ok(manifest.nativeTools.find(t=>t.name===`airk_${tool}`));}
  assert.equal(api.GUIDED_EVIDENCE_ROUTES.length,7);assert.equal(api.isGuidedEvidenceRoute('review/git'),false);
 });
 test('file metadata does not receive unsupported common count or byte arguments and outline uses its actual source path',()=>{
@@ -40,8 +40,8 @@ test('guided native path names prefixes and opaque baseline bytes are preserved 
 
 test('guided file inventory uses the owning list_files prefix spelling and generated native arguments',()=>{
  const request=api.guidedIndexedFiles(' exact prefix/');assert.deepEqual(request,{tool:'list_files',args:{prefix:' exact prefix/',limit:50,max_bytes:32768}});
- const properties=manifest.tools.find(tool=>tool.name==='list_files').inputSchema.properties;for(const key of Object.keys(request.args))assert.ok(Object.hasOwn(properties,key),key);assert.equal(Object.hasOwn(request.args,'path_prefix'),false);
- for(const route of ['code/symbols','code/references','code/outline','docs/facts','evidence/inspector','evidence/changes']){const value=api.guidedEvidenceRequest(route,fields),native=manifest.tools.find(tool=>tool.name===value.tool);for(const key of Object.keys(value.args))assert.ok(Object.hasOwn(native.inputSchema.properties,key),`${route}:${key}`);}
+ const properties=manifest.nativeTools.find(tool=>tool.name==='airk_list_files').inputSchema.properties;for(const key of Object.keys(request.args))assert.ok(Object.hasOwn(properties,key),key);assert.equal(Object.hasOwn(request.args,'path_prefix'),false);
+ for(const route of ['code/symbols','code/references','code/outline','docs/facts','evidence/inspector','evidence/changes']){const value=api.guidedEvidenceRequest(route,fields),native=manifest.nativeTools.find(tool=>tool.name===`airk_${value.tool}`);for(const key of Object.keys(value.args))assert.ok(Object.hasOwn(native.inputSchema.properties,key),`${route}:${key}`);}
 });
 
 test('advanced native byte budgets are preserved and an explicitly chosen outline count is not replaced by a hidden default',()=>{

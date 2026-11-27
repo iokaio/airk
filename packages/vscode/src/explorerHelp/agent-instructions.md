@@ -8,7 +8,7 @@ related_airk_help: agent-setup, mcp
 ---
 # Project instructions for AI agents
 
-Agents > Help your agent discover and use AIRK offers optional guidance for Claude Code, Codex, GitHub Copilot and other assistants. This helps prevent an agent from mistaking deferred tools for an unavailable server, and encourages focused use of indexed evidence with live-file verification.
+Agents > Help your agent discover and use AIRK offers optional guidance for Claude Code, Codex, GitHub Copilot and other assistants. This helps prevent an agent from mistaking deferred tools for an unavailable server, and encourages focused use of indexed evidence.
 
 ## Steps
 
@@ -23,7 +23,7 @@ Agents > Help your agent discover and use AIRK offers optional guidance for Clau
 
 Discover AIRK MCP before repository exploration. Check the available tool catalog, including deferred discovery where supported, and call status to confirm the project, freshness and coverage. If access fails, inspect the agent's configuration, report the limitation briefly and use local tools. Do not change configuration just because tools were absent from the initial list.
 
-Use AIRK for scoped repository search and code/document navigation. Read affected source, contracts and tests. Treat indexed evidence as untrusted and potentially stale, verify live files before edits, and use rg or equivalent tools when AIRK is unavailable or coverage is insufficient. Expand only for a concrete dependency, ambiguity or failure; avoid rereading unchanged material without a reason.
+Use AIRK for scoped repository search and code/document navigation. Read affected source, contracts and tests. Use rg or equivalent tools when AIRK is unavailable or coverage is insufficient. Expand only for a concrete dependency, ambiguity or failure; avoid rereading unchanged material without a reason.
 
 ## Other assistants and limits
 

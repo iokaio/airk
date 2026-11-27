@@ -9,7 +9,7 @@ export function parsePlanFile(input: string): ImportedPlan {
     if (text.trimStart().startsWith('{')) {
         const checked = validatePlan(JSON.parse(text));
         if (!checked.ok) { throw new Error(checked.errors.slice(0, 5).join('; ')); }
-        return { plan: checked.plan, format: 'json', warnings: ['Imported JSON retains task states and evidence metadata. Verify them against this project before handoff.'] };
+        return { plan: checked.plan, format: 'json', warnings: ['Imported JSON retains task states and evidence metadata.'] };
     }
     const front = /^---\n([\s\S]*?)\n---\n/.exec(text);
     if (!front || !front[1].split('\n').includes(`schema: ${PLAN_SCHEMA}`)) { throw new Error('Choose a validated AIRK plan JSON file or Markdown saved by AIRK Planner.'); }

@@ -849,7 +849,6 @@ fn pack_ranked(
             &mut value,
             Some(airk_core::reply::ReplyDetail::Rich),
         );
-        airk_core::guidance::annotate(&mut value);
         if serde_json::to_vec(&value)?.len() <= maximum
             && serde_json::to_vec(&serde_json::to_string(&value)?)?
                 .len()

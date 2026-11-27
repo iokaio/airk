@@ -742,23 +742,6 @@ pub struct VerificationFailure {
     pub retryable: bool,
 }
 
-/// Replace only the plan's saved-source freshness sentence. Other evidence
-/// qualifications and the need to recheck before subsequent edits survive.
-pub fn dated_warnings(warnings: &mut [String], receipt: &VerificationReceipt) {
-    if receipt.status != "verified" || receipt.requirements_satisfied != Some(true) {
-        return;
-    }
-    for warning in warnings {
-        if let Some(rest) =
-            warning.strip_prefix("Untrusted indexed evidence; verify live files before edits.")
-        {
-            *warning = format!(
-                "Untrusted indexed evidence. Saved sources verified at the observation time recorded in source_verification, against its exact indexed revisions. Recheck before later edits.{rest}"
-            );
-        }
-    }
-}
-
 /// Preserve the full attempted evidence on a required-check failure. This is a
 /// nonretryable outcome, shared by native transports and the plan fallback.
 pub fn attach_response(

@@ -213,7 +213,6 @@ fn combined_packet_keeps_fitting_off_bytes_and_requires_actual_focus_outer_headr
             &mut value,
             Some(airk_core::reply::ReplyDetail::Rich),
         );
-        airk_core::guidance::annotate(&mut value);
         Ok(serde_json::to_vec(&value)?.len())
     }
     let mut active = packet(false)?;
@@ -266,7 +265,6 @@ fn derived_verification_reserve_preserves_off_packet_and_trims_only_presentation
             &mut value,
             Some(airk_core::reply::ReplyDetail::Rich),
         );
-        airk_core::guidance::annotate(&mut value);
         Ok(value)
     }
     for unknown in [false, true] {
