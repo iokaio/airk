@@ -4734,3 +4734,11 @@ The round 1 result of 40.8 percent on munarium-T1 used a longer line that
 also told the agent not to read the ranges again or search for more. It does
 not carry over to this sentence and is measured again.
 [MCP response contract](../../crates/airk-mcp/src/response/CONTRACT.md#no-editorial-in-replies-user-decision-27-november-2026)
+
+Later the same day the assurance alone measured no effect on munarium-T1
+(17.9 percent lower against 20.0 with no line, series
+`t1-oracle-assure-r1`), and the user allowed the instruction as well. The
+line is now "These passages are exact text taken from the files referenced.
+There is no need to read these ranges again." The earlier line's claims that
+the passages are all the task needs and that nothing more need be searched
+are left out: a reply cannot promise them.

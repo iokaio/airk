@@ -36,10 +36,10 @@ const MAX_NEXT: usize = 12;
 const MAX_OMITTED: usize = 48;
 const MAX_SEARCHED: usize = 4;
 const MAX_DIFFERING: usize = 4;
-/// The one assurance a brief may carry (user decision, 27 November 2026,
+/// The one assurance and instruction a brief may carry (user decisions, 27 November 2026,
 /// the single exception to no editorial): present only when the brief
 /// carries passages and no returned source was found to differ.
-pub const PASSAGE_ASSURANCE: &str = "These passages are exact text taken from the files referenced.";
+pub const PASSAGE_ASSURANCE: &str = "These passages are exact text taken from the files referenced. There is no need to read these ranges again.";
 /// Top-level fields the transport added beside the kernel reply.
 const ADDED: [&str; 12] = [
     "request_id",
