@@ -15,9 +15,14 @@ One call does, in order:
    occurrences counted, so the reply can say how many files were searched;
 3. files: ranked by the distinct terms they hold, rarer terms and defining
    files counting more, the role fitted to the deliverable;
-4. ranges: in the best files, each hit widened to the definition around it
-   from the map's definition lines;
-5. the reply: the service's brief layout with a census section first and
+4. second hop: from the best files' hits, the definitions that enclose
+   them (searched for their users), the rare names they refer to that
+   another file defines, and the wiring keys they hold (action names,
+   routes, environment variables), each searched the same way; a path the
+   request names is taken directly;
+5. ranges: in the best files, each hit widened to the definition around it
+   from the map's definition lines, and an outline of each best file;
+6. the reply: the service's brief layout with a census section first and
    ranges before text, short ranges carried as passages.
 
 ``replay`` scores the reply for each recorded agent call with the same
@@ -50,6 +55,13 @@ TOP_FILES = 16
 RANGES_PER_FILE = 4
 RANGE_LINES = 60
 PASSAGE_LINES = 14
+HOP_FILES = 6
+HOP_TERMS = 24
+HOP_MAX_FILES = 40
+OUTLINE_FILES = 10
+OUTLINE_NAMES = 40
+WIRING = re.compile(r"""['"]([A-Za-z][\w-]*(?:[./:][\w{}-]+)+)['"]|\b([A-Z][A-Z0-9]{2,}(?:_[A-Z0-9]+)+)\b""")
+PATH_MENTION = re.compile(r"[\w./\\-]+\.[A-Za-z0-9]{1,8}")
 CENSUS_FILES = 10
 CENSUS_LINES = 8
 IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:[.:][A-Za-z_][A-Za-z0-9_]*)*")
@@ -143,21 +155,43 @@ def gather(repository: Repository, arguments: dict) -> dict:
     wants_test = deliverable == "test" or "test" in str(arguments.get("task") or "").lower()
     census, score, held = [], {}, {}
     files_total = len(repository.texts)
-    for term in terms:
+    searched: set[str] = set()
+
+    def count(term: dict) -> None:
+        """Search for one term everywhere and credit the files that hold it."""
+        if term["term"] in searched:
+            return
+        searched.add(term["term"])
+        hop = term["source"] in ("user", "refers", "wiring")
         found = repository.search(term["term"], term["exact"])
         occurrences = sum(len(lines) for lines in found.values())
         if not found:
-            census.append({"term": term["term"], "occurrences": 0, "files": 0})
-            continue
-        if len(found) > files_total * 0.2:
-            census.append({"term": term["term"], "occurrences": occurrences, "files": len(found), "note": "too common to list"})
-            continue
-        weight = math.log(1 + files_total / len(found)) * (2.0 if term["source"] in ("anchor", "quoted", "named") else 1.0)
+            if not hop:
+                census.append({"term": term["term"], "occurrences": 0, "files": 0})
+            return
+        if len(found) > (HOP_MAX_FILES if hop else files_total * 0.2):
+            if not hop:
+                census.append({"term": term["term"], "occurrences": occurrences, "files": len(found), "note": "too common to list"})
+            return
+        weight = math.log(1 + files_total / len(found)) * {"anchor": 2.0, "quoted": 2.0, "named": 2.0, "wiring": 0.9,
+                                                           "user": 0.7, "refers": 0.6}.get(term["source"], 1.0)
         for path, lines in found.items():
             defines = term["term"] in index["files"].get(path, {}).get("defines", {})
             score[path] = score.get(path, 0.0) + weight * (1.6 if defines else 1.0)
             held.setdefault(path, {})[term["term"]] = lines
-        census.append({"term": term["term"], "occurrences": occurrences, "files": len(found), "found": found})
+        census.append({"term": term["term"], "occurrences": occurrences, "files": len(found), "found": found,
+                       **({"via": term["source"]} if hop else {})})
+
+    for term in terms:
+        count(term)
+    # A path the request names is read directly.
+    request_text = " ".join([str(arguments.get("task") or "")] + [str(need) for need in arguments.get("needs") or []])
+    for mention in PATH_MENTION.findall(request_text):
+        mention = mention.replace("\\", "/").lstrip("./")
+        for path in repository.texts:
+            if "/" in mention and (path == mention or path.endswith("/" + mention)):
+                score[path] = score.get(path, 0.0) + 2 * math.log(1 + files_total)
+                held.setdefault(path, {}).setdefault("named in the request", [1])
     rarity = {word: math.log(1 + files_total / (1 + len(index["word_files"].get(word, [])))) for word in words}
     for word in words:
         for path in index["word_files"].get(word, []):
@@ -173,6 +207,37 @@ def gather(repository: Repository, arguments: dict) -> dict:
             weight = 1.0
         return score[path] * weight * (1 + 0.25 * len(held.get(path, {})))
 
+    # Second hop, from the hits in the best files so far.
+    first = sorted((path for path in score if path in held), key=lambda path: (-fitted(path), path))[:HOP_FILES]
+    defined_in: dict[str, int] = {}
+    for record in index["files"].values():
+        for name in record["defines"]:
+            defined_in[name] = defined_in.get(name, 0) + 1
+    hops: dict[str, dict] = {}
+    for path in first:
+        record, lines = index["files"].get(path, {}), repository.texts[path]
+        at_line = {line: name for name, numbers in record.get("defines", {}).items() for line in numbers}
+        starts = sorted(at_line)
+        own = set(record.get("defines", {}))
+        for numbers in list(held[path].values()):
+            for number in numbers[:6]:
+                before = [line for line in starts if line <= number]
+                begin = before[-1] if before and number - before[-1] <= RANGE_LINES else max(1, number - 3)
+                after = [line for line in starts if line > number]
+                end = min(after[0] - 1 if after else len(lines), begin + RANGE_LINES - 1, len(lines))
+                if before and begin == before[-1] and " " not in at_line[begin] and len(at_line[begin]) >= 5:
+                    hops.setdefault(at_line[begin], {"term": at_line[begin], "source": "user", "exact": True})
+                body = "\n".join(lines[begin - 1:end])
+                for token in set(IDENTIFIER.findall(body)):
+                    token = token.split(".")[-1]
+                    if len(token) >= 6 and token not in own and 1 <= defined_in.get(token, 0) <= 3 and is_name(token):
+                        hops.setdefault(token, {"term": token, "source": "refers", "exact": True})
+                for match in WIRING.finditer(body):
+                    key = match.group(1) or match.group(2)
+                    hops.setdefault(key, {"term": key, "source": "wiring", "exact": bool(match.group(2))})
+    order = {"wiring": 0, "user": 1, "refers": 2}
+    for term in sorted(hops.values(), key=lambda term: (order[term["source"]], term["term"]))[:HOP_TERMS]:
+        count(term)
     ranked = sorted((path for path in score if path in held), key=lambda path: (-fitted(path), path))
     top = ranked[:TOP_FILES]
     ranges = []
@@ -220,18 +285,31 @@ def gather(repository: Repository, arguments: dict) -> dict:
             if len(order) > CENSUS_FILES:
                 row["more_files"] = len(order) - CENSUS_FILES
         shown.append(row)
+    outline = []
+    for path in top[:OUTLINE_FILES]:
+        named = sorted((numbers[0], name) for name, numbers in index["files"].get(path, {}).get("defines", {}).items()
+                       if not name.startswith("_") and len(name) <= 60)
+        if len(named) > OUTLINE_NAMES:
+            step = len(named) / OUTLINE_NAMES
+            named = [named[int(position * step)] for position in range(OUTLINE_NAMES)]
+        if named:
+            outline.append({"file": path, "lines": index["files"][path]["lines"],
+                            "defines": [f"{name}@{line}" for line, name in named]})
     guidance = sorted(path for path, record in index["files"].items() if record["role"] == "guidance")
     brief = {"schema": gather_context_dose.BRIEF_SCHEMA, "task": str(arguments.get("task") or "")[:512], "result": "complete",
              "searched": f"{files_total} text files read live; every occurrence of each term is counted",
              "census": shown,
              "needs": [{"need": 1, "text": "everything this task needs", "origin": "caller", "status": "covered",
                         "where": [{"at": item["at"], "why": item["why"]} for item in ranges]}],
-             "passages": passages,
+             "passages": passages, "outline": outline,
              "next": {"paths": ranked[TOP_FILES:TOP_FILES + 12] + guidance[:4],
                       "ask": "Ask again with narrower needs or exact names for what is still open."}}
     while len(json.dumps(brief, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > MAX_BRIEF_BYTES:
         if brief["passages"]:
             brief["passages"].pop()
+        elif any(len(row["defines"]) > 12 for row in brief["outline"]):
+            for row in brief["outline"]:
+                row["defines"] = row["defines"][::2] if len(row["defines"]) > 12 else row["defines"]
         elif len(brief["needs"][0]["where"]) > 8:
             brief["needs"][0]["where"].pop()
         elif any(len(row.get("in", [])) > 3 for row in brief["census"]):
@@ -252,6 +330,8 @@ def census_spans(brief: dict) -> list[str]:
         for entry in row.get("in") or []:
             path, _, numbers = entry.rstrip("…").rpartition(":")
             found += [f"{path}:{number}-{number}" for number in numbers.split(",") if number.isdigit()]
+    for row in brief.get("outline") or []:
+        found += [f"{row['file']}:{entry.rsplit('@', 1)[1]}-{entry.rsplit('@', 1)[1]}" for entry in row["defines"]]
     return found
 
 
