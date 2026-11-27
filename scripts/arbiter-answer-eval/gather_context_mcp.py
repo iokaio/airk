@@ -143,10 +143,14 @@ def oracle_backend(task: dict, snapshot: Path):
 def live_backend(source: Path, map_file: Path):
     """Answer every call from the live files and the topical map (``live_gather.py``); no service is called."""
     import live_gather
-    repository = live_gather.Repository(source, json.loads(map_file.read_text(encoding="utf-8")))
+    import live_gather_v3
+    index = json.loads(map_file.read_text(encoding="utf-8"))
+    repository = live_gather.Repository(source, index)
+    # The map says which version built it; the third version's map is answered by the third version's gather step.
+    gather = live_gather_v3.gather if index.get("schema") == live_gather_v3.SCHEMA else live_gather.gather
 
     def call(native: str, repo: str, arguments: dict) -> tuple[str, bool, bytes]:
-        text = json.dumps(live_gather.gather(repository, arguments), ensure_ascii=False, separators=(",", ":"))
+        text = json.dumps(gather(repository, arguments), ensure_ascii=False, separators=(",", ":"))
         return text, False, text.encode("utf-8")
     return call
 
