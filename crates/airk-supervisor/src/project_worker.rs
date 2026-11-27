@@ -443,7 +443,7 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 if tokio::time::Instant::from_std(now) >= admission_deadline {
                     return Err(AdmissionError::Busy);
                 }
-                policy.begin_query_with_control(state.identity, session, MAX_FRAME_BYTES, now, matches!(request.tool.as_str(), "airk_status" | "status"))
+                policy.begin_query_with_control(state.identity, session, MAX_FRAME_BYTES, now, airk_core::tool_names::operation(&request.tool) == "status")
             }).await? else { return Ok(()); };
             let admission = if admission == Err(airk_core::service::AdmissionError::Busy)
                 && Instant::now() >= authorized_until {
@@ -465,7 +465,7 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
                     && request.native.is_none()
                     && request.context_partition.is_none()
                     && request.answer_partition.is_none()
-                    && matches!(request.tool.as_str(), "search" | "airk_search")
+                    && airk_core::tool_names::operation(&request.tool) == "search"
                     && let (Some(wire), Some(scope)) = (wire_attempt, grant.scope)
                     && let Some(origin) = airk_host::read_attempt::claim_lexical_repair(
                         wire,

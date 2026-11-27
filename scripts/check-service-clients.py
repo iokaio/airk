@@ -41,6 +41,12 @@ INTERIM_SELECTOR = ("__airk_role", "setup-interim")
 TOOLS = {"airk_" + name for name in (
     "answer", "capabilities", "changes", "code_facts", "context", "document_facts", "file_info", "help", "imports",
     "list_files", "outline", "parse", "query_scope", "read_file", "references", "relationships", "search", "status", "diagnostics", "symbols")}
+# The one mapping between native and public MCP tool names (completion plan decision 12, 26 November
+# 2026), read from the Rust-emitted table through the evaluation harness module.
+_TOOL_NAMES_SPEC = importlib.util.spec_from_file_location(
+    "airk_tool_names", Path(__file__).resolve().parent / "arbiter-answer-eval" / "tool_names.py")
+tool_names = importlib.util.module_from_spec(_TOOL_NAMES_SPEC)
+_TOOL_NAMES_SPEC.loader.exec_module(tool_names)
 
 
 WINDOWS_CLIENT_FIXTURE_CHECK = r"""
@@ -195,13 +201,13 @@ def owned_client_fixture():
 RETRYABLE_TOOLS = TOOLS - {"airk_parse", "airk_answer"}
 
 # The public MCP catalog is distinct from the native CLI's compatible aliases.
-MCP_TOOLS = {name.removeprefix("airk_") for name in TOOLS} | {
+MCP_TOOLS = {tool_names.public(name) for name in TOOLS} | {
     "projects", "draft_search", "draft_strategy", "draft_plan", "suggest_view",
     "list_templates", "get_template", "validate_draft", "proposal_status", "get_handoff"}
 # U110: the HTTPS local agent session lists scopes instead of a bound project.
 HTTPS_MCP_TOOLS = (MCP_TOOLS - {"projects"}) | {"list_scopes"}
 # The JSON API's read catalog on that session (assistance mutations are absent).
-HTTPS_API_READ_NAMES = {name.removeprefix("airk_") for name in TOOLS} | {
+HTTPS_API_READ_NAMES = {tool_names.public(name) for name in TOOLS} | {
     "list_scopes", "list_templates", "get_template", "validate_draft", "proposal_status", "get_handoff"}
 SCOPE_REQUIRED = "scope_required"
 
@@ -1492,16 +1498,16 @@ class Fixture:
             assert transport.parity_envelope(scope) == transport.parity_envelope(cli), "Complete open-path CLI/API query scope differs"
             # U110: a read that names no scope is refused identically on both surfaces.
             search = {"query": "polaronlymarker", "mode": "lexical", "response_mode": "full"}
-            scope_refusal(network.api_read("search", search, scoped=False))
+            scope_refusal(network.api_read("search_passages", search, scoped=False))
             workspace = str(self.owner)  # absolute, and no workspace default is stored
-            api_refused = network.api_read("search", {**search, "workspace": workspace})
+            api_refused = network.api_read("search_passages", {**search, "workspace": workspace})
             code, cli_refused = self.open_call(name, "airk_search", search, workspace=workspace)
             assert code == 1, "CLI open read without a stored workspace default was not refused"
             scope_refusal(api_refused); scope_refusal(cli_refused)
             assert transport.parity_envelope(api_refused) == transport.parity_envelope(cli_refused), "Complete scope_required refusal differs"
             if workbench and self.answer_validator is not None:
                 arguments, reference = self.answer_references[name]
-                result = network.api_read("answer", arguments)
+                result = network.api_read("gather_context", arguments)
                 validate_answer_pair(self, "CLI/HTTPS API", arguments, reference, result)
             return count
         finally:
@@ -1538,7 +1544,7 @@ class Fixture:
         drafts = {"draft_search", "draft_strategy", "draft_plan", "suggest_view"}
         assert all(item["annotations"]["readOnlyHint"] == (item["name"] not in drafts) for item in catalog)
         request = {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
-            **params, "name": "search", "arguments": {"query": "polaronlymarker", "mode": "lexical", "response_mode": "full"}}}
+            **params, "name": "search_passages", "arguments": {"query": "polaronlymarker", "mode": "lexical", "response_mode": "full"}}}
         def read(until):
             send(request)
             return receive(3, until)["result"]
@@ -1585,7 +1591,7 @@ class Fixture:
             with self.hold_publication(name):
                 reference = self.answer_once(name, arguments)
                 send({"jsonrpc":"2.0", "id":9, "method":"tools/call", "params":{
-                    **params, "name":"answer", "arguments":arguments}})
+                    **params, "name":"gather_context", "arguments":arguments}})
                 reply = receive(9)
                 assert "error" not in reply, "Finite MCP Answer failed without retry"
                 protocol = "2026-07-28" if lifecycle == "inline" else initialized["protocolVersion"]
@@ -1596,7 +1602,7 @@ class Fixture:
                     bounded["budget"].update(calls=1, candidates=1, fanout=1)
                     reference_partial = self.answer_once(name, bounded)
                     send({"jsonrpc":"2.0", "id":10, "method":"tools/call", "params":{
-                        **params, "name":"answer", "arguments":bounded}})
+                        **params, "name":"gather_context", "arguments":bounded}})
                     mcp_partial = receive(10)["result"]
                     for envelope in (reference_partial, mcp_partial):
                         assert_answer_budget_partial(envelope, bounded["budget"]["calls"])
@@ -1615,7 +1621,7 @@ class Fixture:
                     mcp = None
                     try:
                         send({"jsonrpc":"2.0", "id":11, "method":"tools/call", "params":{
-                            **params, "name":"answer", "arguments":mcp_arguments}})
+                            **params, "name":"gather_context", "arguments":mcp_arguments}})
                         mcp = receive(11)
                     finally:
                         # Retain the original observations even if decoding or parity
@@ -1948,7 +1954,7 @@ def cold_first_status(fixture, admission, *, case_deadline=None):
             if network.connection.sock is not None:
                 network.connection.sock.settimeout(budget)
             network.send({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-                          "params": {"name": "status", "arguments": {"index_ids": [selected["index_id"]]}}})
+                          "params": {"name": "index_status", "arguments": {"index_ids": [selected["index_id"]]}}})
             return network.receive(2)["result"]
         envelope, retries = read_envelope(read, deadline)
         value = tool_value(envelope)

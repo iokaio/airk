@@ -64,9 +64,9 @@ fn help_content_manifest_matches_native_owners() {
     let tools = crate::unified::tools();
     for required in [
         "help",
-        "search",
-        "read_file",
-        "status",
+        "search_passages",
+        "read_indexed_range",
+        "index_status",
         "diagnostics",
         "parse",
     ] {

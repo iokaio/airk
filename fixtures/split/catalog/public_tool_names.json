@@ -1,0 +1,52 @@
+{
+  "decision": "completion plan decision 12, 26 November 2026: clean rename at 1.9",
+  "owner": "airk-core::tool_names::RENAMED_PUBLIC_TOOLS",
+  "renamed": [
+    {
+      "native": "airk_answer",
+      "operation": "answer",
+      "public": "gather_context"
+    },
+    {
+      "native": "airk_search",
+      "operation": "search",
+      "public": "search_passages"
+    },
+    {
+      "native": "airk_symbols",
+      "operation": "symbols",
+      "public": "find_definition"
+    },
+    {
+      "native": "airk_references",
+      "operation": "references",
+      "public": "find_references"
+    },
+    {
+      "native": "airk_read_file",
+      "operation": "read_file",
+      "public": "read_indexed_range"
+    },
+    {
+      "native": "airk_context",
+      "operation": "context",
+      "public": "read_around"
+    },
+    {
+      "native": "airk_outline",
+      "operation": "outline",
+      "public": "outline_file"
+    },
+    {
+      "native": "airk_list_files",
+      "operation": "list_files",
+      "public": "list_indexed_files"
+    },
+    {
+      "native": "airk_status",
+      "operation": "status",
+      "public": "index_status"
+    }
+  ],
+  "schema": "airk.public-tool-names/1"
+}

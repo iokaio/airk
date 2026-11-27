@@ -48,6 +48,7 @@ Python 3.13, standard library only. Run every script as
 | `run_pass.py` | Runs a pass: sessions with bounded parallelism (default 4), reuse by digest, coverage, judging and grading. It can resume |
 | `evidence.py` | Locations and evidence text in tool results, the coverage rule, the evidence digest and the citation audit |
 | `common.py` | Handles (readiness, enabled stages), the tools catalog, one CLI process per tool call, scenarios and Claude Code process helpers |
+| `tool_names.py` | The one mapping between native (`airk_search`), operation (`search`, the pre-1.9 public name) and 1.9 public (`search_passages`) tool names, read from the Rust-emitted `fixtures/split/catalog/public_tool_names.json`. The harness calls tools by native name, which every image accepts; `public(name, names="legacy")` gives an older image's public names |
 | `pass_digests.py` | Computes a pass's canonical first-call digests for named results while their stage configuration is live, and prints which results agree |
 | `cuda_pair.py` | Inputs of a CUDA pair lifetime (up to Compact, Large and Focus) (`gpu_fixture.py --model pair`): copied, authenticated asset directories (the fixture refuses hard links) and the pinned roster, review pins and profile rows. See [GPU_FIXTURE.md](GPU_FIXTURE.md) |
 | `lg_lifetimes.py` | The LG `--lifetimes` file: one fixture root, pinned pair and measured memory per arm C, L and F (side by side). With `--base` it checks that the base lifetime closed cleanly, is restartable and holds exactly the pair's indexes. See [GPU_FIXTURE.md](GPU_FIXTURE.md) |
@@ -81,7 +82,10 @@ The Answer configurations differ in the service configuration, not in their
 tools.
 
 - **Schemas.** These come from `tools-catalog.json` (the CLI's
-  `tools list --json`). The wrapper removes `index` and `project` from every
+  `tools list --json`). A 1.9 image lists the renamed public names
+  (`gather_context`, `search_passages` and the rest); `common.load_catalog`
+  keys every listing by native name through `tool_names`, so pre-1.9 and 1.9
+  catalogs load alike. The wrapper removes `index` and `project` from every
   schema. It also removes `schema` and `budget` from `airk_answer`, and
   `schema` from `airk_parse`.
 - **`airk_answer`.** The wrapper always sets `schema` and `budget`. Since the

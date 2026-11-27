@@ -42,6 +42,7 @@ import time
 
 import common
 import evidence
+import tool_names
 from arbiter_pair_probe import PREFIX, SUFFIX, apply_block_quantization, pair_text
 from arbiter_probe_cases import ACTION, PASSAGE
 
@@ -300,7 +301,8 @@ class Tools:
         """One tool call. The service answers "scoped_connection_unavailable" with a retry delay when its
         connections are busy; that is waited out here, up to ``BUSY_RETRIES`` times."""
         for attempt in range(BUSY_RETRIES + 1):
-            outcome, _ = common.call_tool_retrying(self.handle, tool, self.repository,
+            # Native names select the same tool on pre-1.9 and 1.9 images (tool_names).
+            outcome, _ = common.call_tool_retrying(self.handle, tool_names.native(tool), self.repository,
                                                    {**arguments, "response_mode": "full"}, self.timeout)
             if outcome.ok or "scoped_connection_unavailable" not in (common.envelope_text(outcome.envelope) or ""):
                 break

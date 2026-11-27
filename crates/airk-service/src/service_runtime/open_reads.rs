@@ -263,8 +263,8 @@ async fn response_inner(
     let mut context = context;
     let mut arguments = call.arguments;
     if matches!(
-        call.tool.as_str(),
-        "answer" | "airk_answer" | "search" | "airk_search"
+        airk_core::tool_names::operation(&call.tool),
+        "answer" | "search"
     ) && let Err(error) =
         super::source_delivery::retain_selection(state, &context, selection_ref)
     {

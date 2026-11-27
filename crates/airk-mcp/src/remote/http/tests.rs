@@ -13,7 +13,7 @@ struct Echo {
 }
 impl RemoteTools for Echo {
     fn catalog(&self) -> Vec<Tool> {
-        ["search","status","draft_plan","erase_everything"].into_iter().map(|name|serde_json::from_value(json!({"name":name,"description":"Original HTTP fixture","inputSchema":{"type":"object","properties":{"revision":{"type":"string"}},"additionalProperties":true},"outputSchema":{"type":"object","additionalProperties":true},"annotations":{"readOnlyHint":true}})).unwrap()).collect()
+        ["search_passages","index_status","draft_plan","erase_everything"].into_iter().map(|name|serde_json::from_value(json!({"name":name,"description":"Original HTTP fixture","inputSchema":{"type":"object","properties":{"revision":{"type":"string"}},"additionalProperties":true},"outputSchema":{"type":"object","additionalProperties":true},"annotations":{"readOnlyHint":true}})).unwrap()).collect()
     }
     fn client(&self, client: airk_core::usage::ClientFamily) {
         self.clients.lock().unwrap().push(client);
@@ -125,7 +125,7 @@ async fn json_api_retains_canonical_catalog_arguments_results_and_refuses_annota
             .iter()
             .map(|tool| tool["name"].as_str().unwrap())
             .collect::<Vec<_>>(),
-        ["search", "status"]
+        ["search_passages", "index_status"]
     );
     assert_eq!(
         tools[0]["outputSchema"],
@@ -134,7 +134,11 @@ async fn json_api_retains_canonical_catalog_arguments_results_and_refuses_annota
     let args = json!({"revision":"exact:original","cursor":"cursor:original","response_mode":"full","max_bytes":8192});
     let response = f
         .service
-        .handle(request(Method::POST, "/api/v1/tools/search", args.clone()))
+        .handle(request(
+            Method::POST,
+            "/api/v1/tools/search_passages",
+            args.clone(),
+        ))
         .await;
     assert_eq!(response.status(), StatusCode::OK);
     let actual = value(response).await?;
@@ -144,7 +148,7 @@ async fn json_api_retains_canonical_catalog_arguments_results_and_refuses_annota
             closed: Arc::new(AtomicUsize::new(0)),
             clients: Arc::new(Mutex::new(vec![])),
         },
-        "search".into(),
+        "search_passages".into(),
         args.as_object().unwrap().clone(),
     )
     .await?;
@@ -188,21 +192,25 @@ async fn json_api_framing_host_origin_limits_and_methods_refuse_before_canonical
     let f = fixture(ReadSessionFactory::default(), HttpSessionBudget::new(128)?)?;
     for (request, status) in [
         (
-            request(Method::POST, "/api/v1/tools/search", json!([])),
+            request(Method::POST, "/api/v1/tools/search_passages", json!([])),
             StatusCode::BAD_REQUEST,
         ),
         (
-            request(Method::GET, "/api/v1/tools/search", json!({})),
+            request(Method::GET, "/api/v1/tools/search_passages", json!({})),
             StatusCode::METHOD_NOT_ALLOWED,
         ),
         (
-            request(Method::POST, "/api/v1/tools/search?root=/other", json!({})),
+            request(
+                Method::POST,
+                "/api/v1/tools/search_passages?root=/other",
+                json!({}),
+            ),
             StatusCode::BAD_REQUEST,
         ),
         (
             request(
                 Method::POST,
-                "/api/v1/tools/search",
+                "/api/v1/tools/search_passages",
                 json!({"query":"x".repeat(65536)}),
             ),
             StatusCode::PAYLOAD_TOO_LARGE,
@@ -210,7 +218,7 @@ async fn json_api_framing_host_origin_limits_and_methods_refuse_before_canonical
     ] {
         assert_eq!(f.service.handle(request).await.status(), status);
     }
-    let mut hostile = request(Method::POST, "/api/v1/tools/search", json!({}));
+    let mut hostile = request(Method::POST, "/api/v1/tools/search_passages", json!({}));
     hostile
         .headers_mut()
         .insert("origin", "https://hostile.example".parse()?);
@@ -218,7 +226,7 @@ async fn json_api_framing_host_origin_limits_and_methods_refuse_before_canonical
         f.service.handle(hostile).await.status(),
         StatusCode::FORBIDDEN
     );
-    let mut crossed = request(Method::POST, "/api/v1/tools/search", json!({}));
+    let mut crossed = request(Method::POST, "/api/v1/tools/search_passages", json!({}));
     crossed
         .headers_mut()
         .insert("host", "localhost:57421".parse()?);
@@ -278,7 +286,7 @@ async fn standard_streamable_http_negotiates_lists_calls_and_keeps_credentials_s
     let mut call = request(
         Method::POST,
         "/mcp",
-        json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"search","arguments":{"revision":"fixed","response_mode":"full"}}}),
+        json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"search_passages","arguments":{"revision":"fixed","response_mode":"full"}}}),
     );
     call.headers_mut().insert("mcp-session-id", session.clone());
     let result = value(a.service.handle(call).await).await?;
@@ -304,7 +312,11 @@ async fn standard_streamable_http_negotiates_lists_calls_and_keeps_credentials_s
     a.service.close().await;
     assert_eq!(
         b.service
-            .handle(request(Method::POST, "/api/v1/tools/search", json!({})))
+            .handle(request(
+                Method::POST,
+                "/api/v1/tools/search_passages",
+                json!({})
+            ))
             .await
             .status(),
         StatusCode::OK,
@@ -354,7 +366,7 @@ async fn complete_native_refusals_remain_http_200_and_the_transport_never_adds_a
         .service
         .handle(request(
             Method::POST,
-            "/api/v1/tools/search",
+            "/api/v1/tools/search_passages",
             json!({"fixture_error":true}),
         ))
         .await;
@@ -507,7 +519,7 @@ async fn concurrent_http_headers_are_request_local_canonical_arguments_win_and_c
         let mut call = request(
             Method::POST,
             "/mcp",
-            json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{"name":"search","arguments":args}}),
+            json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{"name":"search_passages","arguments":args}}),
         );
         call.headers_mut().insert("mcp-session-id", session.clone());
         call.headers_mut()
@@ -567,7 +579,7 @@ async fn concurrent_http_headers_are_request_local_canonical_arguments_win_and_c
             .status(),
         StatusCode::BAD_REQUEST
     );
-    let mut raw = request(Method::POST, "/api/v1/tools/search", json!({}));
+    let mut raw = request(Method::POST, "/api/v1/tools/search_passages", json!({}));
     raw.headers_mut()
         .insert("x-airk-response-mode", "terse".parse()?);
     assert_eq!(
@@ -612,7 +624,7 @@ async fn modern_http_schema_validation_rechecks_unknown_and_changed_tools() -> a
             if !self.annotated.load(Ordering::SeqCst) {
                 return vec![];
             }
-            vec![serde_json::from_value(json!({"name":"search","inputSchema":{"type":"object","properties":{"revision":{"type":"string","x-mcp-header":"Revision"}}}})).unwrap()]
+            vec![serde_json::from_value(json!({"name":"search_passages","inputSchema":{"type":"object","properties":{"revision":{"type":"string","x-mcp-header":"Revision"}}}})).unwrap()]
         }
         fn call(&self, _: String, _: serde_json::Map<String, Value>) -> RemoteFuture<'_> {
             Box::pin(async { panic!("invalid headers/metadata must refuse before execution") })
@@ -648,12 +660,12 @@ async fn modern_http_schema_validation_rechecks_unknown_and_changed_tools() -> a
         let mut call = request(
             Method::POST,
             "/mcp",
-            json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search","arguments":{"revision":"body"},"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}),
+            json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search_passages","arguments":{"revision":"body"},"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}),
         );
         for (header, content) in [
             ("mcp-protocol-version", "2026-07-28"),
             ("mcp-method", "tools/call"),
-            ("mcp-name", "search"),
+            ("mcp-name", "search_passages"),
             ("mcp-param-revision", "contradiction"),
         ] {
             call.headers_mut().insert(header, content.parse()?);
@@ -680,7 +692,7 @@ async fn http_answer_streams_progress_before_its_result_and_other_calls_stay_jso
     struct Held(Arc<tokio::sync::Notify>);
     impl RemoteTools for Held {
         fn catalog(&self) -> Vec<Tool> {
-            ["airk_answer", "search"].into_iter().map(|name| serde_json::from_value(json!({"name":name,"description":"Held HTTP fixture","inputSchema":{"type":"object","additionalProperties":true},"annotations":{"readOnlyHint":true}})).unwrap()).collect()
+            ["airk_answer", "search_passages"].into_iter().map(|name| serde_json::from_value(json!({"name":name,"description":"Held HTTP fixture","inputSchema":{"type":"object","additionalProperties":true},"annotations":{"readOnlyHint":true}})).unwrap()).collect()
         }
         fn client(&self, _: airk_core::usage::ClientFamily) {}
         fn close(&self) {}
@@ -779,7 +791,7 @@ async fn http_answer_streams_progress_before_its_result_and_other_calls_stay_jso
     assert!(text.contains(r#""tool":"airk_answer""#), "{text}");
     // A search with a token, and an Answer without one, send no progress.
     for (id, name, meta) in [
-        (3, "search", json!({"progressToken":"search-3"})),
+        (3, "search_passages", json!({"progressToken":"search-3"})),
         (4, "airk_answer", json!({})),
     ] {
         if name == "airk_answer" {

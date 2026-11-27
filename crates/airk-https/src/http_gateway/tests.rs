@@ -1063,7 +1063,7 @@ pub(crate) async fn live_http_status(
         let response = clock_test_exchange(
             &f,
             &mut sender,
-            "/api/v1/tools/status",
+            "/api/v1/tools/index_status",
             serde_json::json!({}),
             None,
         )

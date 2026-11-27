@@ -2,9 +2,9 @@
 // Answer alone runs to its own transport ceiling (final plan 12.4); the values are Rust-emitted.
 import { ANSWER_TRANSPORT_DEADLINE_MS, READ_TRANSPORT_DEADLINE_MS } from './generated/arbiterBudget';
 
-/** Whether a public or native tool name is Answer (airk-core `read_attempt::is_answer_tool`). */
+/** Whether a public, operation or native tool name is Answer (airk-core `read_attempt::is_answer_tool`; public name `gather_context` from airk-core `tool_names`). */
 export function isAnswerTool(name: unknown): boolean {
-    return name === 'airk_answer' || name === 'answer';
+    return name === 'airk_answer' || name === 'answer' || name === 'gather_context';
 }
 
 /** The transport deadline of one tool call: Answer's 605000 ms, 125000 ms for every other tool. */

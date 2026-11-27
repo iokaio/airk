@@ -13,7 +13,7 @@ pub fn generate(selected: &ResolvedSelection, metadata: &Value) -> Result<Value>
         .context("scope discovery unavailable")?;
     let search = catalog
         .iter()
-        .find(|t| t.name == "search")
+        .find(|t| t.name == airk_core::tool_names::public_name("search"))
         .context("search unavailable")?;
     let properties = &search.input_schema["properties"];
     for key in [
@@ -55,7 +55,7 @@ pub fn generate(selected: &ResolvedSelection, metadata: &Value) -> Result<Value>
     native.remove("project_ids");
     native.remove("index_ids");
     native.remove("member_availability");
-    crate::combined::validate_native_arguments("search", &native)?;
+    crate::combined::validate_native_arguments("airk_search", &native)?;
     let examples = json!([
         {"name":discovery.name,"arguments":{"view":"projects"}},
         {"name":search.name,"arguments":arguments}

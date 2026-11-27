@@ -79,7 +79,7 @@ async fn single_required_member_busy_read_keeps_exact_retry_basis_through_native
     let wire = mcp.transport.request_until(
         2,
         "tools/call",
-        json!({"name":"read_file","arguments":open}),
+        json!({"name":"read_indexed_range","arguments":open}),
         Instant::now() + Duration::from_secs(20),
     )?;
     let mut piped_arguments = open
@@ -92,7 +92,7 @@ async fn single_required_member_busy_read_keeps_exact_retry_basis_through_native
         airk_cli::service_runtime::request(
             &f.control,
             ControlMethod::ToolsCall {
-                tool: "read_file".into(),
+                tool: "read_indexed_range".into(),
                 arguments: piped_arguments,
                 selection: http::Scope::indexes([f.indexes[0]]).open_selection(),
                 response_mode: airk_core::service::ToolResponseMode::Full,

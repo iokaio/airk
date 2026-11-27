@@ -7,10 +7,12 @@ use airk_mcp::remote::Tool;
 use anyhow::Result;
 use serde_json::json;
 
-/// Whether `name` selects `tool`: its exact name, or its name after an
-/// `airk_` prefix. Shared by `airk tools help` and M2.
+/// Whether `name` selects `tool`: its exact name, or the native name of
+/// that public tool. Shared by `airk tools help` and M2. The old public name
+/// of a renamed tool selects nothing (`airk_core::tool_names`).
 pub fn selects(tool: &Tool, name: &str) -> bool {
-    tool.name == *name || name.strip_prefix("airk_") == Some(tool.name.as_ref())
+    tool.name == *name
+        || airk_core::tool_names::public_name_of_native(name) == Some(tool.name.as_ref())
 }
 
 /// Answer M2 from the unified catalog.

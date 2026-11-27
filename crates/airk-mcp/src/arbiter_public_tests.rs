@@ -97,7 +97,7 @@ async fn public_answer_sdk_preserves_advertised_schema_full_utf8_question_and_bu
     )?;
     let tool = unified::tools()
         .into_iter()
-        .find(|tool| tool.name == "answer")
+        .find(|tool| tool.name == "gather_context")
         .unwrap();
     let schema = serde_json::to_value(&tool.input_schema)?;
     // The approved public call (25 November 2026): task alone is required;
@@ -157,7 +157,7 @@ async fn public_answer_sdk_preserves_advertised_schema_full_utf8_question_and_bu
         arguments.insert("response_mode".into(), json!("full"));
         let expected = arguments.clone();
         arguments.insert("project".into(), json!(project));
-        let reply = public.call("answer".into(), arguments).await?;
+        let reply = public.call("gather_context".into(), arguments).await?;
         assert_ne!(reply["isError"], true, "{reply}");
         assert_eq!(Some(&reply), native.results.lock().unwrap().last());
         assert_eq!(reply["content"].as_array().unwrap().len(), 1);
@@ -180,7 +180,7 @@ async fn public_answer_sdk_preserves_advertised_schema_full_utf8_question_and_bu
     for missing in ["schema", "budget"] {
         let mut arguments = serde_json::to_value(&short)?.as_object().unwrap().clone();
         arguments.remove(missing);
-        let refusal = public.call("answer".into(), arguments).await?;
+        let refusal = public.call("gather_context".into(), arguments).await?;
         // The real SDK reports parameter decoding failures as error tool
         // results, carried intact by Unified, rather than transport errors.
         assert_eq!(refusal["isError"], true, "{refusal}");
@@ -199,7 +199,7 @@ async fn public_answer_sdk_preserves_advertised_schema_full_utf8_question_and_bu
     let task_call = json!({"task":"amber_marker","budget":budget,"response_mode":"full"});
     let mut arguments = task_call.as_object().unwrap().clone();
     arguments.insert("project".into(), json!(project));
-    let reply = public.call("answer".into(), arguments).await?;
+    let reply = public.call("gather_context".into(), arguments).await?;
     assert_ne!(reply["isError"], true, "{reply}");
     let packet: Value = serde_json::from_str(reply["content"][0]["text"].as_str().unwrap())?;
     assert_eq!(packet["question"], "amber_marker");
@@ -242,7 +242,7 @@ async fn public_answer_sdk_preserves_advertised_schema_full_utf8_question_and_bu
     ] {
         let mut arguments = arguments.as_object().unwrap().clone();
         arguments.insert("project".into(), json!(project));
-        let refusal = public.call("answer".into(), arguments).await?;
+        let refusal = public.call("gather_context".into(), arguments).await?;
         assert_eq!(refusal["isError"], true, "{refusal}");
         let message = refusal["content"][0]["text"].as_str().unwrap();
         assert!(message.contains(code), "{refusal}");
@@ -251,7 +251,7 @@ async fn public_answer_sdk_preserves_advertised_schema_full_utf8_question_and_bu
     missing_schema.as_object_mut().unwrap().remove("schema");
     let value = json!({
         "schema":"airk.arbiter.public-answer-cases/1",
-        "public_tool":"answer", "native_tool":"airk_answer", "input_schema":schema,
+        "public_tool":"gather_context", "native_tool":"airk_answer", "input_schema":schema,
         "maximum_question_utf8_bytes":16_384,
         "examples":[{"name":"complete_native_request","arguments":short,"accepted":true},
                     {"name":"missing_required_schema","arguments":missing_schema,"accepted":false},

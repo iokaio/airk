@@ -113,7 +113,7 @@
         "arbiter"
       ],
       "source": "packages/vscode/src/explorerHelp/assistance-tools.md",
-      "body": "# Work with an AI agent\n\nAIRK agents connect directly to the native service over loopback HTTP; the endpoint needs no token or credential. VS Code is an optional setup interface; closing Explorer does not proxy or end a standalone agent connection. Inspect the running catalog rather than relying on a fixed tool count. Reconnect an agent after changing its saved configuration or upgrading the service when its tool catalog needs refreshing.\n\nConnect one MCP server named airk; agents choose which indexes they read on each call. Its tools distinguish indexed evidence (search, read_file, symbols), documentation (help), quick readiness (status), detailed troubleshooting (diagnostics), and reviewed UI drafts (draft_search, draft_strategy, draft_plan, suggest_view). Native evidence remains available when Explorer is closed. Each agent loads its own configuration and completes its trust prompts.\n\n## Steps\n\n1. In Agents choose the agent and **Connect**. This writes the agent's entry with only the endpoint URL and the X-AIRK-Response-Mode header. The native writer preserves unrelated servers, comments, disabled states and client policies. Changed files, unsafe ownership and unsaved edits produce a refusal with recovery information; they are not permission to overwrite the file.\n2. Load the changed entry in the agent and complete that client's trust controls. Claude Code may need its MCP reconnect action, Codex a restart, and VS Code a server restart. A native configuration report does not prove that a running external agent loaded it.\n3. Call status and capabilities before using indexed evidence. status returns lightweight published readiness; use diagnostics for runtime identities, jobs and diagnostics.explorer attachment details. Use help with query to discover UI/engine guides and topic_id to read one; help with topic or command explains native usage.\n4. Scope is a parameter of every read: index_ids and index_set_ids (ids or names, a union) and workspace (an absolute folder path). list_scopes lists the indexes and index sets with their descriptions and the stored workspace defaults. A call that names no indexes uses the workspace default of the most specific stored folder containing workspace; the search scope applied in Indexes > Search scope is the workspace default of every folder of that window. Without a default the call is refused with scope_required. When the agent supports MCP roots and passes no workspace, its first workspace root is used automatically. Results report which scope was used and retain each index's full provenance and failures.\n5. Search returns cited evidence now. draft_search only queues a form in Suggestions. Review proposal_status and wait for the user to apply it; applied never means executed.\n\n## Templates and validation\n\nlist_templates pages through the installed pack. get_template returns the selected template's exact parameters, defaults and operator contracts; Preview does not mean runnable. validate_draft checks the corresponding proposal envelope without putting it in Suggestions. proposal_status reports review state and fixed reasons without returning the draft body.\n\n## Navigation proposals\n\nsuggest_view with kind navigation and the proposal envelope in draft can propose an implemented screen. Code Symbols/References accept name and path_prefix; Documents Facts also accepts kind; Checker accepts text; indexed Changes accepts since. Other routes accept no filters. **Open screen** fills supported forms for the user to submit; it never runs a prefilled query or approves management work.\n\n## Sharing back to the agent\n\nThe agent cannot read arbitrary Studio or Planner drafts. The user reviews the displayed text and chooses **Share snapshot with agent**, confirms the modal, then gives the expiring token to the agent. get_handoff returns only that complete snapshot and its provenance. See Share a reviewed snapshot for limits and revocation.\n\n## Troubleshooting\n\nUI_NOT_ATTACHED means no matching trusted window; open the project in VS Code and enable Assistance. AMBIGUOUS_TARGET means more than one live window matches the agent's working directory; keep a single intended window for that project. HOST_UNAVAILABLE can follow a closed/reloaded host. STALE_BINDING requires fresh status and a newly reviewed proposal. PROPOSAL_CONFLICT requires reviewing the current draft; never overwrite the user's work automatically. RATE_LIMITED requires reviewing/discarding existing suggestions or waiting.\n\nThe attachment uses the configured project's canonical root to find a matching trusted window. Check the current selected project before proposing work in a multi-root window. Configure remote agents on the remote extension host; local-agent connectivity is not established by copying remote paths.\n\nNew entries use the discovered local HTTP endpoint; no token, credential helper or certificate is written. Stdio MCP and the stable launcher are retired. Reads never create an index. Use airkctl agents --help, airkctl scope --help and the actual native reports for headless setup and repair. A changed workspace default applies to later calls; a client may need to refresh its cached tools list after an upgrade.\n\nA status timeout reports unknown readiness. Cold installed-runtime verification stays shared within the MCP session, so later polls do not restart it; verification failures remain errors. Use diagnostics to inspect runtime and work separately. Cached status includes its observation age and never proves that live source bytes match the publication.\n\n## Questions and contextual evidence\n\nThe `answer` tool gathers a bounded cited evidence packet for a question; `context` expands neighboring indexed lines at a specific location. The assistant can use the packet's organized source-backed evidence, assessments, gaps and stop reason when composing its response. These are read-only operations within the scope the call names or its workspace default.\n\nThe approved optional design has independent Focus ranking plus Arbiter gathering (Qwen3-1.7B; the Large model was retired). Focus can assist ordinary retrieval with Arbiter off; neither stage widens the scope a call names. Availability depends on actual implemented controls, verified profiles, explicit stage/index enrollment and current resources. Inspect native Arbiter Help and status; a selected or downloaded model does not establish active readiness or completed model qualification."
+      "body": "# Work with an AI agent\n\nAIRK agents connect directly to the native service over loopback HTTP; the endpoint needs no token or credential. VS Code is an optional setup interface; closing Explorer does not proxy or end a standalone agent connection. Inspect the running catalog rather than relying on a fixed tool count. Reconnect an agent after changing its saved configuration or upgrading the service when its tool catalog needs refreshing.\n\nConnect one MCP server named airk; agents choose which indexes they read on each call. Its tools distinguish indexed evidence (search, read_file, symbols), documentation (help), quick readiness (status), detailed troubleshooting (diagnostics), and reviewed UI drafts (draft_search, draft_strategy, draft_plan, suggest_view). Native evidence remains available when Explorer is closed. Each agent loads its own configuration and completes its trust prompts.\n\n## Steps\n\n1. In Agents choose the agent and **Connect**. This writes the agent's entry with only the endpoint URL and the X-AIRK-Response-Mode header. The native writer preserves unrelated servers, comments, disabled states and client policies. Changed files, unsafe ownership and unsaved edits produce a refusal with recovery information; they are not permission to overwrite the file.\n2. Load the changed entry in the agent and complete that client's trust controls. Claude Code may need its MCP reconnect action, Codex a restart, and VS Code a server restart. A native configuration report does not prove that a running external agent loaded it.\n3. Call status and capabilities before using indexed evidence. status returns lightweight published readiness; use diagnostics for runtime identities, jobs and diagnostics.explorer attachment details. Use help with query to discover UI/engine guides and topic_id to read one; help with topic or command explains native usage.\n4. Scope is a parameter of every read: index_ids and index_set_ids (ids or names, a union) and workspace (an absolute folder path). list_scopes lists the indexes and index sets with their descriptions and the stored workspace defaults. A call that names no indexes uses the workspace default of the most specific stored folder containing workspace; the search scope applied in Indexes > Search scope is the workspace default of every folder of that window. Without a default the call is refused with scope_required. When the agent supports MCP roots and passes no workspace, its first workspace root is used automatically. Results report which scope was used and retain each index's full provenance and failures.\n5. Search returns cited evidence now. draft_search only queues a form in Suggestions. Review proposal_status and wait for the user to apply it; applied never means executed.\n\n## Templates and validation\n\nlist_templates pages through the installed pack. get_template returns the selected template's exact parameters, defaults and operator contracts; Preview does not mean runnable. validate_draft checks the corresponding proposal envelope without putting it in Suggestions. proposal_status reports review state and fixed reasons without returning the draft body.\n\n## Navigation proposals\n\nsuggest_view with kind navigation and the proposal envelope in draft can propose an implemented screen. Code Symbols/References accept name and path_prefix; Documents Facts also accepts kind; Checker accepts text; indexed Changes accepts since. Other routes accept no filters. **Open screen** fills supported forms for the user to submit; it never runs a prefilled query or approves management work.\n\n## Sharing back to the agent\n\nThe agent cannot read arbitrary Studio or Planner drafts. The user reviews the displayed text and chooses **Share snapshot with agent**, confirms the modal, then gives the expiring token to the agent. get_handoff returns only that complete snapshot and its provenance. See Share a reviewed snapshot for limits and revocation.\n\n## Troubleshooting\n\nUI_NOT_ATTACHED means no matching trusted window; open the project in VS Code and enable Assistance. AMBIGUOUS_TARGET means more than one live window matches the agent's working directory; keep a single intended window for that project. HOST_UNAVAILABLE can follow a closed/reloaded host. STALE_BINDING requires fresh status and a newly reviewed proposal. PROPOSAL_CONFLICT requires reviewing the current draft; never overwrite the user's work automatically. RATE_LIMITED requires reviewing/discarding existing suggestions or waiting.\n\nThe attachment uses the configured project's canonical root to find a matching trusted window. Check the current selected project before proposing work in a multi-root window. Configure remote agents on the remote extension host; local-agent connectivity is not established by copying remote paths.\n\nNew entries use the discovered local HTTP endpoint; no token, credential helper or certificate is written. Stdio MCP and the stable launcher are retired. Reads never create an index. Use airkctl agents --help, airkctl scope --help and the actual native reports for headless setup and repair. A changed workspace default applies to later calls; a client may need to refresh its cached tools list after an upgrade.\n\nA status timeout reports unknown readiness. Cold installed-runtime verification stays shared within the MCP session, so later polls do not restart it; verification failures remain errors. Use diagnostics to inspect runtime and work separately. Cached status includes its observation age and never proves that live source bytes match the publication.\n\n## Questions and contextual evidence\n\nThe `gather_context` tool gathers a bounded cited evidence packet for a question; `read_around` expands neighboring indexed lines at a specific location. The assistant can use the packet's organized source-backed evidence, assessments, gaps and stop reason when composing its response. These are read-only operations within the scope the call names or its workspace default.\n\nThe approved optional design has independent Focus ranking plus Arbiter gathering (Qwen3-1.7B; the Large model was retired). Focus can assist ordinary retrieval with Arbiter off; neither stage widens the scope a call names. Availability depends on actual implemented controls, verified profiles, explicit stage/index enrollment and current resources. Inspect native Arbiter Help and status; a selected or downloaded model does not establish active readiness or completed model qualification."
     },
     {
       "id": "explorer.code.outline",
@@ -1033,7 +1033,7 @@
         "indexing-choices"
       ],
       "source": "crates/airk-mcp/src/help/content.json",
-      "body": "# Indexing choices by purpose and source\n\nChoose evidence detail, vector work and extraction separately. Open native Admin Indexes, inspect the intended index and its settings; Explorer links advanced management to native Admin. The Index detail picker uses essential, agent_lean, balanced and detailed. Inspect airkctl settings and the guarded configure interface for actual extraction settings; preserve adapter overrides and use generated command help for exact inputs. Changing settings is not proof the index has published them; inspect configured/published state and the native job outcome.\nSearch Only (essential): text and citation lookup without rich structured facts. Suitable for known phrases and quotations. Poor fit for requirement/acceptance/table inventories or code relationships. Qualified parsers still run; no proportional PDF/Office conversion speedup is promised.\nAgent Lean (agent_lean): new-collection default, retaining selected declarations, imports, local structure, unresolved calls and useful prose facts. A starting point for Developer/Tester and mixed sources. Broad document inventories and continuity fingerprints are omitted. Existing saved policies retain their semantics; opening a role lens does not rewrite them.\nRich Structure (balanced): broader supported structural/framework/document evidence and declaration continuity. Consider it for architecture/impact or document/table inventory gaps demonstrated in lean output. Detailed (detailed) retains the full existing adapter-supported evidence, including document-unit continuity where implemented. Neither level creates complete semantic resolution; richer detail costs more extraction and retained data.\nVectors are independent: lexical suits exact names, IDs and quotations; vector/hybrid can help conceptual questions if a local model and selected vectors are ready. Querying never downloads models or starts enrichment. Agent Lean's default vector policy skips reviewed lockfiles and minified JS/CSS while retaining lexical evidence; it is not a general generated/vendor/test classifier. Preserve useful tests/specifications and scope semantic exclusions deliberately. Explicit saved vector policies and opt-outs remain authoritative.\nChoose extraction for actual formats. Code/config adapters supply supported syntax, not build execution. Markdown/plain text and text-layer PDF, DOCX, XLSX and PPTX expose different original locations and limitations; ask topic=documents and topic=formats. Scanned PDF/images require explicit local OCR and provisioned assets; raising detail or enabling vectors cannot recover absent text. Adapter overrides cannot expand supported dialects, run macros or recalculate spreadsheets.\nAutomatic watching suits evolving sources. Manual watching suits deliberate snapshots or costly trees; the user requests Index now. Watch off, project Pause, job cancellation and service Stop are distinct. Ordinary source changes usually need ordinary indexing, not repair/rebuild. Source ignores, scan limits, fact/byte budgets and resource admission can reduce coverage independently of detail. Check representative file_info records and native failures before increasing limits.\nAsk the user about purpose, formats, dataset size, machine budget and freshness needs when choosing settings. Validate a proposed policy before saving it, preserve roots/overrides, observe publication completion and compare useful evidence/cost. Do not infer complete coverage or live-source equality from file counts."
+      "body": "# Indexing choices by purpose and source\n\nChoose evidence detail, vector work and extraction separately. Open native Admin Indexes, inspect the intended index and its settings; Explorer links advanced management to native Admin. The Index detail picker uses essential, agent_lean, balanced and detailed. Inspect airkctl settings and the guarded configure interface for actual extraction settings; preserve adapter overrides and use generated command help for exact inputs. Changing settings is not proof the index has published them; inspect configured/published state and the native job outcome.\nSearch Only (essential): text and citation lookup without rich structured facts. Suitable for known phrases and quotations. Poor fit for requirement/acceptance/table inventories or code relationships. Qualified parsers still run; no proportional PDF/Office conversion speedup is promised.\nAgent Lean (agent_lean): new-collection default, retaining selected declarations, imports, local structure, unresolved calls, exception handlers and useful prose facts. A starting point for Developer/Tester and mixed sources. Broad document inventories and continuity fingerprints are omitted. Existing saved policies retain their semantics; opening a role lens does not rewrite them.\nRich Structure (balanced): broader supported structural/framework/document evidence and declaration continuity. Consider it for architecture/impact or document/table inventory gaps demonstrated in lean output. Detailed (detailed) retains the full existing adapter-supported evidence, including document-unit continuity where implemented. Neither level creates complete semantic resolution; richer detail costs more extraction and retained data.\nVectors are independent: lexical suits exact names, IDs and quotations; vector/hybrid can help conceptual questions if a local model and selected vectors are ready. Querying never downloads models or starts enrichment. Agent Lean's default vector policy skips reviewed lockfiles and minified JS/CSS while retaining lexical evidence; it is not a general generated/vendor/test classifier. Preserve useful tests/specifications and scope semantic exclusions deliberately. Explicit saved vector policies and opt-outs remain authoritative.\nChoose extraction for actual formats. Code/config adapters supply supported syntax, not build execution. Markdown/plain text and text-layer PDF, DOCX, XLSX and PPTX expose different original locations and limitations; ask topic=documents and topic=formats. Scanned PDF/images require explicit local OCR and provisioned assets; raising detail or enabling vectors cannot recover absent text. Adapter overrides cannot expand supported dialects, run macros or recalculate spreadsheets.\nAutomatic watching suits evolving sources. Manual watching suits deliberate snapshots or costly trees; the user requests Index now. Watch off, project Pause, job cancellation and service Stop are distinct. Ordinary source changes usually need ordinary indexing, not repair/rebuild. Source ignores, scan limits, fact/byte budgets and resource admission can reduce coverage independently of detail. Check representative file_info records and native failures before increasing limits.\nAsk the user about purpose, formats, dataset size, machine budget and freshness needs when choosing settings. Validate a proposed policy before saving it, preserve roots/overrides, observe publication completion and compare useful evidence/cost. Do not infer complete coverage or live-source equality from file counts."
     },
     {
       "id": "engine.job-management",
@@ -1080,7 +1080,7 @@
         "overview"
       ],
       "source": "crates/airk-mcp/src/help/content.json",
-      "body": "# What AIRK does\n\nAIRK indexes local code and documents and returns bounded evidence with original locations, hashes and exact indexed revision identities. Sources remain read-only.\nOne per-user airk service hosts index owners, source watching and local inference in-process. airkctl owns public commands; VS Code uses one airkctl session per window. Agents connect directly to loopback HTTP MCP with no token; each read names its scope or a workspace default. Stdio MCP and the stable launcher are retired; no resident process runs per index or agent.\nUse status for published readiness, diagnostics for runtime/work observations, and help for documentation. Use topic=topics, topic=commands, command=\"service\" or tool=\"search\" for current guidance and actual schemas.\nInstall and verify the service separately from the extension. Extension activation does not silently install/update/remove the service or register/index folders. Offered automatic installation requires explicit user choice; manual installation and deferral remain available. Set up the index/set, intentionally prepare models/index work, then connect an agent; its reads name their indexes or use the scope applied for their workspace.\nBundled Help is not live configuration, source-freshness proof or platform qualification."
+      "body": "# What AIRK does\n\nAIRK indexes local code and documents and returns bounded evidence with original locations, hashes and exact indexed revision identities. Sources remain read-only.\nOne per-user airk service hosts index owners, source watching and local inference in-process. airkctl owns public commands; VS Code uses one airkctl session per window. Agents connect directly to loopback HTTP MCP with no token; each read names its scope or a workspace default. Stdio MCP and the stable launcher are retired; no resident process runs per index or agent.\nUse status for published readiness, diagnostics for runtime/work observations, and help for documentation. Use topic=topics, topic=commands, command=\"service\" or tool=\"search_passages\" for current guidance and actual schemas.\nInstall and verify the service separately from the extension. Extension activation does not silently install/update/remove the service or register/index folders. Offered automatic installation requires explicit user choice; manual installation and deferral remain available. Set up the index/set, intentionally prepare models/index work, then connect an agent; its reads name their indexes or use the scope applied for their workspace.\nBundled Help is not live configuration, source-freshness proof or platform qualification."
     },
     {
       "id": "engine.topics",
@@ -1125,7 +1125,7 @@
         "cli"
       ],
       "source": "crates/airk-mcp/src/help/content.json",
-      "body": "# CLI scope and invocation\n\nairkctl is the public service client; airk owns native service/setup roles and has no public user command tree. Use airkctl --help or append --help to an exact command path. Selectors include --service-runtime-dir, --service-project, --root, --data-dir and --collection; reviewed catalog/combined sessions differ from open index/set selection.\nairkctl tools list --json prints actual schemas; airkctl tools help search describes a tool. airkctl tools call airk_help --args '{\"topic\":\"overview\"}' reads guidance through the service without resolving a project. Tool catalog/call reads are online; CLI --help and bundled UI/static Help remain available offline. --args-file avoids shell quoting errors.\nOrdinary online commands may start an exited service using the verified matching pair and honor saved Stop. version, service status/health, lifecycle and offline diagnostics do not automatically start it. Root airkctl status is selected-index evidence and keeps online admission.\nPreserve complete --output json results, error lines, truncation, continuation and retry details. Acceptance is not completion; never replay uncertain mutations with a new identity. Private roles and the tools console are not a general shell."
+      "body": "# CLI scope and invocation\n\nairkctl is the public service client; airk owns native service/setup roles and has no public user command tree. Use airkctl --help or append --help to an exact command path. Selectors include --service-runtime-dir, --service-project, --root, --data-dir and --collection; reviewed catalog/combined sessions differ from open index/set selection.\nairkctl tools list --json prints actual schemas; airkctl tools help search_passages describes a tool. airkctl tools call airk_help --args '{\"topic\":\"overview\"}' reads guidance through the service without resolving a project. Tool catalog/call reads are online; CLI --help and bundled UI/static Help remain available offline. --args-file avoids shell quoting errors.\nOrdinary online commands may start an exited service using the verified matching pair and honor saved Stop. version, service status/health, lifecycle and offline diagnostics do not automatically start it. Root airkctl status is selected-index evidence and keeps online admission.\nPreserve complete --output json results, error lines, truncation, continuation and retry details. Acceptance is not completion; never replay uncertain mutations with a new identity. Private roles and the tools console are not a general shell."
     },
     {
       "id": "engine.commands",
@@ -1635,7 +1635,7 @@
     "arbiter status": "Inspect optional model readiness, selection and exact per-index enrollment\n\nUsage: airkctl arbiter status [OPTIONS]\n\nOptions:\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --collection <COLLECTION>\n          [default: default]\n\n  -h, --help\n          Print help\n",
     "arbiter status-legacy": "Inspect retained CPU configuration/3 and status/2 without device migration\n\nUsage: airkctl arbiter status-legacy [OPTIONS]\n\nOptions:\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --collection <COLLECTION>\n          [default: default]\n\n  -h, --help\n          Print help\n",
     "changes": "Report indexed changes since a revision token: added, modified and removed files, symbols and documents\n\nUsage: airkctl changes [OPTIONS]\n\nOptions:\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --verification <VERIFICATION>\n          Dated saved-source checks; default Report, bounded to 8 sources, 16 MiB and 2000 ms. Off skips checking\n          \n          [possible values: off, report, require]\n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --verification-max-sources <VERIFICATION_MAX_SOURCES>\n          \n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --verification-max-bytes <VERIFICATION_MAX_BYTES>\n          \n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --verification-deadline-ms <VERIFICATION_DEADLINE_MS>\n          \n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --reply-detail <REPLY_DETAIL>\n          Lean/Rich reply projection; independent of retained indexing detail\n          \n          [possible values: lean, rich]\n\n      --collection <COLLECTION>\n          [default: default]\n\n      --since <SINCE>\n          \n\n      --selector <SELECTORS>\n          Repeatable tagged JSON selector, e.g. {\"kind\":\"path\",\"path\":\"one.rs\"}\n\n      --path <PATHS>\n          Remember an exact collection-relative indexed path\n\n      --path-prefix <PATH_PREFIX>\n          [default: \"\"]\n\n      --include-symbols\n          \n\n      --include-documents\n          \n\n      --include-suggestions\n          Bounded similarity/directory hints; never follow or promote identity\n\n      --limit <LIMIT>\n          [default: 10]\n\n      --max-bytes <MAX_BYTES>\n          [default: 8192]\n\n      --cursor <CURSOR>\n          \n\n  -h, --help\n          Print help\n",
-    "code-facts": "Inspect code facts and signatures with exact default name matching and bounded continuation\n\nUsage: airkctl code-facts [OPTIONS]\n\nOptions:\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --verification <VERIFICATION>\n          Dated saved-source checks; default Report, bounded to 8 sources, 16 MiB and 2000 ms. Off skips checking\n          \n          [possible values: off, report, require]\n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --verification-max-sources <VERIFICATION_MAX_SOURCES>\n          \n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --verification-max-bytes <VERIFICATION_MAX_BYTES>\n          \n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --verification-deadline-ms <VERIFICATION_DEADLINE_MS>\n          \n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --reply-detail <REPLY_DETAIL>\n          Lean/Rich reply projection; independent of retained indexing detail\n          \n          [possible values: lean, rich]\n\n      --collection <COLLECTION>\n          [default: default]\n\n      --name-match <NAME_MATCH>\n          Default exact lookup; suffix/contains match simple or qualified names case-sensitively\n          \n          [possible values: exact, suffix, contains]\n\n      --include-count\n          Request qualified match counts; a bounded partial scan can report an unknown total\n\n      --compact [<COMPACT>]\n          False includes rich facts and durable IDs; independent of response mode\n          \n          [possible values: true, false]\n\n      --cursor <CURSOR>\n          Continue the same revision-bound discovery with unchanged filters\n\n      --symbol-key <SYMBOL_KEY>\n          Durable symbol key from indexed continuity evidence; excludes textual filters\n\n      --name <NAME>\n          \n\n      --kind <KIND>\n          \n\n      --language <LANGUAGE>\n          \n\n      --path-prefix <PATH_PREFIX>\n          [default: \"\"]\n\n      --limit <LIMIT>\n          [default: 10]\n\n      --max-bytes <MAX_BYTES>\n          [default: 8192]\n\n  -h, --help\n          Print help\n",
+    "code-facts": "Inspect code facts and signatures with exact default name matching and bounded continuation\n\nUsage: airkctl code-facts [OPTIONS]\n\nOptions:\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --verification <VERIFICATION>\n          Dated saved-source checks; default Report, bounded to 8 sources, 16 MiB and 2000 ms. Off skips checking\n          \n          [possible values: off, report, require]\n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --verification-max-sources <VERIFICATION_MAX_SOURCES>\n          \n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --verification-max-bytes <VERIFICATION_MAX_BYTES>\n          \n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --verification-deadline-ms <VERIFICATION_DEADLINE_MS>\n          \n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --reply-detail <REPLY_DETAIL>\n          Lean/Rich reply projection; independent of retained indexing detail\n          \n          [possible values: lean, rich]\n\n      --collection <COLLECTION>\n          [default: default]\n\n      --name-match <NAME_MATCH>\n          Default exact lookup; suffix/contains match simple or qualified names case-sensitively\n          \n          [possible values: exact, suffix, contains]\n\n      --include-count\n          Request qualified match counts; a bounded partial scan can report an unknown total\n\n      --compact [<COMPACT>]\n          False includes rich facts and durable IDs; independent of response mode\n          \n          [possible values: true, false]\n\n      --cursor <CURSOR>\n          Continue the same revision-bound discovery with unchanged filters\n\n      --symbol-key <SYMBOL_KEY>\n          Durable symbol key from indexed continuity evidence; excludes textual filters\n\n      --name <NAME>\n          \n\n      --kind <KIND>\n          \n\n      --language <LANGUAGE>\n          \n\n      --path-prefix <PATH_PREFIX>\n          [default: \"\"]\n\n      --path <PATH>\n          Exact indexed file path; takes precedence over --path-prefix\n\n      --start-line <START_LINE>\n          First line (1-based, inclusive) of a range in --path; facts whose lines overlap it match\n\n      --end-line <END_LINE>\n          Last line (1-based, inclusive) of the --path range\n\n      --minimal\n          Minimal rows with their enclosing scope; path, hash and provenance once per file\n\n      --limit <LIMIT>\n          [default: 10]\n\n      --max-bytes <MAX_BYTES>\n          [default: 8192]\n\n  -h, --help\n          Print help\n",
     "configure": "Apply a guarded project configuration draft from --file or --stdin (JSON with an \"operation\")\n\nUsage: airkctl configure [OPTIONS]\n\nOptions:\n      --file <FILE>\n          \n\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --stdin\n          \n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --collection <COLLECTION>\n          [default: default]\n\n  -h, --help\n          Print help\n",
     "context": "Read lines around --line in a file (--before/--after), with a citation\n\nUsage: airkctl context [OPTIONS] <PATH> <LINE>\n\nArguments:\n  <PATH>\n          \n\n  <LINE>\n          \n\nOptions:\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --verification <VERIFICATION>\n          Dated saved-source checks; default Report, bounded to 8 sources, 16 MiB and 2000 ms. Off skips checking\n          \n          [possible values: off, report, require]\n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --verification-max-sources <VERIFICATION_MAX_SOURCES>\n          \n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --verification-max-bytes <VERIFICATION_MAX_BYTES>\n          \n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --verification-deadline-ms <VERIFICATION_DEADLINE_MS>\n          \n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --reply-detail <REPLY_DETAIL>\n          Lean/Rich reply projection; independent of retained indexing detail\n          \n          [possible values: lean, rich]\n\n      --collection <COLLECTION>\n          [default: default]\n\n      --revision <REVISION>\n          \n\n      --if-evidence <IF_EVIDENCE>\n          \n\n      --follow-moves\n          \n\n      --known-hash <KNOWN_HASH>\n          \n\n      --artifact-id <ARTIFACT_ID>\n          \n\n      --before <BEFORE>\n          [default: 5]\n\n      --after <AFTER>\n          [default: 5]\n\n      --max-bytes <MAX_BYTES>\n          [default: 8192]\n\n  -h, --help\n          Print help\n",
     "explorer": "Offline Explorer drafts, validation and templates; results go to a new --output-file\n\nUsage: airkctl explorer [OPTIONS] <COMMAND>\n\nCommands:\n  draft-search     Write a proposed Explorer Search form (MCP draft_search) after schema validation\n  draft-strategy   Write a proposed Explorer strategy (MCP draft_strategy)\n  draft-plan       Write a proposed Explorer plan (MCP draft_plan)\n  suggest-view     Write a proposed Explorer view (MCP suggest_view)\n  validate-draft   Validate a draft without writing a proposal\n  list-templates   List the bundled strategy templates\n  get-template     Write one bundled template\n  proposal-status  Report the status of a written draft\n  get-handoff      Write a handoff a VS Code window shared through its session (M12)\n\nOptions:\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --collection <COLLECTION>\n          [default: default]\n\n  -h, --help\n          Print help\n",
@@ -1685,7 +1685,7 @@
     "scope": "Workspace default scopes agents read when a call names no index or index set (U110)\n\nUsage: airkctl scope [OPTIONS] <COMMAND>\n\nCommands:\n  default   Set the default scope of each --workspace folder; with no --index and no --set, clear it\n  defaults  Print every stored workspace default: {\"schema\":1,\"entries\":[...]}\n\nOptions:\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --collection <COLLECTION>\n          [default: default]\n\n  -h, --help\n          Print help\n",
     "scope default": "Set the default scope of each --workspace folder; with no --index and no --set, clear it.\n\nAn agent read that names no index or index set and passes a workspace path (or whose client offers MCP roots) reads the default of the most specific folder containing it. Prints {\"schema\":1,\"entries\":[...]} with every stored default.\n\nUsage: airkctl scope default [OPTIONS] --workspace <WORKSPACES>\n\nOptions:\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --runtime-dir <RUNTIME_DIR>\n          The service's control directory (default: --service-runtime-dir, else the installation's)\n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --workspace <WORKSPACES>\n          An absolute workspace folder (repeatable)\n\n      --index <INDEXES>\n          An index (`idx_...`, exact name or unique case-insensitive name) (repeatable)\n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --set <SETS>\n          An index set (`prj_...`, exact name or unique case-insensitive name) (repeatable)\n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --collection <COLLECTION>\n          [default: default]\n\n  -h, --help\n          Print help (see a summary with '-h')\n",
     "scope defaults": "Print every stored workspace default: {\"schema\":1,\"entries\":[...]}\n\nUsage: airkctl scope defaults [OPTIONS]\n\nOptions:\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --runtime-dir <RUNTIME_DIR>\n          The service's control directory (default: --service-runtime-dir, else the installation's)\n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --collection <COLLECTION>\n          [default: default]\n\n  -h, --help\n          Print help\n",
-    "search": "Search indexed evidence; results carry file, line and revision citations.\n\nWithout --mode the saved search policy applies. Eligible policies can return lexical matches during helper outages; execution reports the served mode and semantic incompleteness. Explicit vector/hybrid and saved RequireComplete refuse helper outages. Hybrid can still serve lexical evidence during a pending index upgrade, with that separate limitation disclosed. --mode lexical uses normalized AND terms: punctuation and quotation marks separate terms; quotes do not enable phrase matching. Lexical order is stable index identity, not relevance.\n\nUsage: airkctl search [OPTIONS] <QUERY>\n\nArguments:\n  <QUERY>\n          \n\nOptions:\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --verification <VERIFICATION>\n          Dated saved-source checks; default Report, bounded to 8 sources, 16 MiB and 2000 ms. Off skips checking\n          \n          [possible values: off, report, require]\n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --verification-max-sources <VERIFICATION_MAX_SOURCES>\n          \n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --verification-max-bytes <VERIFICATION_MAX_BYTES>\n          \n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --verification-deadline-ms <VERIFICATION_DEADLINE_MS>\n          \n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --reply-detail <REPLY_DETAIL>\n          Lean/Rich reply projection; independent of retained indexing detail\n          \n          [possible values: lean, rich]\n\n      --collection <COLLECTION>\n          [default: default]\n\n      --language <LANGUAGE>\n          Exact indexed extraction-language label; not a filename-extension filter\n\n      --evidence-kind <EVIDENCE_KIND>\n          Indexed evidence classification; unknown includes unclassified extraction\n          \n          [possible values: code, document, configuration, unknown]\n\n      --exclude-path-prefix <EXCLUDE_PATH_PREFIX>\n          Exclude one literal collection-relative prefix from this query only\n\n      --mode <MODE>\n          [possible values: lexical, vector, hybrid]\n\n      --semantic\n          Use the configured local embedding model and disk-backed vector graph\n\n      --path-prefix <PATH_PREFIX>\n          \n\n      --limit <LIMIT>\n          [default: 10]\n\n      --max-bytes <MAX_BYTES>\n          [default: 8192]\n\n  -h, --help\n          Print help (see a summary with '-h')\n",
+    "search": "Search indexed evidence; results carry file, line and revision citations.\n\nWithout --mode the saved search policy applies. Eligible policies can return lexical matches during helper outages; execution reports the served mode and semantic incompleteness. Explicit vector/hybrid and saved RequireComplete refuse helper outages. Hybrid can still serve lexical evidence during a pending index upgrade, with that separate limitation disclosed. --mode lexical uses normalized AND terms: punctuation and quotation marks separate terms; quotes do not enable phrase matching. Lexical order is stable index identity, not relevance.\n\nUsage: airkctl search [OPTIONS] <QUERY>\n\nArguments:\n  <QUERY>\n          \n\nOptions:\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --verification <VERIFICATION>\n          Dated saved-source checks; default Report, bounded to 8 sources, 16 MiB and 2000 ms. Off skips checking\n          \n          [possible values: off, report, require]\n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --verification-max-sources <VERIFICATION_MAX_SOURCES>\n          \n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --verification-max-bytes <VERIFICATION_MAX_BYTES>\n          \n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --verification-deadline-ms <VERIFICATION_DEADLINE_MS>\n          \n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --reply-detail <REPLY_DETAIL>\n          Lean/Rich reply projection; independent of retained indexing detail\n          \n          [possible values: lean, rich]\n\n      --collection <COLLECTION>\n          [default: default]\n\n      --language <LANGUAGE>\n          Exact indexed extraction-language label; not a filename-extension filter\n\n      --evidence-kind <EVIDENCE_KIND>\n          Indexed evidence classification; unknown includes unclassified extraction\n          \n          [possible values: code, document, configuration, unknown]\n\n      --exclude-path-prefix <EXCLUDE_PATH_PREFIX>\n          Exclude one literal collection-relative prefix from this query only\n\n      --mode <MODE>\n          [possible values: lexical, vector, hybrid]\n\n      --semantic\n          Use the configured local embedding model and disk-backed vector graph\n\n      --path-prefix <PATH_PREFIX>\n          \n\n      --limit <LIMIT>\n          Maximum number of results. Omit to let Search choose the count\n\n      --max-bytes <MAX_BYTES>\n          [default: 8192]\n\n  -h, --help\n          Print help (see a summary with '-h')\n",
     "service": "The AIRK service: start, stop, status, logs, requests and management\n\nUsage: airkctl service [OPTIONS] <COMMAND>\n\nCommands:\n  setup                  Register this extracted portable runtime without login startup or automatic start\n  setup-receipt          Validate the native setup receipt for the current verified installation, without starting it\n  start                  Start the installed service (the install record's verified airk) and wait until it is healthy\n  stop                   Stop the service and wait until its process exits; a saved Stop keeps automatic starts off\n  restart                Stop the service, wait until its process exits, then start the installed service again\n  uninstall              Remove this AIRK Service installation through its signed setup step: stop the service, remove login startup, the certificate trust an older HTTPS build added, and the install pointer and record\n  logs                   Read the service's diagnostic logs (recent from the running service; all, raw or stopped-service reads from the local files)\n  abandon-lifecycle      Mark a stuck stop or restart record abandoned (U80); a finished record is printed unchanged\n  status                 Report the installation and whether the service is running, with its saved Stop and any unfinished stop or restart\n  record-error           Record a bounded client error (JSON on stdin) without needing the service to run\n  register               Register --root/--data-dir/--collection with the service at --runtime-dir. The data directory must exist\n  prepare-registration   Print the canonical registration for --root/--data-dir/--collection, including its binding. Read-only\n  prepare-configuration  Prepare a guarded configuration request for a project; submit it with `requests retry`\n  prepare-storage        Create the reserved index storage for an already reserved project (owner-only on Unix)\n  requests               Saved client requests: list, prepare, retry or forget by nonce\n  rpc                    Send one raw management request (ControlMethod JSON) and print the service's answer\n  inventory              The service's locations (program, data, state, cache, logs) with sizes (U100)\n  purge-plan             The exact files a purge of the cache or the closed logs would delete now, and its plan digest\n  purge                  Delete exactly the plan --plan-digest names; --confirm must be the location's path as `inventory` lists it\n  login                  Login startup on Windows: status, install or uninstall (U101)\n  health                 Check that the service for --runtime-dir is running and healthy; exits non-zero otherwise\n  shutdown               Ask the service for --runtime-dir to drain its workers and exit\n\nOptions:\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --collection <COLLECTION>\n          [default: default]\n\n  -h, --help\n          Print help\n",
     "service abandon-lifecycle": "Mark a stuck stop or restart record abandoned (U80); a finished record is printed unchanged\n\nUsage: airkctl service abandon-lifecycle [OPTIONS] --request-id <REQUEST_ID>\n\nOptions:\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --runtime-dir <RUNTIME_DIR>\n          The service's control directory (default: --service-runtime-dir, else the installation's)\n\n      --request-id <REQUEST_ID>\n          \n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --collection <COLLECTION>\n          [default: default]\n\n  -h, --help\n          Print help\n",
     "service health": "Check that the service for --runtime-dir is running and healthy; exits non-zero otherwise\n\nUsage: airkctl service health [OPTIONS]\n\nOptions:\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --runtime-dir <RUNTIME_DIR>\n          The service's control directory (default: --service-runtime-dir)\n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --collection <COLLECTION>\n          [default: default]\n\n  -h, --help\n          Print help\n",
@@ -1822,7 +1822,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Gather bounded, cited indexed context for a question through canonical evidence reads. Preserves full source receipts and exposes gaps, budgets and stop reasons. Optional local Arbiter advice applies only to explicitly enrolled indexes and qualified tasks; disabled or unavailable models retain deterministic native gathering. Requires an admitted index connection. Existing context expands neighboring lines around one coordinate. Use response_mode=full for provenance/coverage audits; verification report/require checks returned saved sources without changing indexed evidence.",
+      "description": "Use first for a whole task that needs evidence from several places in the index; for a known identifier or path, call find_definition or read_indexed_range directly. Pass the task text as task. Fill needs (up to 8 short statements of what you must learn, each at most 400 bytes): stating needs improves the result. Add anchors (up to 16 exact strings from the task: identifiers, routes, quoted text, numbers with units; each at most 200 bytes), deliverable (code_change, test, document or analysis) and known (ranges you already read); deliverable and known are checked but do not change gathering yet. Omit budget for the service default. Runs bounded canonical reads and returns cited indexed records by need, with gaps, budgets and stop reasons; without a local model, gathering is deterministic and the reply says so. Next: read_indexed_range or read_around on cited ranges you need in full. Use response_mode=full for provenance/coverage audits; verification report/require checks returned saved sources.",
       "inputSchema": {
         "$defs": {
           "BudgetV3": {
@@ -1921,6 +1921,45 @@
             ],
             "type": "object"
           },
+          "Deliverable": {
+            "description": "What the caller will produce from the gathered context.",
+            "enum": [
+              "code_change",
+              "test",
+              "document",
+              "analysis"
+            ],
+            "type": "string"
+          },
+          "KnownRange": {
+            "additionalProperties": false,
+            "description": "A repository-relative path, whole or with inclusive one-based lines.",
+            "properties": {
+              "end_line": {
+                "format": "uint32",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "path": {
+                "type": "string"
+              },
+              "start_line": {
+                "format": "uint32",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "path"
+            ],
+            "type": "object"
+          },
           "ResponseMode": {
             "enum": [
               "terse",
@@ -1936,8 +1975,16 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
+          "anchors": {
+            "description": "Up to 16 exact strings from the task (identifiers, routes, quoted\ntext, numbers with units), at most 200 bytes each.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "budget": {
-            "$ref": "#/$defs/BudgetV3"
+            "$ref": "#/$defs/BudgetV3",
+            "description": "Optional with task: omitted uses the service default, a valid budget\nis used as sent. Required with question."
           },
           "continuation": {
             "anyOf": [
@@ -1949,6 +1996,17 @@
               }
             ],
             "description": "A ticket or continuation id, to attach to an existing job."
+          },
+          "deliverable": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Deliverable"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What you will produce. Checked; does not change gathering yet."
           },
           "fresh": {
             "description": "Start an independent run; never reuse a job by digest.",
@@ -1970,12 +2028,27 @@
               "null"
             ]
           },
+          "known": {
+            "description": "Up to 32 path ranges you already read. Checked; does not change\ngathering yet.",
+            "items": {
+              "$ref": "#/$defs/KnownRange"
+            },
+            "type": "array"
+          },
+          "needs": {
+            "description": "Up to 8 statements of what you must learn, one each, at most 400\nbytes. Stating needs improves the result.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "project": {
             "description": "Configured source scope from projects. Required when this connection has no single default; never follows the Explorer dropdown.",
             "pattern": "^[0-9a-f]{64}$",
             "type": "string"
           },
           "question": {
+            "description": "Existing full request only, with schema and budget; never with task.",
             "type": "string"
           },
           "reply_detail": {
@@ -2002,6 +2075,11 @@
             "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results; it does not resolve calls or verify live source."
           },
           "schema": {
+            "description": "Existing full request only; supplied by the service for task.",
+            "type": "string"
+          },
+          "task": {
+            "description": "The whole task in your words; it becomes the question.",
             "type": "string"
           },
           "verification": {
@@ -2046,13 +2124,11 @@
           }
         },
         "required": [
-          "schema",
-          "question",
-          "budget"
+          "task"
         ],
         "type": "object"
       },
-      "name": "answer"
+      "name": "gather_context"
     },
     {
       "annotations": {
@@ -2130,7 +2206,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Inspect bounded observed indexed changes since an exact token and validate remembered evidence. Supply since or selectors. Check independent coverage and freshness; this does not verify live source. Consume every needed cursor page before advancing the baseline. index-current describes the index, not live files. Baselines retain bounded metadata across up to 64 publications/24 hours; pressure can advance explicit coverage floors. Moves are content-based candidates, not proof of filesystem intent. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+      "description": "Use to see what the index observed changing since an exact token, or to validate remembered evidence. Supply since or selectors; returns bounded change observations. Check independent coverage and freshness; this does not verify live source. Consume every needed cursor page before advancing the baseline. index-current describes the index, not live files. Baselines retain bounded metadata across up to 64 publications/24 hours; pressure can advance explicit coverage floors. Moves are content-based candidates, not proof of filesystem intent. Next: read_indexed_range on changed ranges. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
       "inputSchema": {
         "$defs": {
           "ResponseMode": {
@@ -2364,7 +2440,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Retrieve code facts when definition navigation needs signatures, scopes, written types, call/framework candidates or symbol IDs for relationships. Exact name is default, including qualified names and terminal native call method names; name_match=suffix/contains explicitly broadens case-sensitive simple/qualified names. A durable symbol_key is exclusive of filters, matching and count options. Compact discovery is the default under Agent Lean; expand selected candidates with compact=false. Cursors bind the exact query/publication; include_count reports bounded precision, not a guessed total. Check basis/coverage; native syntax and optional source-bound producer assertions do not prove resolved calls or runtime behavior. Use response_mode=full for provenance/coverage audits.",
+      "description": "Use when a definition needs its signature, scope, written types, call/framework candidates or a symbol ID for relationships. Exact name is default, including qualified names and terminal native call method names; name_match=suffix/contains explicitly broadens case-sensitive simple/qualified names. A durable symbol_key is exclusive of filters, matching and count options. Compact discovery is the default under Agent Lean; expand selected candidates with compact=false. Cursors bind the exact query/publication; include_count reports bounded precision, not a guessed total. Check basis/coverage; native syntax and optional source-bound producer assertions do not prove resolved calls or runtime behavior. Next: relationships with a symbol ID, read_indexed_range for the source. Use response_mode=full for provenance/coverage audits.",
       "inputSchema": {
         "$defs": {
           "NameMatch": {
@@ -2397,6 +2473,15 @@
             "description": "Continuation returned by this tool; repeat the same filters and representation.",
             "type": [
               "string",
+              "null"
+            ]
+          },
+          "end_line": {
+            "description": "Last line, 1-based and inclusive; requires start_line and an exact path. Not combinable with symbol_key.",
+            "format": "uint",
+            "minimum": 1,
+            "type": [
+              "integer",
               "null"
             ]
           },
@@ -2441,6 +2526,11 @@
             "maximum": 65536,
             "minimum": 1,
             "type": "integer"
+          },
+          "minimal": {
+            "default": false,
+            "description": "Minimal rows: name, kind, lines, signature and owner (innermost enclosing scope); path, content hash and provenance once per file group. Rows omit symbol IDs. Not combinable with compact=false, reply_detail=rich or symbol_key.",
+            "type": "boolean"
           },
           "name": {
             "description": "Exact written name, qualified name, symbol_id or terminal native call method name; case-sensitive. Omit to list.",
@@ -2499,6 +2589,15 @@
             ],
             "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results; it does not resolve calls or verify live source."
           },
+          "start_line": {
+            "description": "First line, 1-based and inclusive, of a range in the exact path; requires end_line. A fact matches when its own lines overlap the range, e.g. the definition containing a line.",
+            "format": "uint",
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "symbol_key": {
             "description": "Durable symbol key from indexed evidence; exclusive of name/kind/language/path filters.",
             "type": [
@@ -2548,7 +2647,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Expand a search/fact hit with bounded neighboring indexed lines around its line coordinate. PDF/DOCX/PPTX lines are extracted-text coordinates; keep the request within one original page/block/slide. Evidence reflects the last successful index. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+      "description": "Use to widen one search or fact hit. Returns bounded neighboring indexed lines around its line coordinate, from the last successful index. PDF/DOCX/PPTX lines are extracted-text coordinates; keep the request within one original page/block/slide. Next: read_indexed_range for an exact larger range. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
       "inputSchema": {
         "$defs": {
           "ResponseMode": {
@@ -2694,7 +2793,7 @@
         ],
         "type": "object"
       },
-      "name": "context"
+      "name": "read_around"
     },
     {
       "annotations": {
@@ -2702,7 +2801,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Troubleshoot AIRK: full published coverage, runtime versions and process identities, scoped job/queue state, worker progress, source watcher and sampled waits. The MCP frontend adds configured query_concurrency from admission. Read-only; may be slower and larger than status. Use status for routine readiness checks. response_mode=full detail is always included; does not start indexing or repair.",
+      "description": "Troubleshoot AIRK: full published coverage, runtime versions and process identities, scoped job/queue state, worker progress, source watcher and sampled waits. The MCP frontend adds configured query_concurrency from admission. Read-only; may be slower and larger than index_status. Use index_status for routine readiness checks. response_mode=full detail is always included; does not start indexing or repair.",
       "inputSchema": {
         "$defs": {
           "ResponseMode": {
@@ -2760,7 +2859,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Find repository requirements, dates, features, architecture/design/decision language, headings, configuration keys and asset facts. Select a durable document_key alone, or filter by exact kind, language/profile, literal path prefix or statement/name substring. Prose cues include heading context, written bounds/units and modality; they are evidence candidates, not inferred obligations. Documents retain original locations; explicitly published local OCR evidence carries its own provenance and recognition limitations. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+      "description": "Use to find repository requirements, dates, features, architecture/design/decision language, headings, configuration keys and asset facts. Select a durable document_key alone, or filter by exact kind, language/profile, literal path prefix or statement/name substring. Prose cues include heading context, written bounds/units and modality; they are evidence candidates, not inferred obligations. Documents retain original locations; explicitly published local OCR evidence carries its own provenance and recognition limitations. Next: read_indexed_range or read_around on a cited line. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
       "inputSchema": {
         "$defs": {
           "ResponseMode": {
@@ -2921,7 +3020,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Check a file's indexed language/profile, extraction method, syntax quality, hash and line basis before interpreting evidence. Distinguishes source lines from extracted document coordinates; does not compare the live file for freshness. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+      "description": "Use before interpreting one file's evidence. Returns its indexed language/profile, extraction method, syntax quality, hash and line basis, distinguishing source lines from extracted document coordinates; does not compare the live file for freshness. Next: outline_file or read_indexed_range. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
       "inputSchema": {
         "$defs": {
           "ResponseMode": {
@@ -3140,7 +3239,7 @@
             "type": "integer"
           },
           "tool": {
-            "description": "Exact public MCP tool name, for example search; returns its current description and input schema.",
+            "description": "Exact public MCP tool name, for example search_passages; returns its current description and input schema.",
             "type": [
               "string",
               "null"
@@ -3168,7 +3267,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Inspect written import/use/include declarations by indexed language/profile, literal path prefix and optional name. Omitted name_match keeps the existing case-insensitive substring behavior; explicit exact/suffix/contains is case-sensitive. Use cursor continuation and optional include_count for bounded count precision. These are syntax candidates, not a resolved, transitive or dynamic dependency graph. Use response_mode=full for provenance/coverage audits.",
+      "description": "Use to see what code declares it depends on: returns written import/use/include declarations by indexed language/profile, literal path prefix and optional name. Omitted name_match keeps the existing case-insensitive substring behavior; explicit exact/suffix/contains is case-sensitive. Use cursor continuation and optional include_count for bounded count precision. These are syntax candidates, not a resolved, transitive or dynamic dependency graph. Next: outline_file or read_indexed_range on a declaring file. Use response_mode=full for provenance/coverage audits.",
       "inputSchema": {
         "$defs": {
           "NameMatch": {
@@ -3337,7 +3436,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Discover indexed files before choosing paths for outlines or reads. Filter by literal relative-path prefix, not glob; count and bytes are bounded. Lists the snapshot inventory, not all live workspace files or indexing coverage. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+      "description": "Use when you know a directory but not the file. Filter by literal relative-path prefix, not glob; count and bytes are bounded. Returns the snapshot inventory, not all live workspace files or indexing coverage. Next: outline_file or read_indexed_range on a chosen path. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
       "inputSchema": {
         "$defs": {
           "ResponseMode": {
@@ -3444,7 +3543,7 @@
         },
         "type": "object"
       },
-      "name": "list_files"
+      "name": "list_indexed_files"
     },
     {
       "annotations": {
@@ -3452,7 +3551,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Read one indexed file's structure in file order: imports, definitions, call candidates and document facts with locations. This is read-only source evidence; suggest_view proposes an Explorer screen instead. Takes one exact path and pages with cursor; a first page may not reach a known definition, so prefer scoped symbols/code_facts for that. Compact minimal navigation is default; compact=false expands facts and IDs. Bounded or empty output is not a whole-file or complete-language claim. Use response_mode=full for provenance audits.",
+      "description": "Use for one known file's structure before reading it. Takes one exact path; returns its imports, definitions, call candidates and document facts with locations in file order, paged by cursor. Compact minimal navigation is default; compact=false expands facts and IDs. A first page may not reach a given definition, so locate one with scoped find_definition/code_facts. Bounded or empty output is not a whole-file or complete-language claim. Read-only source evidence; suggest_view proposes an Explorer screen instead. Next: read_indexed_range on a listed range. Use response_mode=full for provenance audits.",
       "inputSchema": {
         "$defs": {
           "ResponseMode": {
@@ -3600,7 +3699,7 @@
         ],
         "type": "object"
       },
-      "name": "outline"
+      "name": "outline_file"
     },
     {
       "annotations": {
@@ -3608,7 +3707,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Prepare or execute a bounded read-only AIRK evidence plan. Supply schema airk.parse.request/1, mode prepare or execute, and exactly one of text, recipe, plan. Explicit plans contain steps {id,tool,args,bind}; public operation names only. Bindings use earlier step IDs and named selectors. At most 6 steps, 12 reads, a 30-second budget checked between reads, 512 KiB. Learned text in this review build returns an inert proposed plan with needs_input; review its arguments and resubmit the explicit plan to execute. Other uncertainty, partial coverage and failures stay explicit. No writes, commands, management, recursive plans or agent reasoning. Works without Explorer. Use response_mode=full for provenance/coverage audits; raw inner evidence retains its full kernel representation.",
+      "description": "Prepare or execute a bounded read-only AIRK evidence plan. Supply schema airk.parse.request/1, mode prepare or execute, and exactly one of text, recipe, plan. Explicit plans contain steps {id,tool,args,bind}; native operation names only, such as symbols or read_file. Bindings use earlier step IDs and named selectors. At most 6 steps, 12 reads, a 30-second budget checked between reads, 512 KiB. Learned text in this review build returns an inert proposed plan with needs_input; review its arguments and resubmit the explicit plan to execute. Other uncertainty, partial coverage and failures stay explicit. No writes, commands, management, recursive plans or agent reasoning. Works without Explorer. Use response_mode=full for provenance/coverage audits; raw inner evidence retains its full kernel representation.",
       "inputSchema": {
         "$defs": {
           "ResponseMode": {
@@ -3864,7 +3963,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Inspect a specific code or document excerpt after locating it. Read an inclusive 1-based indexed line range from an inventory path; this is the last successful snapshot, not a live filesystem read. For PDF/DOCX/PPTX, use extracted lines within one page/block/slide. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+      "description": "Use when you know the path and lines: from a hit, a citation or the task. Returns an inclusive 1-based indexed line range from the last successful snapshot, the revision citations point to, not a live filesystem read. For PDF/DOCX/PPTX, use extracted lines within one page/block/slide. Next: read_around to widen around one line, outline_file for the file's structure; verify live source before edits. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
       "inputSchema": {
         "$defs": {
           "ResponseMode": {
@@ -4005,7 +4104,7 @@
         ],
         "type": "object"
       },
-      "name": "read_file"
+      "name": "read_indexed_range"
     },
     {
       "annotations": {
@@ -4013,7 +4112,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Locate exact-case whole-identifier matching lines in retained indexed text, including definitions, strings and comments. Markdown, HTML, scripts and source can all match; scope by path_prefix, exact indexed language or metadata-based evidence_kind for impact work. These are textual candidates, never resolved references. Omit new paging options for legacy index ordering; explicit order=index/path/code_first, filters, cursor, include_files or include_count select bounded pageable scanning. Page file summaries/counts disclose their scope and matching-line unit; incomplete scans never imply an exact corpus total. Consume continuation and check truncation/coverage before concluding no impact; verify live source before edits. Use response_mode=full for provenance/coverage audits.",
+      "description": "Textual occurrences of an exact identifier: use after find_definition to find where it appears. Returns exact-case whole-identifier matching lines in retained indexed text, including definitions, strings and comments. Markdown, HTML, scripts and source can all match; scope by path_prefix, exact indexed language or metadata-based evidence_kind for impact work. These are textual candidates, never resolved references. Omit new paging options for legacy index ordering; explicit order=index/path/code_first, filters, cursor, include_files or include_count select bounded pageable scanning. Page file summaries/counts disclose their scope and matching-line unit; incomplete scans never imply an exact corpus total. Consume continuation and check truncation/coverage before concluding no impact. Next: read_indexed_range or read_around on chosen lines; verify live source before edits. Use response_mode=full for provenance/coverage audits.",
       "inputSchema": {
         "$defs": {
           "EvidenceKind": {
@@ -4189,7 +4288,7 @@
         ],
         "type": "object"
       },
-      "name": "references"
+      "name": "find_references"
     },
     {
       "annotations": {
@@ -4197,7 +4296,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Investigate bounded incoming/outgoing structural candidates with path scope and 1..3 hops. Written targets such as Type::new or obj.method identify textual caller candidates; a struct symbol ID alone does not prove a complete caller set. Verified type/method suggestions, when available, are navigation candidates rather than resolved associations. Agent Lean/Rich Structure retain supported calls; SCIP assertions are not calls. Check coverage and truncation: absent edges never prove no impact. Use response_mode=full for provenance/coverage audits.",
+      "description": "Use for impact work from a known symbol: returns bounded incoming/outgoing structural candidates with path scope and 1..3 hops. Written targets such as Type::new or obj.method identify textual caller candidates; a struct symbol ID alone does not prove a complete caller set. Verified type/method suggestions, when available, are navigation candidates rather than resolved associations. Agent Lean/Rich Structure retain supported calls; SCIP assertions are not calls. Check coverage and truncation: absent edges never prove no impact. Next: read_indexed_range on candidates, find_references for textual uses. Use response_mode=full for provenance/coverage audits.",
       "inputSchema": {
         "$defs": {
           "ResponseMode": {
@@ -4335,7 +4434,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Find concepts, code or documents; prose/comments and source can rank together. For a named type/function, prefer symbols first, scoped references for textual uses, then bounded read_file; search supplements that investigation. Scope by literal path_prefix, exact indexed language, metadata-based evidence_kind or exclude_path_prefix; documents alone do not prove application behavior. Omitted mode retains saved hybrid/vector policy; explicit lexical normalizes punctuation and quotes into AND terms; quotes do not enable phrase matching. Lexical candidates use stable-id order, not relevance ranking. Eligible Default search can return lexical evidence during a helper outage; execution records served mode and semantic incompleteness. Explicit vector/hybrid and saved RequireComplete refuse helper outages. Vector/hybrid need the indexed local model. semantic=true aliases vector. Bounded native-definition pointers may accompany identifiers without changing ranking. Focused cited snippets are default; full_chunks requests whole indexed chunks. Read guidance for returned limitations; empty matches alone establish no cause. Check readiness/truncation and use response_mode=full for provenance audits.",
+      "description": "Use for one concept, behavior or phrase when you have no exact identifier or path; prose, comments and code rank together. For a named type or function use find_definition; for a whole task use gather_context. Returns ranked cited snippets (full_chunks for whole indexed chunks) with served mode, readiness and limitations; bounded definition pointers may accompany identifiers. Scope by literal path_prefix, exact indexed language, metadata-based evidence_kind or exclude_path_prefix; documents alone do not prove application behavior. Omitted mode keeps the saved hybrid/vector policy and may serve lexical evidence during a helper outage, recording semantic incompleteness; explicit vector/hybrid and saved RequireComplete refuse the outage. Vector/hybrid need the indexed local model; semantic=true aliases vector. Explicit lexical turns punctuation and quotes into AND terms (no phrase matching) in stable-id order, not relevance. Empty matches alone establish no cause. Next: read_indexed_range or read_around on a hit. Check truncation and use response_mode=full for provenance audits.",
       "inputSchema": {
         "$defs": {
           "EvidenceKind": {
@@ -4404,8 +4503,7 @@
             ]
           },
           "limit": {
-            "default": 10,
-            "format": "uint",
+            "description": "Maximum number of results. Omission lets Search choose the count.",
             "maximum": 100,
             "minimum": 1,
             "type": "integer"
@@ -4509,7 +4607,7 @@
         ],
         "type": "object"
       },
-      "name": "search"
+      "name": "search_passages"
     },
     {
       "annotations": {
@@ -4517,7 +4615,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Quick version, health and project-index check: counts, publication, source-update state, semantic readiness and configured query_concurrency at frontend admission. Obtain before broad evidence fan-out; lightweight does not mean exempt from bounded admission. Completed same-authority observations superseded by scalar invalidation return successfully with status_observation.superseded and their original publication/time. Successful snapshots may be cached for five seconds; observed_unix_ms, cache_age_ms and cached disclose their age. Allows up to ten seconds for shared cold runtime setup, followed by a two-second observation budget; expiry reports unknown readiness and null evidence. Always skips process diagnostics and editor probes. Call diagnostics for detailed work, runtime versions and Explorer attachment. Counts are saved evidence, not proof that live files match. Does not start indexing or repair.",
+      "description": "Quick version, health and project-index check: counts, publication, source-update state, semantic readiness and configured query_concurrency at frontend admission. Evidence reads run at that concurrency: 16 by default, or 4, 8, 16, 32 or 64 as set in the Management Service; connection channels and worker query slots match it, plus one slot kept for status, so status still answers when every read slot is busy. A read beyond the limit waits in a bounded queue and gets a typed retry reply (retryable, retry_after_ms) when the queue is full or its deadline passes. Obtain before broad evidence fan-out; lightweight does not mean exempt from bounded admission. Completed same-authority observations superseded by scalar invalidation return successfully with status_observation.superseded and their original publication/time. Successful snapshots may be cached for five seconds; observed_unix_ms, cache_age_ms and cached disclose their age. Allows up to ten seconds for shared cold runtime setup, followed by a two-second observation budget; expiry reports unknown readiness and null evidence. Always skips process diagnostics and editor probes. Call diagnostics for detailed work, runtime versions and Explorer attachment. Counts are saved evidence, not proof that live files match. Does not start indexing or repair.",
       "inputSchema": {
         "$defs": {
           "ResponseMode": {
@@ -4567,7 +4665,7 @@
         },
         "type": "object"
       },
-      "name": "status"
+      "name": "index_status"
     },
     {
       "annotations": {
@@ -4575,7 +4673,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Locate supported written code definitions before broad text search. Exact name is default: Session does not match OwnerSession. Explicit name_match=suffix/contains matches simple/qualified names case-sensitively; omit name to list within indexed language/profile or literal path_prefix. Keep compact discovery for candidates, then request compact=false on a selected scope for rich IDs/details. Consume cursor pages; include_count reports bounded count precision. Does not resolve dynamic/cross-file names. Use code_facts for additional fact categories and response_mode=full for provenance audits.",
+      "description": "Use first for a known type, function or other written definition name, before text search. Exact name is default: Session does not match OwnerSession. Explicit name_match=suffix/contains matches simple/qualified names case-sensitively; omit name to list within indexed language/profile or literal path_prefix. Returns definition locations; keep compact discovery for candidates, then request compact=false on a selected scope for rich IDs/details. Consume cursor pages; include_count reports bounded count precision. Does not resolve dynamic/cross-file names. Next: find_references for uses, read_indexed_range or read_around for the body, code_facts for more fact categories. Use response_mode=full for provenance audits.",
       "inputSchema": {
         "$defs": {
           "NameMatch": {
@@ -4736,7 +4834,7 @@
         },
         "type": "object"
       },
-      "name": "symbols"
+      "name": "find_definition"
     },
     {
       "annotations": {
@@ -5821,7 +5919,7 @@
       "arbiter status": "Inspect optional model readiness, selection and exact per-index enrollment\n\nUsage: airkctl arbiter status [OPTIONS]\n\nOptions:\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --collection <COLLECTION>\n          [default: default]\n\n  -h, --help\n          Print help\n",
       "arbiter status-legacy": "Inspect retained CPU configuration/3 and status/2 without device migration\n\nUsage: airkctl arbiter status-legacy [OPTIONS]\n\nOptions:\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --collection <COLLECTION>\n          [default: default]\n\n  -h, --help\n          Print help\n",
       "changes": "Report indexed changes since a revision token: added, modified and removed files, symbols and documents\n\nUsage: airkctl changes [OPTIONS]\n\nOptions:\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --verification <VERIFICATION>\n          Dated saved-source checks; default Report, bounded to 8 sources, 16 MiB and 2000 ms. Off skips checking\n          \n          [possible values: off, report, require]\n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --verification-max-sources <VERIFICATION_MAX_SOURCES>\n          \n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --verification-max-bytes <VERIFICATION_MAX_BYTES>\n          \n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --verification-deadline-ms <VERIFICATION_DEADLINE_MS>\n          \n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --reply-detail <REPLY_DETAIL>\n          Lean/Rich reply projection; independent of retained indexing detail\n          \n          [possible values: lean, rich]\n\n      --collection <COLLECTION>\n          [default: default]\n\n      --since <SINCE>\n          \n\n      --selector <SELECTORS>\n          Repeatable tagged JSON selector, e.g. {\"kind\":\"path\",\"path\":\"one.rs\"}\n\n      --path <PATHS>\n          Remember an exact collection-relative indexed path\n\n      --path-prefix <PATH_PREFIX>\n          [default: \"\"]\n\n      --include-symbols\n          \n\n      --include-documents\n          \n\n      --include-suggestions\n          Bounded similarity/directory hints; never follow or promote identity\n\n      --limit <LIMIT>\n          [default: 10]\n\n      --max-bytes <MAX_BYTES>\n          [default: 8192]\n\n      --cursor <CURSOR>\n          \n\n  -h, --help\n          Print help\n",
-      "code-facts": "Inspect code facts and signatures with exact default name matching and bounded continuation\n\nUsage: airkctl code-facts [OPTIONS]\n\nOptions:\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --verification <VERIFICATION>\n          Dated saved-source checks; default Report, bounded to 8 sources, 16 MiB and 2000 ms. Off skips checking\n          \n          [possible values: off, report, require]\n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --verification-max-sources <VERIFICATION_MAX_SOURCES>\n          \n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --verification-max-bytes <VERIFICATION_MAX_BYTES>\n          \n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --verification-deadline-ms <VERIFICATION_DEADLINE_MS>\n          \n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --reply-detail <REPLY_DETAIL>\n          Lean/Rich reply projection; independent of retained indexing detail\n          \n          [possible values: lean, rich]\n\n      --collection <COLLECTION>\n          [default: default]\n\n      --name-match <NAME_MATCH>\n          Default exact lookup; suffix/contains match simple or qualified names case-sensitively\n          \n          [possible values: exact, suffix, contains]\n\n      --include-count\n          Request qualified match counts; a bounded partial scan can report an unknown total\n\n      --compact [<COMPACT>]\n          False includes rich facts and durable IDs; independent of response mode\n          \n          [possible values: true, false]\n\n      --cursor <CURSOR>\n          Continue the same revision-bound discovery with unchanged filters\n\n      --symbol-key <SYMBOL_KEY>\n          Durable symbol key from indexed continuity evidence; excludes textual filters\n\n      --name <NAME>\n          \n\n      --kind <KIND>\n          \n\n      --language <LANGUAGE>\n          \n\n      --path-prefix <PATH_PREFIX>\n          [default: \"\"]\n\n      --limit <LIMIT>\n          [default: 10]\n\n      --max-bytes <MAX_BYTES>\n          [default: 8192]\n\n  -h, --help\n          Print help\n",
+      "code-facts": "Inspect code facts and signatures with exact default name matching and bounded continuation\n\nUsage: airkctl code-facts [OPTIONS]\n\nOptions:\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --verification <VERIFICATION>\n          Dated saved-source checks; default Report, bounded to 8 sources, 16 MiB and 2000 ms. Off skips checking\n          \n          [possible values: off, report, require]\n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --verification-max-sources <VERIFICATION_MAX_SOURCES>\n          \n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --verification-max-bytes <VERIFICATION_MAX_BYTES>\n          \n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --verification-deadline-ms <VERIFICATION_DEADLINE_MS>\n          \n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --reply-detail <REPLY_DETAIL>\n          Lean/Rich reply projection; independent of retained indexing detail\n          \n          [possible values: lean, rich]\n\n      --collection <COLLECTION>\n          [default: default]\n\n      --name-match <NAME_MATCH>\n          Default exact lookup; suffix/contains match simple or qualified names case-sensitively\n          \n          [possible values: exact, suffix, contains]\n\n      --include-count\n          Request qualified match counts; a bounded partial scan can report an unknown total\n\n      --compact [<COMPACT>]\n          False includes rich facts and durable IDs; independent of response mode\n          \n          [possible values: true, false]\n\n      --cursor <CURSOR>\n          Continue the same revision-bound discovery with unchanged filters\n\n      --symbol-key <SYMBOL_KEY>\n          Durable symbol key from indexed continuity evidence; excludes textual filters\n\n      --name <NAME>\n          \n\n      --kind <KIND>\n          \n\n      --language <LANGUAGE>\n          \n\n      --path-prefix <PATH_PREFIX>\n          [default: \"\"]\n\n      --path <PATH>\n          Exact indexed file path; takes precedence over --path-prefix\n\n      --start-line <START_LINE>\n          First line (1-based, inclusive) of a range in --path; facts whose lines overlap it match\n\n      --end-line <END_LINE>\n          Last line (1-based, inclusive) of the --path range\n\n      --minimal\n          Minimal rows with their enclosing scope; path, hash and provenance once per file\n\n      --limit <LIMIT>\n          [default: 10]\n\n      --max-bytes <MAX_BYTES>\n          [default: 8192]\n\n  -h, --help\n          Print help\n",
       "configure": "Apply a guarded project configuration draft from --file or --stdin (JSON with an \"operation\")\n\nUsage: airkctl configure [OPTIONS]\n\nOptions:\n      --file <FILE>\n          \n\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --stdin\n          \n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --collection <COLLECTION>\n          [default: default]\n\n  -h, --help\n          Print help\n",
       "context": "Read lines around --line in a file (--before/--after), with a citation\n\nUsage: airkctl context [OPTIONS] <PATH> <LINE>\n\nArguments:\n  <PATH>\n          \n\n  <LINE>\n          \n\nOptions:\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --verification <VERIFICATION>\n          Dated saved-source checks; default Report, bounded to 8 sources, 16 MiB and 2000 ms. Off skips checking\n          \n          [possible values: off, report, require]\n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --verification-max-sources <VERIFICATION_MAX_SOURCES>\n          \n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --verification-max-bytes <VERIFICATION_MAX_BYTES>\n          \n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --verification-deadline-ms <VERIFICATION_DEADLINE_MS>\n          \n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --reply-detail <REPLY_DETAIL>\n          Lean/Rich reply projection; independent of retained indexing detail\n          \n          [possible values: lean, rich]\n\n      --collection <COLLECTION>\n          [default: default]\n\n      --revision <REVISION>\n          \n\n      --if-evidence <IF_EVIDENCE>\n          \n\n      --follow-moves\n          \n\n      --known-hash <KNOWN_HASH>\n          \n\n      --artifact-id <ARTIFACT_ID>\n          \n\n      --before <BEFORE>\n          [default: 5]\n\n      --after <AFTER>\n          [default: 5]\n\n      --max-bytes <MAX_BYTES>\n          [default: 8192]\n\n  -h, --help\n          Print help\n",
       "explorer": "Offline Explorer drafts, validation and templates; results go to a new --output-file\n\nUsage: airkctl explorer [OPTIONS] <COMMAND>\n\nCommands:\n  draft-search     Write a proposed Explorer Search form (MCP draft_search) after schema validation\n  draft-strategy   Write a proposed Explorer strategy (MCP draft_strategy)\n  draft-plan       Write a proposed Explorer plan (MCP draft_plan)\n  suggest-view     Write a proposed Explorer view (MCP suggest_view)\n  validate-draft   Validate a draft without writing a proposal\n  list-templates   List the bundled strategy templates\n  get-template     Write one bundled template\n  proposal-status  Report the status of a written draft\n  get-handoff      Write a handoff a VS Code window shared through its session (M12)\n\nOptions:\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --collection <COLLECTION>\n          [default: default]\n\n  -h, --help\n          Print help\n",
@@ -5871,7 +5969,7 @@
       "scope": "Workspace default scopes agents read when a call names no index or index set (U110)\n\nUsage: airkctl scope [OPTIONS] <COMMAND>\n\nCommands:\n  default   Set the default scope of each --workspace folder; with no --index and no --set, clear it\n  defaults  Print every stored workspace default: {\"schema\":1,\"entries\":[...]}\n\nOptions:\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --collection <COLLECTION>\n          [default: default]\n\n  -h, --help\n          Print help\n",
       "scope default": "Set the default scope of each --workspace folder; with no --index and no --set, clear it.\n\nAn agent read that names no index or index set and passes a workspace path (or whose client offers MCP roots) reads the default of the most specific folder containing it. Prints {\"schema\":1,\"entries\":[...]} with every stored default.\n\nUsage: airkctl scope default [OPTIONS] --workspace <WORKSPACES>\n\nOptions:\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --runtime-dir <RUNTIME_DIR>\n          The service's control directory (default: --service-runtime-dir, else the installation's)\n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --workspace <WORKSPACES>\n          An absolute workspace folder (repeatable)\n\n      --index <INDEXES>\n          An index (`idx_...`, exact name or unique case-insensitive name) (repeatable)\n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --set <SETS>\n          An index set (`prj_...`, exact name or unique case-insensitive name) (repeatable)\n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --collection <COLLECTION>\n          [default: default]\n\n  -h, --help\n          Print help (see a summary with '-h')\n",
       "scope defaults": "Print every stored workspace default: {\"schema\":1,\"entries\":[...]}\n\nUsage: airkctl scope defaults [OPTIONS]\n\nOptions:\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --runtime-dir <RUNTIME_DIR>\n          The service's control directory (default: --service-runtime-dir, else the installation's)\n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --collection <COLLECTION>\n          [default: default]\n\n  -h, --help\n          Print help\n",
-      "search": "Search indexed evidence; results carry file, line and revision citations.\n\nWithout --mode the saved search policy applies. Eligible policies can return lexical matches during helper outages; execution reports the served mode and semantic incompleteness. Explicit vector/hybrid and saved RequireComplete refuse helper outages. Hybrid can still serve lexical evidence during a pending index upgrade, with that separate limitation disclosed. --mode lexical uses normalized AND terms: punctuation and quotation marks separate terms; quotes do not enable phrase matching. Lexical order is stable index identity, not relevance.\n\nUsage: airkctl search [OPTIONS] <QUERY>\n\nArguments:\n  <QUERY>\n          \n\nOptions:\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --verification <VERIFICATION>\n          Dated saved-source checks; default Report, bounded to 8 sources, 16 MiB and 2000 ms. Off skips checking\n          \n          [possible values: off, report, require]\n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --verification-max-sources <VERIFICATION_MAX_SOURCES>\n          \n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --verification-max-bytes <VERIFICATION_MAX_BYTES>\n          \n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --verification-deadline-ms <VERIFICATION_DEADLINE_MS>\n          \n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --reply-detail <REPLY_DETAIL>\n          Lean/Rich reply projection; independent of retained indexing detail\n          \n          [possible values: lean, rich]\n\n      --collection <COLLECTION>\n          [default: default]\n\n      --language <LANGUAGE>\n          Exact indexed extraction-language label; not a filename-extension filter\n\n      --evidence-kind <EVIDENCE_KIND>\n          Indexed evidence classification; unknown includes unclassified extraction\n          \n          [possible values: code, document, configuration, unknown]\n\n      --exclude-path-prefix <EXCLUDE_PATH_PREFIX>\n          Exclude one literal collection-relative prefix from this query only\n\n      --mode <MODE>\n          [possible values: lexical, vector, hybrid]\n\n      --semantic\n          Use the configured local embedding model and disk-backed vector graph\n\n      --path-prefix <PATH_PREFIX>\n          \n\n      --limit <LIMIT>\n          [default: 10]\n\n      --max-bytes <MAX_BYTES>\n          [default: 8192]\n\n  -h, --help\n          Print help (see a summary with '-h')\n",
+      "search": "Search indexed evidence; results carry file, line and revision citations.\n\nWithout --mode the saved search policy applies. Eligible policies can return lexical matches during helper outages; execution reports the served mode and semantic incompleteness. Explicit vector/hybrid and saved RequireComplete refuse helper outages. Hybrid can still serve lexical evidence during a pending index upgrade, with that separate limitation disclosed. --mode lexical uses normalized AND terms: punctuation and quotation marks separate terms; quotes do not enable phrase matching. Lexical order is stable index identity, not relevance.\n\nUsage: airkctl search [OPTIONS] <QUERY>\n\nArguments:\n  <QUERY>\n          \n\nOptions:\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --verification <VERIFICATION>\n          Dated saved-source checks; default Report, bounded to 8 sources, 16 MiB and 2000 ms. Off skips checking\n          \n          [possible values: off, report, require]\n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --verification-max-sources <VERIFICATION_MAX_SOURCES>\n          \n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --verification-max-bytes <VERIFICATION_MAX_BYTES>\n          \n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --verification-deadline-ms <VERIFICATION_DEADLINE_MS>\n          \n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --reply-detail <REPLY_DETAIL>\n          Lean/Rich reply projection; independent of retained indexing detail\n          \n          [possible values: lean, rich]\n\n      --collection <COLLECTION>\n          [default: default]\n\n      --language <LANGUAGE>\n          Exact indexed extraction-language label; not a filename-extension filter\n\n      --evidence-kind <EVIDENCE_KIND>\n          Indexed evidence classification; unknown includes unclassified extraction\n          \n          [possible values: code, document, configuration, unknown]\n\n      --exclude-path-prefix <EXCLUDE_PATH_PREFIX>\n          Exclude one literal collection-relative prefix from this query only\n\n      --mode <MODE>\n          [possible values: lexical, vector, hybrid]\n\n      --semantic\n          Use the configured local embedding model and disk-backed vector graph\n\n      --path-prefix <PATH_PREFIX>\n          \n\n      --limit <LIMIT>\n          Maximum number of results. Omit to let Search choose the count\n\n      --max-bytes <MAX_BYTES>\n          [default: 8192]\n\n  -h, --help\n          Print help (see a summary with '-h')\n",
       "service": "The AIRK service: start, stop, status, logs, requests and management\n\nUsage: airkctl service [OPTIONS] <COMMAND>\n\nCommands:\n  setup                  Register this extracted portable runtime without login startup or automatic start\n  setup-receipt          Validate the native setup receipt for the current verified installation, without starting it\n  start                  Start the installed service (the install record's verified airk) and wait until it is healthy\n  stop                   Stop the service and wait until its process exits; a saved Stop keeps automatic starts off\n  restart                Stop the service, wait until its process exits, then start the installed service again\n  uninstall              Remove this AIRK Service installation through its signed setup step: stop the service, remove login startup, the certificate trust an older HTTPS build added, and the install pointer and record\n  logs                   Read the service's diagnostic logs (recent from the running service; all, raw or stopped-service reads from the local files)\n  abandon-lifecycle      Mark a stuck stop or restart record abandoned (U80); a finished record is printed unchanged\n  status                 Report the installation and whether the service is running, with its saved Stop and any unfinished stop or restart\n  record-error           Record a bounded client error (JSON on stdin) without needing the service to run\n  register               Register --root/--data-dir/--collection with the service at --runtime-dir. The data directory must exist\n  prepare-registration   Print the canonical registration for --root/--data-dir/--collection, including its binding. Read-only\n  prepare-configuration  Prepare a guarded configuration request for a project; submit it with `requests retry`\n  prepare-storage        Create the reserved index storage for an already reserved project (owner-only on Unix)\n  requests               Saved client requests: list, prepare, retry or forget by nonce\n  rpc                    Send one raw management request (ControlMethod JSON) and print the service's answer\n  inventory              The service's locations (program, data, state, cache, logs) with sizes (U100)\n  purge-plan             The exact files a purge of the cache or the closed logs would delete now, and its plan digest\n  purge                  Delete exactly the plan --plan-digest names; --confirm must be the location's path as `inventory` lists it\n  login                  Login startup on Windows: status, install or uninstall (U101)\n  health                 Check that the service for --runtime-dir is running and healthy; exits non-zero otherwise\n  shutdown               Ask the service for --runtime-dir to drain its workers and exit\n\nOptions:\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --collection <COLLECTION>\n          [default: default]\n\n  -h, --help\n          Print help\n",
       "service abandon-lifecycle": "Mark a stuck stop or restart record abandoned (U80); a finished record is printed unchanged\n\nUsage: airkctl service abandon-lifecycle [OPTIONS] --request-id <REQUEST_ID>\n\nOptions:\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --runtime-dir <RUNTIME_DIR>\n          The service's control directory (default: --service-runtime-dir, else the installation's)\n\n      --request-id <REQUEST_ID>\n          \n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --collection <COLLECTION>\n          [default: default]\n\n  -h, --help\n          Print help\n",
       "service health": "Check that the service for --runtime-dir is running and healthy; exits non-zero otherwise\n\nUsage: airkctl service health [OPTIONS]\n\nOptions:\n      --output <OUTPUT>\n          Result and error format: json writes one JSON document or error line\n          \n          [default: text]\n          [possible values: json, text]\n\n      --runtime-dir <RUNTIME_DIR>\n          The service's control directory (default: --service-runtime-dir)\n\n      --service-runtime-dir <SERVICE_RUNTIME_DIR>\n          The AIRK service's control directory\n\n      --service-project <SERVICE_PROJECT>\n          A registered project binding\n\n      --root <ROOT>\n          The project folder (default: the current folder)\n          \n          [default: .]\n\n      --data-dir <DATA_DIR>\n          The project's data folder (default: the installation's data location)\n\n      --collection <COLLECTION>\n          [default: default]\n\n  -h, --help\n          Print help\n",
@@ -6009,7 +6107,7 @@
           "openWorldHint": false,
           "readOnlyHint": true
         },
-        "description": "Gather bounded, cited indexed context for a question through canonical evidence reads. Preserves full source receipts and exposes gaps, budgets and stop reasons. Optional local Arbiter advice applies only to explicitly enrolled indexes and qualified tasks; disabled or unavailable models retain deterministic native gathering. Requires an admitted index connection. Existing context expands neighboring lines around one coordinate. Use response_mode=full for provenance/coverage audits; verification report/require checks returned saved sources without changing indexed evidence.",
+        "description": "Use first for a whole task that needs evidence from several places in the index; for a known identifier or path, call find_definition or read_indexed_range directly. Pass the task text as task. Fill needs (up to 8 short statements of what you must learn, each at most 400 bytes): stating needs improves the result. Add anchors (up to 16 exact strings from the task: identifiers, routes, quoted text, numbers with units; each at most 200 bytes), deliverable (code_change, test, document or analysis) and known (ranges you already read); deliverable and known are checked but do not change gathering yet. Omit budget for the service default. Runs bounded canonical reads and returns cited indexed records by need, with gaps, budgets and stop reasons; without a local model, gathering is deterministic and the reply says so. Next: read_indexed_range or read_around on cited ranges you need in full. Use response_mode=full for provenance/coverage audits; verification report/require checks returned saved sources.",
         "inputSchema": {
           "$defs": {
             "BudgetV3": {
@@ -6108,6 +6206,45 @@
               ],
               "type": "object"
             },
+            "Deliverable": {
+              "description": "What the caller will produce from the gathered context.",
+              "enum": [
+                "code_change",
+                "test",
+                "document",
+                "analysis"
+              ],
+              "type": "string"
+            },
+            "KnownRange": {
+              "additionalProperties": false,
+              "description": "A repository-relative path, whole or with inclusive one-based lines.",
+              "properties": {
+                "end_line": {
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "path": {
+                  "type": "string"
+                },
+                "start_line": {
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "path"
+              ],
+              "type": "object"
+            },
             "ResponseMode": {
               "enum": [
                 "terse",
@@ -6123,8 +6260,16 @@
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "additionalProperties": false,
           "properties": {
+            "anchors": {
+              "description": "Up to 16 exact strings from the task (identifiers, routes, quoted\ntext, numbers with units), at most 200 bytes each.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
             "budget": {
-              "$ref": "#/$defs/BudgetV3"
+              "$ref": "#/$defs/BudgetV3",
+              "description": "Optional with task: omitted uses the service default, a valid budget\nis used as sent. Required with question."
             },
             "continuation": {
               "anyOf": [
@@ -6136,6 +6281,17 @@
                 }
               ],
               "description": "A ticket or continuation id, to attach to an existing job."
+            },
+            "deliverable": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Deliverable"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "What you will produce. Checked; does not change gathering yet."
             },
             "fresh": {
               "description": "Start an independent run; never reuse a job by digest.",
@@ -6157,12 +6313,27 @@
                 "null"
               ]
             },
+            "known": {
+              "description": "Up to 32 path ranges you already read. Checked; does not change\ngathering yet.",
+              "items": {
+                "$ref": "#/$defs/KnownRange"
+              },
+              "type": "array"
+            },
+            "needs": {
+              "description": "Up to 8 statements of what you must learn, one each, at most 400\nbytes. Stating needs improves the result.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
             "project": {
               "description": "Configured source scope from projects. Required when this connection has no single default; never follows the Explorer dropdown.",
               "pattern": "^[0-9a-f]{64}$",
               "type": "string"
             },
             "question": {
+              "description": "Existing full request only, with schema and budget; never with task.",
               "type": "string"
             },
             "reply_detail": {
@@ -6189,6 +6360,11 @@
               "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results; it does not resolve calls or verify live source."
             },
             "schema": {
+              "description": "Existing full request only; supplied by the service for task.",
+              "type": "string"
+            },
+            "task": {
+              "description": "The whole task in your words; it becomes the question.",
               "type": "string"
             },
             "verification": {
@@ -6233,13 +6409,11 @@
             }
           },
           "required": [
-            "schema",
-            "question",
-            "budget"
+            "task"
           ],
           "type": "object"
         },
-        "name": "answer"
+        "name": "gather_context"
       },
       {
         "annotations": {
@@ -6317,7 +6491,7 @@
           "openWorldHint": false,
           "readOnlyHint": true
         },
-        "description": "Inspect bounded observed indexed changes since an exact token and validate remembered evidence. Supply since or selectors. Check independent coverage and freshness; this does not verify live source. Consume every needed cursor page before advancing the baseline. index-current describes the index, not live files. Baselines retain bounded metadata across up to 64 publications/24 hours; pressure can advance explicit coverage floors. Moves are content-based candidates, not proof of filesystem intent. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+        "description": "Use to see what the index observed changing since an exact token, or to validate remembered evidence. Supply since or selectors; returns bounded change observations. Check independent coverage and freshness; this does not verify live source. Consume every needed cursor page before advancing the baseline. index-current describes the index, not live files. Baselines retain bounded metadata across up to 64 publications/24 hours; pressure can advance explicit coverage floors. Moves are content-based candidates, not proof of filesystem intent. Next: read_indexed_range on changed ranges. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
         "inputSchema": {
           "$defs": {
             "ResponseMode": {
@@ -6551,7 +6725,7 @@
           "openWorldHint": false,
           "readOnlyHint": true
         },
-        "description": "Retrieve code facts when definition navigation needs signatures, scopes, written types, call/framework candidates or symbol IDs for relationships. Exact name is default, including qualified names and terminal native call method names; name_match=suffix/contains explicitly broadens case-sensitive simple/qualified names. A durable symbol_key is exclusive of filters, matching and count options. Compact discovery is the default under Agent Lean; expand selected candidates with compact=false. Cursors bind the exact query/publication; include_count reports bounded precision, not a guessed total. Check basis/coverage; native syntax and optional source-bound producer assertions do not prove resolved calls or runtime behavior. Use response_mode=full for provenance/coverage audits.",
+        "description": "Use when a definition needs its signature, scope, written types, call/framework candidates or a symbol ID for relationships. Exact name is default, including qualified names and terminal native call method names; name_match=suffix/contains explicitly broadens case-sensitive simple/qualified names. A durable symbol_key is exclusive of filters, matching and count options. Compact discovery is the default under Agent Lean; expand selected candidates with compact=false. Cursors bind the exact query/publication; include_count reports bounded precision, not a guessed total. Check basis/coverage; native syntax and optional source-bound producer assertions do not prove resolved calls or runtime behavior. Next: relationships with a symbol ID, read_indexed_range for the source. Use response_mode=full for provenance/coverage audits.",
         "inputSchema": {
           "$defs": {
             "NameMatch": {
@@ -6584,6 +6758,15 @@
               "description": "Continuation returned by this tool; repeat the same filters and representation.",
               "type": [
                 "string",
+                "null"
+              ]
+            },
+            "end_line": {
+              "description": "Last line, 1-based and inclusive; requires start_line and an exact path. Not combinable with symbol_key.",
+              "format": "uint",
+              "minimum": 1,
+              "type": [
+                "integer",
                 "null"
               ]
             },
@@ -6628,6 +6811,11 @@
               "maximum": 65536,
               "minimum": 1,
               "type": "integer"
+            },
+            "minimal": {
+              "default": false,
+              "description": "Minimal rows: name, kind, lines, signature and owner (innermost enclosing scope); path, content hash and provenance once per file group. Rows omit symbol IDs. Not combinable with compact=false, reply_detail=rich or symbol_key.",
+              "type": "boolean"
             },
             "name": {
               "description": "Exact written name, qualified name, symbol_id or terminal native call method name; case-sensitive. Omit to list.",
@@ -6686,6 +6874,15 @@
               ],
               "description": "Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results; it does not resolve calls or verify live source."
             },
+            "start_line": {
+              "description": "First line, 1-based and inclusive, of a range in the exact path; requires end_line. A fact matches when its own lines overlap the range, e.g. the definition containing a line.",
+              "format": "uint",
+              "minimum": 1,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
             "symbol_key": {
               "description": "Durable symbol key from indexed evidence; exclusive of name/kind/language/path filters.",
               "type": [
@@ -6735,7 +6932,7 @@
           "openWorldHint": false,
           "readOnlyHint": true
         },
-        "description": "Expand a search/fact hit with bounded neighboring indexed lines around its line coordinate. PDF/DOCX/PPTX lines are extracted-text coordinates; keep the request within one original page/block/slide. Evidence reflects the last successful index. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+        "description": "Use to widen one search or fact hit. Returns bounded neighboring indexed lines around its line coordinate, from the last successful index. PDF/DOCX/PPTX lines are extracted-text coordinates; keep the request within one original page/block/slide. Next: read_indexed_range for an exact larger range. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
         "inputSchema": {
           "$defs": {
             "ResponseMode": {
@@ -6881,7 +7078,7 @@
           ],
           "type": "object"
         },
-        "name": "context"
+        "name": "read_around"
       },
       {
         "annotations": {
@@ -6889,7 +7086,7 @@
           "openWorldHint": false,
           "readOnlyHint": true
         },
-        "description": "Troubleshoot AIRK: full published coverage, runtime versions and process identities, scoped job/queue state, worker progress, source watcher and sampled waits. The MCP frontend adds configured query_concurrency from admission. Read-only; may be slower and larger than status. Use status for routine readiness checks. response_mode=full detail is always included; does not start indexing or repair.",
+        "description": "Troubleshoot AIRK: full published coverage, runtime versions and process identities, scoped job/queue state, worker progress, source watcher and sampled waits. The MCP frontend adds configured query_concurrency from admission. Read-only; may be slower and larger than index_status. Use index_status for routine readiness checks. response_mode=full detail is always included; does not start indexing or repair.",
         "inputSchema": {
           "$defs": {
             "ResponseMode": {
@@ -6947,7 +7144,7 @@
           "openWorldHint": false,
           "readOnlyHint": true
         },
-        "description": "Find repository requirements, dates, features, architecture/design/decision language, headings, configuration keys and asset facts. Select a durable document_key alone, or filter by exact kind, language/profile, literal path prefix or statement/name substring. Prose cues include heading context, written bounds/units and modality; they are evidence candidates, not inferred obligations. Documents retain original locations; explicitly published local OCR evidence carries its own provenance and recognition limitations. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+        "description": "Use to find repository requirements, dates, features, architecture/design/decision language, headings, configuration keys and asset facts. Select a durable document_key alone, or filter by exact kind, language/profile, literal path prefix or statement/name substring. Prose cues include heading context, written bounds/units and modality; they are evidence candidates, not inferred obligations. Documents retain original locations; explicitly published local OCR evidence carries its own provenance and recognition limitations. Next: read_indexed_range or read_around on a cited line. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
         "inputSchema": {
           "$defs": {
             "ResponseMode": {
@@ -7108,7 +7305,7 @@
           "openWorldHint": false,
           "readOnlyHint": true
         },
-        "description": "Check a file's indexed language/profile, extraction method, syntax quality, hash and line basis before interpreting evidence. Distinguishes source lines from extracted document coordinates; does not compare the live file for freshness. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+        "description": "Use before interpreting one file's evidence. Returns its indexed language/profile, extraction method, syntax quality, hash and line basis, distinguishing source lines from extracted document coordinates; does not compare the live file for freshness. Next: outline_file or read_indexed_range. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
         "inputSchema": {
           "$defs": {
             "ResponseMode": {
@@ -7327,7 +7524,7 @@
               "type": "integer"
             },
             "tool": {
-              "description": "Exact public MCP tool name, for example search; returns its current description and input schema.",
+              "description": "Exact public MCP tool name, for example search_passages; returns its current description and input schema.",
               "type": [
                 "string",
                 "null"
@@ -7355,7 +7552,7 @@
           "openWorldHint": false,
           "readOnlyHint": true
         },
-        "description": "Inspect written import/use/include declarations by indexed language/profile, literal path prefix and optional name. Omitted name_match keeps the existing case-insensitive substring behavior; explicit exact/suffix/contains is case-sensitive. Use cursor continuation and optional include_count for bounded count precision. These are syntax candidates, not a resolved, transitive or dynamic dependency graph. Use response_mode=full for provenance/coverage audits.",
+        "description": "Use to see what code declares it depends on: returns written import/use/include declarations by indexed language/profile, literal path prefix and optional name. Omitted name_match keeps the existing case-insensitive substring behavior; explicit exact/suffix/contains is case-sensitive. Use cursor continuation and optional include_count for bounded count precision. These are syntax candidates, not a resolved, transitive or dynamic dependency graph. Next: outline_file or read_indexed_range on a declaring file. Use response_mode=full for provenance/coverage audits.",
         "inputSchema": {
           "$defs": {
             "NameMatch": {
@@ -7524,7 +7721,7 @@
           "openWorldHint": false,
           "readOnlyHint": true
         },
-        "description": "Discover indexed files before choosing paths for outlines or reads. Filter by literal relative-path prefix, not glob; count and bytes are bounded. Lists the snapshot inventory, not all live workspace files or indexing coverage. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+        "description": "Use when you know a directory but not the file. Filter by literal relative-path prefix, not glob; count and bytes are bounded. Returns the snapshot inventory, not all live workspace files or indexing coverage. Next: outline_file or read_indexed_range on a chosen path. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
         "inputSchema": {
           "$defs": {
             "ResponseMode": {
@@ -7631,7 +7828,7 @@
           },
           "type": "object"
         },
-        "name": "list_files"
+        "name": "list_indexed_files"
       },
       {
         "annotations": {
@@ -7639,7 +7836,7 @@
           "openWorldHint": false,
           "readOnlyHint": true
         },
-        "description": "Read one indexed file's structure in file order: imports, definitions, call candidates and document facts with locations. This is read-only source evidence; suggest_view proposes an Explorer screen instead. Takes one exact path and pages with cursor; a first page may not reach a known definition, so prefer scoped symbols/code_facts for that. Compact minimal navigation is default; compact=false expands facts and IDs. Bounded or empty output is not a whole-file or complete-language claim. Use response_mode=full for provenance audits.",
+        "description": "Use for one known file's structure before reading it. Takes one exact path; returns its imports, definitions, call candidates and document facts with locations in file order, paged by cursor. Compact minimal navigation is default; compact=false expands facts and IDs. A first page may not reach a given definition, so locate one with scoped find_definition/code_facts. Bounded or empty output is not a whole-file or complete-language claim. Read-only source evidence; suggest_view proposes an Explorer screen instead. Next: read_indexed_range on a listed range. Use response_mode=full for provenance audits.",
         "inputSchema": {
           "$defs": {
             "ResponseMode": {
@@ -7787,7 +7984,7 @@
           ],
           "type": "object"
         },
-        "name": "outline"
+        "name": "outline_file"
       },
       {
         "annotations": {
@@ -7795,7 +7992,7 @@
           "openWorldHint": false,
           "readOnlyHint": true
         },
-        "description": "Prepare or execute a bounded read-only AIRK evidence plan. Supply schema airk.parse.request/1, mode prepare or execute, and exactly one of text, recipe, plan. Explicit plans contain steps {id,tool,args,bind}; public operation names only. Bindings use earlier step IDs and named selectors. At most 6 steps, 12 reads, a 30-second budget checked between reads, 512 KiB. Learned text in this review build returns an inert proposed plan with needs_input; review its arguments and resubmit the explicit plan to execute. Other uncertainty, partial coverage and failures stay explicit. No writes, commands, management, recursive plans or agent reasoning. Works without Explorer. Use response_mode=full for provenance/coverage audits; raw inner evidence retains its full kernel representation.",
+        "description": "Prepare or execute a bounded read-only AIRK evidence plan. Supply schema airk.parse.request/1, mode prepare or execute, and exactly one of text, recipe, plan. Explicit plans contain steps {id,tool,args,bind}; native operation names only, such as symbols or read_file. Bindings use earlier step IDs and named selectors. At most 6 steps, 12 reads, a 30-second budget checked between reads, 512 KiB. Learned text in this review build returns an inert proposed plan with needs_input; review its arguments and resubmit the explicit plan to execute. Other uncertainty, partial coverage and failures stay explicit. No writes, commands, management, recursive plans or agent reasoning. Works without Explorer. Use response_mode=full for provenance/coverage audits; raw inner evidence retains its full kernel representation.",
         "inputSchema": {
           "$defs": {
             "ResponseMode": {
@@ -8051,7 +8248,7 @@
           "openWorldHint": false,
           "readOnlyHint": true
         },
-        "description": "Inspect a specific code or document excerpt after locating it. Read an inclusive 1-based indexed line range from an inventory path; this is the last successful snapshot, not a live filesystem read. For PDF/DOCX/PPTX, use extracted lines within one page/block/slide. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+        "description": "Use when you know the path and lines: from a hit, a citation or the task. Returns an inclusive 1-based indexed line range from the last successful snapshot, the revision citations point to, not a live filesystem read. For PDF/DOCX/PPTX, use extracted lines within one page/block/slide. Next: read_around to widen around one line, outline_file for the file's structure; verify live source before edits. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
         "inputSchema": {
           "$defs": {
             "ResponseMode": {
@@ -8192,7 +8389,7 @@
           ],
           "type": "object"
         },
-        "name": "read_file"
+        "name": "read_indexed_range"
       },
       {
         "annotations": {
@@ -8200,7 +8397,7 @@
           "openWorldHint": false,
           "readOnlyHint": true
         },
-        "description": "Locate exact-case whole-identifier matching lines in retained indexed text, including definitions, strings and comments. Markdown, HTML, scripts and source can all match; scope by path_prefix, exact indexed language or metadata-based evidence_kind for impact work. These are textual candidates, never resolved references. Omit new paging options for legacy index ordering; explicit order=index/path/code_first, filters, cursor, include_files or include_count select bounded pageable scanning. Page file summaries/counts disclose their scope and matching-line unit; incomplete scans never imply an exact corpus total. Consume continuation and check truncation/coverage before concluding no impact; verify live source before edits. Use response_mode=full for provenance/coverage audits.",
+        "description": "Textual occurrences of an exact identifier: use after find_definition to find where it appears. Returns exact-case whole-identifier matching lines in retained indexed text, including definitions, strings and comments. Markdown, HTML, scripts and source can all match; scope by path_prefix, exact indexed language or metadata-based evidence_kind for impact work. These are textual candidates, never resolved references. Omit new paging options for legacy index ordering; explicit order=index/path/code_first, filters, cursor, include_files or include_count select bounded pageable scanning. Page file summaries/counts disclose their scope and matching-line unit; incomplete scans never imply an exact corpus total. Consume continuation and check truncation/coverage before concluding no impact. Next: read_indexed_range or read_around on chosen lines; verify live source before edits. Use response_mode=full for provenance/coverage audits.",
         "inputSchema": {
           "$defs": {
             "EvidenceKind": {
@@ -8376,7 +8573,7 @@
           ],
           "type": "object"
         },
-        "name": "references"
+        "name": "find_references"
       },
       {
         "annotations": {
@@ -8384,7 +8581,7 @@
           "openWorldHint": false,
           "readOnlyHint": true
         },
-        "description": "Investigate bounded incoming/outgoing structural candidates with path scope and 1..3 hops. Written targets such as Type::new or obj.method identify textual caller candidates; a struct symbol ID alone does not prove a complete caller set. Verified type/method suggestions, when available, are navigation candidates rather than resolved associations. Agent Lean/Rich Structure retain supported calls; SCIP assertions are not calls. Check coverage and truncation: absent edges never prove no impact. Use response_mode=full for provenance/coverage audits.",
+        "description": "Use for impact work from a known symbol: returns bounded incoming/outgoing structural candidates with path scope and 1..3 hops. Written targets such as Type::new or obj.method identify textual caller candidates; a struct symbol ID alone does not prove a complete caller set. Verified type/method suggestions, when available, are navigation candidates rather than resolved associations. Agent Lean/Rich Structure retain supported calls; SCIP assertions are not calls. Check coverage and truncation: absent edges never prove no impact. Next: read_indexed_range on candidates, find_references for textual uses. Use response_mode=full for provenance/coverage audits.",
         "inputSchema": {
           "$defs": {
             "ResponseMode": {
@@ -8522,7 +8719,7 @@
           "openWorldHint": false,
           "readOnlyHint": true
         },
-        "description": "Find concepts, code or documents; prose/comments and source can rank together. For a named type/function, prefer symbols first, scoped references for textual uses, then bounded read_file; search supplements that investigation. Scope by literal path_prefix, exact indexed language, metadata-based evidence_kind or exclude_path_prefix; documents alone do not prove application behavior. Omitted mode retains saved hybrid/vector policy; explicit lexical normalizes punctuation and quotes into AND terms; quotes do not enable phrase matching. Lexical candidates use stable-id order, not relevance ranking. Eligible Default search can return lexical evidence during a helper outage; execution records served mode and semantic incompleteness. Explicit vector/hybrid and saved RequireComplete refuse helper outages. Vector/hybrid need the indexed local model. semantic=true aliases vector. Bounded native-definition pointers may accompany identifiers without changing ranking. Focused cited snippets are default; full_chunks requests whole indexed chunks. Read guidance for returned limitations; empty matches alone establish no cause. Check readiness/truncation and use response_mode=full for provenance audits.",
+        "description": "Use for one concept, behavior or phrase when you have no exact identifier or path; prose, comments and code rank together. For a named type or function use find_definition; for a whole task use gather_context. Returns ranked cited snippets (full_chunks for whole indexed chunks) with served mode, readiness and limitations; bounded definition pointers may accompany identifiers. Scope by literal path_prefix, exact indexed language, metadata-based evidence_kind or exclude_path_prefix; documents alone do not prove application behavior. Omitted mode keeps the saved hybrid/vector policy and may serve lexical evidence during a helper outage, recording semantic incompleteness; explicit vector/hybrid and saved RequireComplete refuse the outage. Vector/hybrid need the indexed local model; semantic=true aliases vector. Explicit lexical turns punctuation and quotes into AND terms (no phrase matching) in stable-id order, not relevance. Empty matches alone establish no cause. Next: read_indexed_range or read_around on a hit. Check truncation and use response_mode=full for provenance audits.",
         "inputSchema": {
           "$defs": {
             "EvidenceKind": {
@@ -8591,8 +8788,7 @@
               ]
             },
             "limit": {
-              "default": 10,
-              "format": "uint",
+              "description": "Maximum number of results. Omission lets Search choose the count.",
               "maximum": 100,
               "minimum": 1,
               "type": "integer"
@@ -8696,7 +8892,7 @@
           ],
           "type": "object"
         },
-        "name": "search"
+        "name": "search_passages"
       },
       {
         "annotations": {
@@ -8704,7 +8900,7 @@
           "openWorldHint": false,
           "readOnlyHint": true
         },
-        "description": "Quick version, health and project-index check: counts, publication, source-update state, semantic readiness and configured query_concurrency at frontend admission. Obtain before broad evidence fan-out; lightweight does not mean exempt from bounded admission. Completed same-authority observations superseded by scalar invalidation return successfully with status_observation.superseded and their original publication/time. Successful snapshots may be cached for five seconds; observed_unix_ms, cache_age_ms and cached disclose their age. Allows up to ten seconds for shared cold runtime setup, followed by a two-second observation budget; expiry reports unknown readiness and null evidence. Always skips process diagnostics and editor probes. Call diagnostics for detailed work, runtime versions and Explorer attachment. Counts are saved evidence, not proof that live files match. Does not start indexing or repair.",
+        "description": "Quick version, health and project-index check: counts, publication, source-update state, semantic readiness and configured query_concurrency at frontend admission. Evidence reads run at that concurrency: 16 by default, or 4, 8, 16, 32 or 64 as set in the Management Service; connection channels and worker query slots match it, plus one slot kept for status, so status still answers when every read slot is busy. A read beyond the limit waits in a bounded queue and gets a typed retry reply (retryable, retry_after_ms) when the queue is full or its deadline passes. Obtain before broad evidence fan-out; lightweight does not mean exempt from bounded admission. Completed same-authority observations superseded by scalar invalidation return successfully with status_observation.superseded and their original publication/time. Successful snapshots may be cached for five seconds; observed_unix_ms, cache_age_ms and cached disclose their age. Allows up to ten seconds for shared cold runtime setup, followed by a two-second observation budget; expiry reports unknown readiness and null evidence. Always skips process diagnostics and editor probes. Call diagnostics for detailed work, runtime versions and Explorer attachment. Counts are saved evidence, not proof that live files match. Does not start indexing or repair.",
         "inputSchema": {
           "$defs": {
             "ResponseMode": {
@@ -8754,7 +8950,7 @@
           },
           "type": "object"
         },
-        "name": "status"
+        "name": "index_status"
       },
       {
         "annotations": {
@@ -8762,7 +8958,7 @@
           "openWorldHint": false,
           "readOnlyHint": true
         },
-        "description": "Locate supported written code definitions before broad text search. Exact name is default: Session does not match OwnerSession. Explicit name_match=suffix/contains matches simple/qualified names case-sensitively; omit name to list within indexed language/profile or literal path_prefix. Keep compact discovery for candidates, then request compact=false on a selected scope for rich IDs/details. Consume cursor pages; include_count reports bounded count precision. Does not resolve dynamic/cross-file names. Use code_facts for additional fact categories and response_mode=full for provenance audits.",
+        "description": "Use first for a known type, function or other written definition name, before text search. Exact name is default: Session does not match OwnerSession. Explicit name_match=suffix/contains matches simple/qualified names case-sensitively; omit name to list within indexed language/profile or literal path_prefix. Returns definition locations; keep compact discovery for candidates, then request compact=false on a selected scope for rich IDs/details. Consume cursor pages; include_count reports bounded count precision. Does not resolve dynamic/cross-file names. Next: find_references for uses, read_indexed_range or read_around for the body, code_facts for more fact categories. Use response_mode=full for provenance audits.",
         "inputSchema": {
           "$defs": {
             "NameMatch": {
@@ -8923,7 +9119,7 @@
           },
           "type": "object"
         },
-        "name": "symbols"
+        "name": "find_definition"
       },
       {
         "annotations": {
@@ -10006,7 +10202,7 @@
       },
       {
         "id": "indexing-choices",
-        "text": "Choose evidence detail, vector work and extraction separately. Open native Admin Indexes, inspect the intended index and its settings; Explorer links advanced management to native Admin. The Index detail picker uses essential, agent_lean, balanced and detailed. Inspect airkctl settings and the guarded configure interface for actual extraction settings; preserve adapter overrides and use generated command help for exact inputs. Changing settings is not proof the index has published them; inspect configured/published state and the native job outcome.\nSearch Only (essential): text and citation lookup without rich structured facts. Suitable for known phrases and quotations. Poor fit for requirement/acceptance/table inventories or code relationships. Qualified parsers still run; no proportional PDF/Office conversion speedup is promised.\nAgent Lean (agent_lean): new-collection default, retaining selected declarations, imports, local structure, unresolved calls and useful prose facts. A starting point for Developer/Tester and mixed sources. Broad document inventories and continuity fingerprints are omitted. Existing saved policies retain their semantics; opening a role lens does not rewrite them.\nRich Structure (balanced): broader supported structural/framework/document evidence and declaration continuity. Consider it for architecture/impact or document/table inventory gaps demonstrated in lean output. Detailed (detailed) retains the full existing adapter-supported evidence, including document-unit continuity where implemented. Neither level creates complete semantic resolution; richer detail costs more extraction and retained data.\nVectors are independent: lexical suits exact names, IDs and quotations; vector/hybrid can help conceptual questions if a local model and selected vectors are ready. Querying never downloads models or starts enrichment. Agent Lean's default vector policy skips reviewed lockfiles and minified JS/CSS while retaining lexical evidence; it is not a general generated/vendor/test classifier. Preserve useful tests/specifications and scope semantic exclusions deliberately. Explicit saved vector policies and opt-outs remain authoritative.\nChoose extraction for actual formats. Code/config adapters supply supported syntax, not build execution. Markdown/plain text and text-layer PDF, DOCX, XLSX and PPTX expose different original locations and limitations; ask topic=documents and topic=formats. Scanned PDF/images require explicit local OCR and provisioned assets; raising detail or enabling vectors cannot recover absent text. Adapter overrides cannot expand supported dialects, run macros or recalculate spreadsheets.\nAutomatic watching suits evolving sources. Manual watching suits deliberate snapshots or costly trees; the user requests Index now. Watch off, project Pause, job cancellation and service Stop are distinct. Ordinary source changes usually need ordinary indexing, not repair/rebuild. Source ignores, scan limits, fact/byte budgets and resource admission can reduce coverage independently of detail. Check representative file_info records and native failures before increasing limits.\nAsk the user about purpose, formats, dataset size, machine budget and freshness needs when choosing settings. Validate a proposed policy before saving it, preserve roots/overrides, observe publication completion and compare useful evidence/cost. Do not infer complete coverage or live-source equality from file counts.",
+        "text": "Choose evidence detail, vector work and extraction separately. Open native Admin Indexes, inspect the intended index and its settings; Explorer links advanced management to native Admin. The Index detail picker uses essential, agent_lean, balanced and detailed. Inspect airkctl settings and the guarded configure interface for actual extraction settings; preserve adapter overrides and use generated command help for exact inputs. Changing settings is not proof the index has published them; inspect configured/published state and the native job outcome.\nSearch Only (essential): text and citation lookup without rich structured facts. Suitable for known phrases and quotations. Poor fit for requirement/acceptance/table inventories or code relationships. Qualified parsers still run; no proportional PDF/Office conversion speedup is promised.\nAgent Lean (agent_lean): new-collection default, retaining selected declarations, imports, local structure, unresolved calls, exception handlers and useful prose facts. A starting point for Developer/Tester and mixed sources. Broad document inventories and continuity fingerprints are omitted. Existing saved policies retain their semantics; opening a role lens does not rewrite them.\nRich Structure (balanced): broader supported structural/framework/document evidence and declaration continuity. Consider it for architecture/impact or document/table inventory gaps demonstrated in lean output. Detailed (detailed) retains the full existing adapter-supported evidence, including document-unit continuity where implemented. Neither level creates complete semantic resolution; richer detail costs more extraction and retained data.\nVectors are independent: lexical suits exact names, IDs and quotations; vector/hybrid can help conceptual questions if a local model and selected vectors are ready. Querying never downloads models or starts enrichment. Agent Lean's default vector policy skips reviewed lockfiles and minified JS/CSS while retaining lexical evidence; it is not a general generated/vendor/test classifier. Preserve useful tests/specifications and scope semantic exclusions deliberately. Explicit saved vector policies and opt-outs remain authoritative.\nChoose extraction for actual formats. Code/config adapters supply supported syntax, not build execution. Markdown/plain text and text-layer PDF, DOCX, XLSX and PPTX expose different original locations and limitations; ask topic=documents and topic=formats. Scanned PDF/images require explicit local OCR and provisioned assets; raising detail or enabling vectors cannot recover absent text. Adapter overrides cannot expand supported dialects, run macros or recalculate spreadsheets.\nAutomatic watching suits evolving sources. Manual watching suits deliberate snapshots or costly trees; the user requests Index now. Watch off, project Pause, job cancellation and service Stop are distinct. Ordinary source changes usually need ordinary indexing, not repair/rebuild. Source ignores, scan limits, fact/byte budgets and resource admission can reduce coverage independently of detail. Check representative file_info records and native failures before increasing limits.\nAsk the user about purpose, formats, dataset size, machine budget and freshness needs when choosing settings. Validate a proposed policy before saving it, preserve roots/overrides, observe publication completion and compare useful evidence/cost. Do not infer complete coverage or live-source equality from file counts.",
         "title": "Indexing choices by purpose and source"
       },
       {
@@ -10021,7 +10217,7 @@
       },
       {
         "id": "overview",
-        "text": "AIRK indexes local code and documents and returns bounded evidence with original locations, hashes and exact indexed revision identities. Sources remain read-only.\nOne per-user airk service hosts index owners, source watching and local inference in-process. airkctl owns public commands; VS Code uses one airkctl session per window. Agents connect directly to loopback HTTP MCP with no token; each read names its scope or a workspace default. Stdio MCP and the stable launcher are retired; no resident process runs per index or agent.\nUse status for published readiness, diagnostics for runtime/work observations, and help for documentation. Use topic=topics, topic=commands, command=\"service\" or tool=\"search\" for current guidance and actual schemas.\nInstall and verify the service separately from the extension. Extension activation does not silently install/update/remove the service or register/index folders. Offered automatic installation requires explicit user choice; manual installation and deferral remain available. Set up the index/set, intentionally prepare models/index work, then connect an agent; its reads name their indexes or use the scope applied for their workspace.\nBundled Help is not live configuration, source-freshness proof or platform qualification.",
+        "text": "AIRK indexes local code and documents and returns bounded evidence with original locations, hashes and exact indexed revision identities. Sources remain read-only.\nOne per-user airk service hosts index owners, source watching and local inference in-process. airkctl owns public commands; VS Code uses one airkctl session per window. Agents connect directly to loopback HTTP MCP with no token; each read names its scope or a workspace default. Stdio MCP and the stable launcher are retired; no resident process runs per index or agent.\nUse status for published readiness, diagnostics for runtime/work observations, and help for documentation. Use topic=topics, topic=commands, command=\"service\" or tool=\"search_passages\" for current guidance and actual schemas.\nInstall and verify the service separately from the extension. Extension activation does not silently install/update/remove the service or register/index folders. Offered automatic installation requires explicit user choice; manual installation and deferral remain available. Set up the index/set, intentionally prepare models/index work, then connect an agent; its reads name their indexes or use the scope applied for their workspace.\nBundled Help is not live configuration, source-freshness proof or platform qualification.",
         "title": "What AIRK does"
       },
       {
@@ -10036,7 +10232,7 @@
       },
       {
         "id": "cli",
-        "text": "airkctl is the public service client; airk owns native service/setup roles and has no public user command tree. Use airkctl --help or append --help to an exact command path. Selectors include --service-runtime-dir, --service-project, --root, --data-dir and --collection; reviewed catalog/combined sessions differ from open index/set selection.\nairkctl tools list --json prints actual schemas; airkctl tools help search describes a tool. airkctl tools call airk_help --args '{\"topic\":\"overview\"}' reads guidance through the service without resolving a project. Tool catalog/call reads are online; CLI --help and bundled UI/static Help remain available offline. --args-file avoids shell quoting errors.\nOrdinary online commands may start an exited service using the verified matching pair and honor saved Stop. version, service status/health, lifecycle and offline diagnostics do not automatically start it. Root airkctl status is selected-index evidence and keeps online admission.\nPreserve complete --output json results, error lines, truncation, continuation and retry details. Acceptance is not completion; never replay uncertain mutations with a new identity. Private roles and the tools console are not a general shell.",
+        "text": "airkctl is the public service client; airk owns native service/setup roles and has no public user command tree. Use airkctl --help or append --help to an exact command path. Selectors include --service-runtime-dir, --service-project, --root, --data-dir and --collection; reviewed catalog/combined sessions differ from open index/set selection.\nairkctl tools list --json prints actual schemas; airkctl tools help search_passages describes a tool. airkctl tools call airk_help --args '{\"topic\":\"overview\"}' reads guidance through the service without resolving a project. Tool catalog/call reads are online; CLI --help and bundled UI/static Help remain available offline. --args-file avoids shell quoting errors.\nOrdinary online commands may start an exited service using the verified matching pair and honor saved Stop. version, service status/health, lifecycle and offline diagnostics do not automatically start it. Root airkctl status is selected-index evidence and keeps online admission.\nPreserve complete --output json results, error lines, truncation, continuation and retry details. Acceptance is not completion; never replay uncertain mutations with a new identity. Private roles and the tools console are not a general shell.",
         "title": "CLI scope and invocation"
       },
       {

@@ -86,7 +86,10 @@ fn optional_selectors_preserve_old_requests_and_reject_unknown_modes() {
             ][..],
         ),
     ] {
-        for (catalog, selected) in [(&native, format!("airk_{name}")), (&public, name.into())] {
+        for (catalog, selected) in [
+            (&native, format!("airk_{name}")),
+            (&public, airk_core::tool_names::public_name(name).into()),
+        ] {
             let tool = catalog.iter().find(|tool| tool.name == selected).unwrap();
             let schema = serde_json::to_value(&tool.input_schema).unwrap();
             for field in fields {
@@ -261,7 +264,10 @@ fn native_public_and_workbench_catalogs_share_evidence_limits() {
         for catalog in [&native, &public] {
             let selected = catalog
                 .iter()
-                .find(|entry| entry.name == tool || entry.name == native_name)
+                .find(|entry| {
+                    entry.name == airk_core::tool_names::public_name(tool)
+                        || entry.name == native_name
+                })
                 .unwrap();
             let schema = serde_json::to_value(&selected.input_schema).unwrap();
             for (field, maximum) in [("limit", 100), ("max_bytes", 65536)] {

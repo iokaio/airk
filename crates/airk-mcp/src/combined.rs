@@ -60,9 +60,10 @@ pub fn public_catalog() -> Vec<Tool> {
                     .remove("project");
             }
             if tool.name != "query_scope"
-                && native
-                    .iter()
-                    .any(|entry| entry.name.strip_prefix("airk_") == Some(tool.name.as_ref()))
+                && native.iter().any(|entry| {
+                    airk_core::tool_names::public_name_of_native(&entry.name)
+                        == Some(tool.name.as_ref())
+                })
             {
                 combined_tool(tool)
             } else {
@@ -392,7 +393,7 @@ mod tests {
     fn combined_native_and_public_selector_catalogs_agree() {
         let public = public_catalog();
         for native in catalog() {
-            let public_name = native.name.strip_prefix("airk_").unwrap();
+            let public_name = airk_core::tool_names::public_name_of_native(&native.name).unwrap();
             let public = public.iter().find(|tool| tool.name == public_name).unwrap();
             for key in if public_name == "query_scope" {
                 vec![
@@ -468,7 +469,7 @@ mod limit_per_index_tests {
         }
         let search = public_catalog()
             .into_iter()
-            .find(|tool| tool.name == "search")
+            .find(|tool| tool.name == "search_passages")
             .unwrap();
         assert_eq!(
             search.input_schema["properties"]["limit_per_index"],

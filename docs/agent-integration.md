@@ -31,8 +31,9 @@ The approved source design adds independently enabled **Focus**
 retrieval while Context is off; Context guides bounded evidence gathering.
 Controls and new profiles remain under implementation/qualification.
 
-The `answer` MCP tool gathers contextual evidence for a question and retains
-source receipts, gaps, work and stop reasons. It differs from `context`, which
+The `gather_context` MCP tool gathers contextual evidence for a question and
+retains source receipts, gaps, work and stop reasons. It differs from
+`read_around`, which
 expands lines around an indexed coordinate. Neither model advice nor stage
 enrollment expands the scope a call names or resolves. Inspect the running
 catalog and native status for supported operations and active profiles.
@@ -261,7 +262,7 @@ are not edited.
    - `recovery_required`.
 
 AIRK never claims that a running agent reconnected. Confirm with the agent's
-own MCP controls and a scoped `status` call. The installed-editor journeys for
+own MCP controls and a scoped `index_status` call. The installed-editor journeys for
 this flow are pending; see the [1.8.22 record](releases/release-1.8.22.md).
 
 Both single-index and combined native selections are supported. Reconnect
@@ -463,7 +464,7 @@ Without the Explorer, write the entry and, optionally, a workspace default:
 ```console
 rk agents connect --client codex
 rk scope default --workspace <abs-folder> --set <index-set-name> --index <index-name>
-rk tools call search --workspace <abs-folder> --args '{"query":"…"}'
+rk tools call search_passages --workspace <abs-folder> --args '{"query":"…"}'
 ```
 
 `--index` and `--set` take ids or exact names and replace the folder's whole
@@ -484,7 +485,7 @@ checks and the Admin browser guard remain; see
 
 Retry the actual client's connection after connecting. Hosts can cache
 configuration or environment; use their actual result and refresh controls, without claiming a
-saved file applied it. Require initialization and `tools/list`, then `status`
+saved file applied it. Require initialization and `tools/list`, then `index_status`
 and a scoped read citing an original source path and indexed revision. Deferred
 discovery can delay visibility. A badge, valid config or extension-side probe
 alone does not prove that another agent loaded the connection. Preserve native

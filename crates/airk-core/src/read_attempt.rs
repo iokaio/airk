@@ -18,9 +18,9 @@ pub const MAX_ANSWER_READ_BUDGET: Duration =
 /// actions and the loop's card scoring). Focus methods keep 120,000 ms.
 pub const MAX_ANSWER_ARBITER_REMAINING_MS: u64 = crate::arbiter::answer_loop::MAX_DEADLINE_MS;
 
-/// Whether a public or native tool name is Answer.
+/// Whether a public, operation or native tool name is Answer.
 pub fn is_answer_tool(tool: &str) -> bool {
-    matches!(tool, "airk_answer" | "answer")
+    crate::tool_names::operation(tool) == "answer"
 }
 
 /// The read attempt a transport mints, admits or reaps for one tool call:

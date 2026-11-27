@@ -1991,35 +1991,35 @@ fn enabled_background_watch_retains_idle_service_until_explicitly_disabled() -> 
 /// from producer definitions.
 fn assert_local_agent_catalog_names(tools: &[serde_json::Value]) -> Result<()> {
     let expected = [
-        "answer",
         "capabilities",
         "changes",
         "code_facts",
-        "context",
         "diagnostics",
         "document_facts",
         "draft_plan",
         "draft_search",
         "draft_strategy",
         "file_info",
+        "find_definition",
+        "find_references",
+        "gather_context",
         "get_handoff",
         "get_template",
         "help",
         "imports",
-        "list_files",
+        "index_status",
+        "list_indexed_files",
         "list_scopes",
         "list_templates",
-        "outline",
+        "outline_file",
         "parse",
         "proposal_status",
         "query_scope",
-        "read_file",
-        "references",
+        "read_around",
+        "read_indexed_range",
         "relationships",
-        "search",
-        "status",
+        "search_passages",
         "suggest_view",
-        "symbols",
         "validate_draft",
     ];
     let mut actual = tools
@@ -2115,7 +2115,7 @@ fn probe_https_mcp(service: &common::Service) -> Result<()> {
         let reply = session.request(
             3,
             "tools/call",
-            serde_json::json!({"name":"search","arguments":query}),
+            serde_json::json!({"name":"search_passages","arguments":query}),
         )?;
         let Some(retry) = read_retry::within(&reply["result"], deadline) else {
             break reply;

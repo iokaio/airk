@@ -32,7 +32,7 @@ CLI and MCP output. See [combined reads](combined-reads.md).
 
 | Unified MCP capability | Unified terminal entrypoint | Separate convenience or administrative command |
 |---|---|---|
-| Native operations | `airkctl tools call search`, or the same public name in `tools help`/shell | Direct commands such as `airkctl search` provide convenient flags. Historical `airk_<operation>` aliases remain accepted. |
+| Native operations | `airkctl tools call search_passages`, or the same public name in `tools help`/shell | Direct commands such as `airkctl search` provide convenient flags. Historical `airk_<operation>` aliases remain accepted. |
 | `projects` | `airkctl tools call projects` lists connection-configured bindings | `airkctl projects` lists the selected service registry and is a distinct administrative read. |
 | `list_templates`, `get_template` | `airkctl tools call list_templates` or `airkctl tools call get_template` | `airkctl explorer list-templates/get-template` writes results to a new `--output-file`. |
 | `draft_search`, `draft_strategy`, `draft_plan`, `suggest_view`, `validate_draft` | `airkctl tools call <public-name>` retains the same connection/proposal authority as MCP | Corresponding hyphenated `airkctl explorer` commands produce offline files. Connected proposals require an attached trusted Explorer and user review; neither route executes the proposed work. |

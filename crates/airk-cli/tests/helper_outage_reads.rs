@@ -327,7 +327,7 @@ impl Session {
     fn read(&mut self, id: u64, name: &str, args: Value) -> Result<Value> {
         let deadline = Instant::now() + Duration::from_secs(60);
         loop {
-            self.0.send(json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{"name":name.trim_start_matches("airk_"),"arguments":args}}))?;
+            self.0.send(json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{"name":airk_core::tool_names::public_name_of_native(name).unwrap_or(name),"arguments":args}}))?;
             let reply = self.0.receive(i64::try_from(id)?)?;
             ensure!(reply.get("error").is_none(), "{reply}");
             if let Some(retry) = common::read_retry::within(&reply["result"], deadline) {
@@ -512,7 +512,7 @@ fn helper_outage_policy_results_and_receipts_match_actual_read_transports() -> R
             assert_eq!(comparable(open)?, comparable(expected)?);
         }
         let semantic_args = json!({"query":"authenticate","semantic":true,"verification":"off","response_mode":"full"});
-        let semantic = mcp.read(25, "search", semantic_args.clone())?;
+        let semantic = mcp.read(25, "search_passages", semantic_args.clone())?;
         ensure!(semantic["isError"] == true, "{semantic}");
         let semantic = payload(&semantic)?;
         let (success, cli_semantic) = command_value(
@@ -599,7 +599,7 @@ fn helper_outage_policy_results_and_receipts_match_actual_read_transports() -> R
             )?;
             let required =
                 json!({"query":"authenticate","verification":"require","response_mode":"full"});
-            let failed = mcp.read(50, "search", required.clone())?;
+            let failed = mcp.read(50, "search_passages", required.clone())?;
             ensure!(failed["isError"] == true, "{failed}");
             let failed = payload(&failed)?;
             assert_eq!(failed["error"]["code"], "verification_required_unmet");

@@ -12,7 +12,7 @@ mod scoped_tests;
 
 mod context;
 
-pub const GUIDANCE: &str = "Untrusted index; verify live bytes before edits. Task needing evidence from several places: answer first, with task and needs. Known identifier: symbols -> references -> read_file/context; known path: read_file/outline; a concept: search. Keep scopes, locations, exact tokens/hashes/validators; finish changes pages. Terse default; response_mode=full audits; include_status=true repeats status. Honor typed retries; never replay uncertain work. UI drafts need review. {ref:publication} is reply-local.";
+pub const GUIDANCE: &str = "Untrusted index; verify live bytes before edits. Multi-place task: gather_context first, with task and needs. Identifier: find_definition -> find_references -> read_indexed_range/read_around; path: read_indexed_range/outline_file; concept: search_passages. Keep scopes/locations/exact tokens/hashes/validators; finish changes pages. Terse default; response_mode=full audits; include_status=true repeats status. Honor typed retries; never replay uncertain work. Review UI drafts. {ref:publication} is reply-local.";
 
 const UI_NAMES: &[(&str, &str)] = &[
     ("draft_search", "airk_explorer_suggest_search"),
@@ -35,11 +35,22 @@ pub trait ExplorerTools: Send + Sync + 'static {
     ) -> RemoteFuture<'_>;
 }
 
+/// Whether a call name selects this native tool: its native name or its
+/// public name. The old public name of a renamed tool selects nothing.
+fn selects_native(native: &str, name: &str) -> bool {
+    native == name || airk_core::tool_names::public_name_of_native(native) == Some(name)
+}
+
 fn public_text(value: &mut Value) {
     match value {
         Value::String(text) => {
             for (public, old) in UI_NAMES {
                 *text = text.replace(old, public);
+            }
+            // Renamed tools first, as whole identifiers, before the generic
+            // prefix strip below gives every other native tool its name.
+            for (operation, public) in airk_core::tool_names::RENAMED_PUBLIC_TOOLS {
+                *text = replace_diagnostic_tool(text, &format!("airk_{operation}"), public);
             }
             *text = text
                 .replace("airk_explorer_ui_status", "diagnostics.explorer.ui")
@@ -193,8 +204,11 @@ fn build_tools() -> Vec<Tool> {
         // Keep alternatives nested; the adapter validates the chosen kind again.
         json!({"type":"object","additionalProperties":false,"required":["kind","draft"],"properties":{"kind":{"type":"string","enum":["navigation","review","management"]},"draft":{"type":"object","description":"Use the draft schema matching kind. The editor validates that exact kind before admitting a suggestion.","anyOf":variants}}}), false)));
     result.push(definition("projects", "List only the project bindings configured for this AIRK connection and its default. Use these identifiers to scope evidence and Explorer requests; does not register or switch projects.", json!({"type":"object","additionalProperties":false,"properties":{}}), true));
-    let status = result.iter_mut().find(|t| t.name == "status").unwrap();
-    status.description = Some("Quick version, health and project-index check: counts, publication, source-update state, semantic readiness and configured query_concurrency at frontend admission. Obtain before broad evidence fan-out; lightweight does not mean exempt from bounded admission. Completed same-authority observations superseded by scalar invalidation return successfully with status_observation.superseded and their original publication/time. Successful snapshots may be cached for five seconds; observed_unix_ms, cache_age_ms and cached disclose their age. Allows up to ten seconds for shared cold runtime setup, followed by a two-second observation budget; expiry reports unknown readiness and null evidence. Always skips process diagnostics and editor probes. Call diagnostics for detailed work, runtime versions and Explorer attachment. Counts are saved evidence, not proof that live files match. Does not start indexing or repair.".into());
+    let status = result
+        .iter_mut()
+        .find(|t| t.name == "index_status")
+        .unwrap();
+    status.description = Some("Quick version, health and project-index check: counts, publication, source-update state, semantic readiness and configured query_concurrency at frontend admission. Evidence reads run at that concurrency: 16 by default, or 4, 8, 16, 32 or 64 as set in the Management Service; connection channels and worker query slots match it, plus one slot kept for status, so status still answers when every read slot is busy. A read beyond the limit waits in a bounded queue and gets a typed retry reply (retryable, retry_after_ms) when the queue is full or its deadline passes. Obtain before broad evidence fan-out; lightweight does not mean exempt from bounded admission. Completed same-authority observations superseded by scalar invalidation return successfully with status_observation.superseded and their original publication/time. Successful snapshots may be cached for five seconds; observed_unix_ms, cache_age_ms and cached disclose their age. Allows up to ten seconds for shared cold runtime setup, followed by a two-second observation budget; expiry reports unknown readiness and null evidence. Always skips process diagnostics and editor probes. Call diagnostics for detailed work, runtime versions and Explorer attachment. Counts are saved evidence, not proof that live files match. Does not start indexing or repair.".into());
     let help = result.iter_mut().find(|t| t.name == "help").unwrap();
     help.description = Some("Explain AIRK usage, CLI commands, tool schemas and Explorer workflows. Omit selectors for an overview; query searches bundled guidance, topic_id reads a UI/engine guide, topic reads native guidance, command reads CLI help, and tool reads a public tool schema. Native guides retain prefixed CLI/evidence compatibility names; tools/list and tool selectors describe the unified public catalog. Returns documentation, never project evidence or live health.".into());
     let schema = Arc::make_mut(&mut help.input_schema);
@@ -203,7 +217,7 @@ fn build_tools() -> Vec<Tool> {
         .unwrap()
         .remove("project");
     schema["properties"]["tool"]["description"] = json!(
-        "Exact public MCP tool name, for example search; returns its current description and input schema."
+        "Exact public MCP tool name, for example search_passages; returns its current description and input schema."
     );
     for (key, property) in [
         ("query", json!({"type":"string","maxLength":256})),
@@ -403,9 +417,9 @@ impl Unified {
             && !args.contains_key("topic_id")
             && args.get("tool").is_none_or(|name| {
                 name.as_str().is_some_and(|name| {
-                    crate::local::tools().iter().any(|tool| {
-                        tool.name == name || tool.name.strip_prefix("airk_") == Some(name)
-                    })
+                    crate::local::tools()
+                        .iter()
+                        .any(|tool| selects_native(&tool.name, name))
                 })
             });
         if native_selector {
@@ -502,7 +516,7 @@ impl Unified {
         if let Some(Value::String(name)) = args.get("tool") {
             args.insert(
                 "tool".into(),
-                json!(name.strip_prefix("airk_").unwrap_or(name)),
+                json!(airk_core::tool_names::public_name_of_native(name).unwrap_or(name)),
             );
             let result = serde_json::to_value(crate::help::call_with_catalog(
                 Value::Object(args),
@@ -548,9 +562,9 @@ impl RemoteTools for Unified {
     ) -> RemoteFuture<'_> {
         if let Some(backend) = self.combined_backend()
             && tool != "help"
-            && let Some(native) = crate::local::tools().into_iter().find(|entry| {
-                entry.name == tool || entry.name.strip_prefix("airk_") == Some(tool.as_str())
-            })
+            && let Some(native) = crate::local::tools()
+                .into_iter()
+                .find(|entry| selects_native(&entry.name, &tool))
         {
             if args.contains_key("project") {
                 return Box::pin(async {
@@ -618,7 +632,7 @@ impl RemoteTools for Unified {
         }
         crate::local::tools()
             .iter()
-            .any(|t| t.name == tool || t.name.strip_prefix("airk_") == Some(tool))
+            .any(|t| selects_native(&t.name, tool))
     }
     fn client(&self, client: airk_core::usage::ClientFamily) {
         *self.client.lock().unwrap() = client;
@@ -706,10 +720,11 @@ impl RemoteTools for Unified {
                 };
                 return Ok(self.ui(project, &tool, args).await);
             }
-            // Old names remain callable for saved permissions/scripts, but are never advertised twice.
+            // Native names remain callable for saved permissions/scripts, but are never advertised twice.
+            // The old public name of a renamed tool is not callable (clean rename at 1.9).
             let native = crate::local::tools()
                 .into_iter()
-                .find(|t| t.name == tool || t.name.strip_prefix("airk_") == Some(tool.as_str()));
+                .find(|t| selects_native(&t.name, &tool));
             if let Some(native) = native {
                 if let Some(backend) = self.combined_backend() {
                     if args.contains_key("project") {
@@ -1093,9 +1108,15 @@ mod tests {
 
     #[test]
     fn common_instructions_keep_the_protocol_byte_budget_and_native_names() {
-        for (catalog, instructions) in
-            [("unified", GUIDANCE), ("native", crate::response::GUIDANCE)]
-        {
+        for (catalog, instructions, answer, definition) in [
+            ("unified", GUIDANCE, "gather_context", "find_definition"),
+            (
+                "native",
+                crate::response::GUIDANCE,
+                "airk_answer",
+                "airk_symbols",
+            ),
+        ] {
             // str::len is UTF-8 bytes, matching the actual initialize contract.
             assert!(
                 instructions.len() <= 512,
@@ -1111,10 +1132,25 @@ mod tests {
             // Step 3 guidance: a whole task goes to Answer first, with task
             // and needs; a known identifier or path goes to a direct lookup.
             assert!(
-                instructions.contains("answer first, with task and needs"),
+                instructions.contains(&format!("{answer} first, with task and needs")),
                 "{catalog}"
             );
-            assert!(instructions.contains("symbols ->"), "{catalog}");
+            assert!(
+                instructions.contains(&format!("{definition} ->")),
+                "{catalog}"
+            );
+        }
+        // The public guidance names the renamed public tools (decision 12).
+        for name in [
+            "gather_context",
+            "find_definition",
+            "find_references",
+            "read_indexed_range",
+            "read_around",
+            "outline_file",
+            "search_passages",
+        ] {
+            assert!(GUIDANCE.contains(name), "public name missing: {name}");
         }
         for name in [
             "airk_answer",
@@ -1169,7 +1205,7 @@ mod tests {
                 Some(binding),
                 None,
             )?;
-            for name in ["status", "airk_status"] {
+            for name in ["index_status", "airk_status"] {
                 let result = unified.call(name.into(), Map::new()).await;
                 if expired {
                     let value = body(&result?).expect("typed setup expiry body missing");
@@ -1374,35 +1410,35 @@ mod tests {
     fn one_catalog_has_unique_unprefixed_names_and_honest_effect_annotations() {
         let catalog = tools();
         let expected = [
-            "answer",
             "capabilities",
             "changes",
             "code_facts",
-            "context",
             "diagnostics",
             "document_facts",
             "draft_plan",
             "draft_search",
             "draft_strategy",
             "file_info",
+            "find_definition",
+            "find_references",
+            "gather_context",
             "get_handoff",
             "get_template",
             "help",
             "imports",
-            "list_files",
+            "index_status",
+            "list_indexed_files",
             "list_templates",
-            "outline",
+            "outline_file",
             "parse",
             "projects",
             "proposal_status",
             "query_scope",
-            "read_file",
-            "references",
+            "read_around",
+            "read_indexed_range",
             "relationships",
-            "search",
-            "status",
+            "search_passages",
             "suggest_view",
-            "symbols",
             "validate_draft",
         ];
         assert_eq!(catalog.len(), 30);
@@ -1444,7 +1480,7 @@ mod tests {
     async fn no_editor_does_not_block_index_reads_and_status_keeps_availability_separate() {
         let (u, a, _, _) = fixture(false, false);
         assert_eq!(
-            call(&u, "status", json!({"unexpected":true})).await["isError"],
+            call(&u, "index_status", json!({"unexpected":true})).await["isError"],
             true
         );
         assert!(a.calls.lock().unwrap().is_empty());
@@ -1455,7 +1491,7 @@ mod tests {
             body(&status).unwrap()["explorer"]["error"]["code"],
             "UI_UNAVAILABLE"
         );
-        let search = call(&u, "search", json!({"query":"fixture"})).await;
+        let search = call(&u, "search_passages", json!({"query":"fixture"})).await;
         assert_eq!(search["isError"], false);
         let calls = a.calls.lock().unwrap();
         assert_eq!(calls[1].0, "airk_search");
@@ -1464,7 +1500,7 @@ mod tests {
     #[tokio::test]
     async fn status_never_calls_the_editor_and_diagnostics_does() {
         let (u, _, _, ui) = fixture(false, true);
-        let quick = call(&u, "status", json!({})).await;
+        let quick = call(&u, "index_status", json!({})).await;
         assert!(body(&quick).unwrap().get("explorer").is_none());
         assert!(ui.calls.lock().unwrap().is_empty());
         for args in [
@@ -1472,7 +1508,7 @@ mod tests {
             json!({"include_status":true}),
         ] {
             assert!(
-                body(&call(&u, "status", args.clone()).await)
+                body(&call(&u, "index_status", args.clone()).await)
                     .unwrap()
                     .get("explorer")
                     .is_none()
@@ -1490,10 +1526,10 @@ mod tests {
     #[tokio::test]
     async fn legacy_and_public_status_share_schema_response_and_refusal() {
         let (u, native, _, ui) = fixture(false, true);
-        let public = call(&u, "status", json!({})).await;
+        let public = call(&u, "index_status", json!({})).await;
         let legacy = call(&u, "airk_status", json!({})).await;
         assert_eq!(public, legacy);
-        for name in ["status", "airk_status"] {
+        for name in ["index_status", "airk_status"] {
             assert_eq!(
                 call(&u, name, json!({"unexpected":true})).await["isError"],
                 true
@@ -1504,7 +1540,7 @@ mod tests {
             .busy_status
             .store(true, std::sync::atomic::Ordering::SeqCst);
         assert_eq!(
-            call(&u, "status", json!({})).await,
+            call(&u, "index_status", json!({})).await,
             call(&u, "airk_status", json!({})).await
         );
         assert!(ui.calls.lock().unwrap().is_empty());
@@ -1534,7 +1570,7 @@ mod tests {
         native
             .stall_status
             .store(true, std::sync::atomic::Ordering::SeqCst);
-        let expired = body(&call(&u, "status", json!({})).await).unwrap();
+        let expired = body(&call(&u, "index_status", json!({})).await).unwrap();
         assert_eq!(expired["index_error"]["code"], "status_timeout");
         native
             .stall_status
@@ -1542,7 +1578,7 @@ mod tests {
         native
             .busy_status
             .store(true, std::sync::atomic::Ordering::SeqCst);
-        let refused = call(&u, "status", json!({})).await;
+        let refused = call(&u, "index_status", json!({})).await;
         assert_eq!(refused["isError"], true);
         let hint = body(&refused).unwrap();
         assert_eq!(hint["error"]["code"], "direct_query_admission");
@@ -1559,7 +1595,7 @@ mod tests {
         native
             .busy_status
             .store(false, std::sync::atomic::Ordering::SeqCst);
-        let recovered = body(&call(&u, "status", json!({})).await).unwrap();
+        let recovered = body(&call(&u, "index_status", json!({})).await).unwrap();
         assert_eq!(recovered["index_state"], "available");
         assert_eq!(recovered["project"], "aa".repeat(32));
         assert_eq!(native.calls.lock().unwrap().len(), 3);
@@ -1574,7 +1610,7 @@ mod tests {
             .store(true, std::sync::atomic::Ordering::SeqCst);
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(10),
-            call(&u, "status", json!({})),
+            call(&u, "index_status", json!({})),
         )
         .await
         .expect("quick status must retain its bounded deadline");
@@ -1594,7 +1630,7 @@ mod tests {
             .stall_status
             .store(false, std::sync::atomic::Ordering::SeqCst);
         assert_eq!(
-            body(&call(&u, "status", json!({})).await).unwrap()["index_state"],
+            body(&call(&u, "index_status", json!({})).await).unwrap()["index_state"],
             "available"
         );
         assert!(ui.calls.lock().unwrap().is_empty());
@@ -1610,14 +1646,14 @@ mod tests {
             json!({"query":"fixture"}),
             json!({"query":"fixture","project":"cc".repeat(32)}),
         ] {
-            assert_eq!(call(&u, "search", args).await["isError"], true);
+            assert_eq!(call(&u, "search_passages", args).await["isError"], true);
         }
         assert!(a.calls.lock().unwrap().is_empty());
         assert!(b.calls.lock().unwrap().is_empty());
         assert_eq!(
             call(
                 &u,
-                "search",
+                "search_passages",
                 json!({"query":"fixture","project":"bb".repeat(32)})
             )
             .await["isError"],
@@ -1666,7 +1702,12 @@ mod tests {
         let schema: Value = serde_json::from_str(help["content"].as_str().unwrap()).unwrap();
         assert_eq!(schema["name"], "draft_search");
         assert_eq!(
-            call(&u, "help", json!({"query":"repair","tool":"search"})).await["isError"],
+            call(
+                &u,
+                "help",
+                json!({"query":"repair","tool":"search_passages"})
+            )
+            .await["isError"],
             true
         );
         call(&u, "help", json!({"query":"repair"})).await;
@@ -1674,10 +1715,34 @@ mod tests {
         assert_eq!(ui.calls.lock().unwrap()[0].1, "airk_explorer_help_search");
         call(&u, "airk_search", json!({"query":"fixture"})).await;
         assert_eq!(a.calls.lock().unwrap()[0].0, "airk_search");
+        // Clean rename at 1.9 (decision 12): an old public name is unknown.
+        for old in [
+            "answer",
+            "search",
+            "symbols",
+            "references",
+            "read_file",
+            "context",
+            "outline",
+            "list_files",
+            "status",
+        ] {
+            let refused = call(&u, old, json!({"query":"fixture"})).await;
+            assert_eq!(
+                body(&refused).unwrap()["error"]["code"],
+                "UNKNOWN_TOOL",
+                "{old}"
+            );
+        }
         call(&u, "airk_explorer_ui_status", json!({})).await;
         assert_eq!(ui.calls.lock().unwrap()[1].1, "airk_explorer_ui_status");
         for detail in ["lean", "rich"] {
-            let native = call(&u, "help", json!({"tool":"search","reply_detail":detail})).await;
+            let native = call(
+                &u,
+                "help",
+                json!({"tool":"search_passages","reply_detail":detail}),
+            )
+            .await;
             assert_ne!(native["isError"], true, "{native}");
             let guidance = call(&u, "help", json!({"query":"repair","reply_detail":detail})).await;
             assert_ne!(guidance["isError"], true, "{guidance}");
@@ -1710,12 +1775,12 @@ mod tests {
     async fn public_help_preserves_canonical_native_qualified_selectors_and_ui_conflicts() {
         let (u, native, _, ui) = fixture(false, true);
         for topic in ["tools", "TOOLS", "mcp", "MCP"] {
-            for tool in ["search", "airk_search"] {
+            for tool in ["search_passages", "airk_search"] {
                 let args =
                     json!({"topic":topic,"tool":tool,"max_bytes":32768,"response_mode":"full"});
                 let actual = call(&u, "help", args).await;
                 let expected = serde_json::to_value(crate::help::call_with_catalog(
-                    json!({"topic":topic,"tool":"search","max_bytes":32768,"response_mode":"full"}),
+                    json!({"topic":topic,"tool":"search_passages","max_bytes":32768,"response_mode":"full"}),
                     tools(),
                 ))
                 .unwrap();
@@ -1726,8 +1791,13 @@ mod tests {
                     serde_json::from_str(value["content"].as_str().unwrap()).unwrap();
                 assert_eq!(
                     supplied,
-                    serde_json::to_value(tools().into_iter().find(|t| t.name == "search").unwrap())
-                        .unwrap()
+                    serde_json::to_value(
+                        tools()
+                            .into_iter()
+                            .find(|t| t.name == "search_passages")
+                            .unwrap()
+                    )
+                    .unwrap()
                 );
             }
         }
@@ -1736,8 +1806,8 @@ mod tests {
             json!({"topic":"COMMANDS","command":"tools list"}),
             json!({"topic":"TOOL_SELECTION"}),
             json!({"topic":"overview","command":"tools list"}),
-            json!({"topic":"commands","tool":"search"}),
-            json!({"command":"tools list","tool":"search"}),
+            json!({"topic":"commands","tool":"search_passages"}),
+            json!({"command":"tools list","tool":"search_passages"}),
         ] {
             let mut projected = args.clone();
             let expected = if projected.get("tool").is_some() {
@@ -1761,7 +1831,7 @@ mod tests {
         }
         for args in [
             json!({"query":"repair","topic_id":"intro"}),
-            json!({"query":"repair","topic":"tools","tool":"search"}),
+            json!({"query":"repair","topic":"tools","tool":"search_passages"}),
             json!({"topic_id":"intro","command":"tools list"}),
         ] {
             let rejected = call(&u, "help", args).await;
@@ -1802,7 +1872,7 @@ mod tests {
         let schema: Value = serde_json::from_str(&content).unwrap();
         assert_eq!(schema["name"], "draft_strategy");
         assert_eq!(
-            call(&u, "help", json!({"tool":"search","max_bytes":1})).await["isError"],
+            call(&u, "help", json!({"tool":"search_passages","max_bytes":1})).await["isError"],
             true
         );
         assert!(native.calls.lock().unwrap().is_empty());

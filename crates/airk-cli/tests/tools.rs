@@ -134,7 +134,10 @@ fn tools_help_works_without_a_workspace_and_exposes_live_schemas() {
             .contains("--client <CLIENT>")
     );
     assert!(!root.exists() && !state.exists());
-    let status = tools.iter().find(|tool| tool["name"] == "status").unwrap();
+    let status = tools
+        .iter()
+        .find(|tool| tool["name"] == "index_status")
+        .unwrap();
     assert!(
         status["description"]
             .as_str()
@@ -150,7 +153,10 @@ fn tools_help_works_without_a_workspace_and_exposes_live_schemas() {
         );
         assert_eq!(&help, tool);
     }
-    let search = tools.iter().find(|t| t["name"] == "search").unwrap();
+    let search = tools
+        .iter()
+        .find(|t| t["name"] == "search_passages")
+        .unwrap();
     assert_eq!(search["inputSchema"]["properties"]["limit"]["default"], 10);
     let output = command(&root, &state)
         .args(["tools", "help", "airk_search"])
@@ -2824,7 +2830,7 @@ fn airkctl_tools_shell_matches_airk() -> anyhow::Result<()> {
         .as_array()
         .unwrap()
         .iter()
-        .find(|tool| tool["name"] == "airk_search" || tool["name"] == "search")
+        .find(|tool| tool["name"] == "airk_search" || tool["name"] == "search_passages")
         .unwrap();
     for (name, native, flags) in [(
         "project",

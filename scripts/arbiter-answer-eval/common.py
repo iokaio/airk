@@ -20,6 +20,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import tool_names
+
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parents[1]
 DEFAULT_R = REPO_ROOT / "artifacts" / "v190" / "final-plan" / "exec-20261116T052942Z" / "answer-eval-r1"
@@ -416,11 +418,13 @@ def load_catalog(path: Path) -> dict[str, dict]:
         schema = tool.get("inputSchema") or tool.get("input_schema") or tool.get("parameters") or {"type": "object"}
         tools[name] = {"name": name, "description": tool.get("description", ""), "inputSchema": schema,
                        "catalog_name": name}
-    # The CLI's `tools list --json` names tools without the airk_ prefix (answer, search, ...) and
-    # `tools call` accepts both spellings; the harness uses the prefixed names throughout.
+    # The CLI's `tools list --json` names tools by their public names (search before 1.9,
+    # search_passages from 1.9) and `tools call` also accepts the native name; the harness uses the
+    # native names throughout. tool_names maps either image's public names to the native name.
     for name, tool in list(tools.items()):
-        if not name.startswith("airk_") and "airk_" + name not in tools:
-            tools["airk_" + name] = dict(tool, name="airk_" + name)
+        native = tool_names.native(name)
+        if native != name and native not in tools:
+            tools[native] = dict(tool, name=native)
     return tools
 
 

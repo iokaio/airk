@@ -168,35 +168,35 @@ fn assert_query_scope_metadata_tool(tools: &[Value], name: &str, transport_proje
 /// catalog without `projects`, plus `list_scopes`. Independently listed.
 fn assert_local_mcp_catalog_names(tools: &[Value]) {
     let expected = [
-        "answer",
         "capabilities",
         "changes",
         "code_facts",
-        "context",
         "diagnostics",
         "document_facts",
         "draft_plan",
         "draft_search",
         "draft_strategy",
         "file_info",
+        "find_definition",
+        "find_references",
+        "gather_context",
         "get_handoff",
         "get_template",
         "help",
         "imports",
-        "list_files",
+        "index_status",
+        "list_indexed_files",
         "list_scopes",
         "list_templates",
-        "outline",
+        "outline_file",
         "parse",
         "proposal_status",
         "query_scope",
-        "read_file",
-        "references",
+        "read_around",
+        "read_indexed_range",
         "relationships",
-        "search",
-        "status",
+        "search_passages",
         "suggest_view",
-        "symbols",
         "validate_draft",
     ];
     let mut actual = tools
@@ -296,7 +296,7 @@ impl Session {
         arguments: Value,
         deadline: std::time::Instant,
     ) -> anyhow::Result<Value> {
-        let name = name.strip_prefix("airk_").unwrap_or(name);
+        let name = airk_core::tool_names::public_name_of_native(name).unwrap_or(name);
         self.transport.get_mut().unwrap().request_until(
             i64::try_from(id)?,
             "tools/call",
@@ -1014,7 +1014,7 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
         stable(&mut cli);
         assert_eq!(mcp, cli);
     }
-    let direct = decode(session.read_retry(4, "status", json!({"response_mode":"full"}))?)?;
+    let direct = decode(session.read_retry(4, "index_status", json!({"response_mode":"full"}))?)?;
     assert_eq!(direct["query_concurrency"], 16);
     // native read: only this single refused status read can repeat with its explicit receipt.
     // The evidence plan above still executes once, without whole-plan replay.

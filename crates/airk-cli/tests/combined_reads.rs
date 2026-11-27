@@ -2003,7 +2003,11 @@ impl McpSession {
         let (stripped, scope) = open_read_arguments(arguments, &self.transport.scope)?;
         let mut named = stripped.clone();
         named["index_ids"] = json!(scope.index_ids);
-        let wire = self.call(id, tool.strip_prefix("airk_").unwrap_or(tool), named)?;
+        let wire = self.call(
+            id,
+            airk_core::tool_names::public_name_of_native(tool).unwrap_or(tool),
+            named,
+        )?;
         ensure!(wire.get("error").is_none(), "{label}: MCP failed: {wire}");
         let piped = pipe_read(f, scope.open_selection(), tool, &stripped)
             .await?
@@ -2191,9 +2195,9 @@ async fn actual_native_cli_and_mcp_preserve_shared_index_scope_and_complete_resu
     // whole); it takes the open read path, so it compares with the same open
     // read through the pipe.
     let mut mcp = McpSession::start(&f)?;
-    let reply = mcp.call(2, "search", arguments.clone())?;
+    let reply = mcp.call(2, "search_passages", arguments.clone())?;
     ensure!(reply.get("error").is_none(), "MCP failed: {reply}");
-    let open = mcp.pipe(&f, "search", &arguments).await?;
+    let open = mcp.pipe(&f, "search_passages", &arguments).await?;
     assert_parity(
         "full MCP open result",
         &body(&open)?,
@@ -2205,12 +2209,12 @@ async fn actual_native_cli_and_mcp_preserve_shared_index_scope_and_complete_resu
         .context("MCP tools missing")?;
     let search = tools
         .iter()
-        .find(|tool| tool["name"] == "search")
+        .find(|tool| tool["name"] == "search_passages")
         .context("search catalog missing")?;
     let local_catalog = serde_json::to_value(
         airk_mcp::open::local_catalog()
             .into_iter()
-            .find(|tool| tool.name == "search")
+            .find(|tool| tool.name == "search_passages")
             .context("local search catalog missing")?,
     )?;
     assert_eq!(
@@ -4027,35 +4031,35 @@ async fn exposed_code_facts_preserve_retained_producer_kind_and_language_labels(
 
 // Current-only catalog coverage: docs/split/contracts.md, retired U95 comparison.
 const CURRENT_PUBLIC_TOOL_NAMES: [&str; 30] = [
-    "answer",
     "capabilities",
     "changes",
     "code_facts",
-    "context",
     "diagnostics",
     "document_facts",
     "draft_plan",
     "draft_search",
     "draft_strategy",
     "file_info",
+    "find_definition",
+    "find_references",
+    "gather_context",
     "get_handoff",
     "get_template",
     "help",
     "imports",
-    "list_files",
+    "index_status",
+    "list_indexed_files",
     "list_templates",
-    "outline",
+    "outline_file",
     "parse",
     "projects",
     "proposal_status",
     "query_scope",
-    "read_file",
-    "references",
+    "read_around",
+    "read_indexed_range",
     "relationships",
-    "search",
-    "status",
+    "search_passages",
     "suggest_view",
-    "symbols",
     "validate_draft",
 ];
 
@@ -4501,7 +4505,7 @@ async fn airkctl_combined_reads_match_current_native_handlers() -> Result<()> {
         .as_array()
         .unwrap()
         .iter()
-        .find(|tool| tool["name"] == "search")
+        .find(|tool| tool["name"] == "search_passages")
         .context("canonical Search definition")?;
     let mut failures = Vec::new();
     assert_eq!(
@@ -4884,14 +4888,14 @@ async fn tokenless_https_reads_name_their_scope_or_a_workspace_default() -> Resu
     let catalog = mcp.request(2, "tools/list", json!({}))?;
     let names = listed_tools(&catalog)?;
     ensure!(
-        names.contains(&"list_scopes".to_owned()) && names.contains(&"search".to_owned()),
+        names.contains(&"list_scopes".to_owned()) && names.contains(&"search_passages".to_owned()),
         "{catalog}"
     );
     let search = catalog["result"]["tools"]
         .as_array()
         .context("tools")?
         .iter()
-        .find(|tool| tool["name"] == "search")
+        .find(|tool| tool["name"] == "search_passages")
         .context("search tool")?;
     let properties = &search["inputSchema"]["properties"];
     ensure!(
@@ -4908,21 +4912,21 @@ async fn tokenless_https_reads_name_their_scope_or_a_workspace_default() -> Resu
         changed
     };
     // No scope: refused, and the refusal says how to name one.
-    let unscoped = mcp.call(3, "search", arguments.clone())?;
+    let unscoped = mcp.call(3, "search_passages", arguments.clone())?;
     assert_eq!(
         unscoped["result"]["structuredContent"]["error"]["code"], "scope_required",
         "{unscoped}"
     );
     // A named index: the same complete read through MCP and the pipe.
     let index = f.indexes[0].to_string();
-    let named = mcp.call(4, "search", with("index_ids", json!([index])))?;
+    let named = mcp.call(4, "search_passages", with("index_ids", json!([index])))?;
     ensure!(named["result"]["isError"] != true, "{named}");
     let named_body = body(&named["result"])?;
     assert_eq!(named_body["read_scope"]["source"], "named", "{named_body}");
     let piped = pipe_read(
         &f,
         open_selection(&[index.as_str()], &[]),
-        "search",
+        "search_passages",
         &arguments,
     )
     .await?
@@ -4956,7 +4960,7 @@ async fn tokenless_https_reads_name_their_scope_or_a_workspace_default() -> Resu
         "{stored}"
     );
     let nested = format!("{folder}/nested/deeper");
-    let defaulted = mcp.call(5, "search", with("workspace", json!(nested)))?;
+    let defaulted = mcp.call(5, "search_passages", with("workspace", json!(nested)))?;
     ensure!(defaulted["result"]["isError"] != true, "{defaulted}");
     let defaulted_body = body(&defaulted["result"])?;
     assert_eq!(defaulted_body["read_scope"]["source"], "workspace_default");
@@ -4981,7 +4985,7 @@ async fn tokenless_https_reads_name_their_scope_or_a_workspace_default() -> Resu
         &[
             "tools",
             "call",
-            "search",
+            "search_passages",
             "--args",
             &arguments_text,
             "--workspace",
@@ -5012,7 +5016,7 @@ async fn tokenless_https_reads_name_their_scope_or_a_workspace_default() -> Resu
         serde_json::from_str::<Value>(&stdout)?["entries"],
         json!([])
     );
-    let cleared = mcp.call(7, "search", with("workspace", json!(nested)))?;
+    let cleared = mcp.call(7, "search_passages", with("workspace", json!(nested)))?;
     assert_eq!(
         cleared["result"]["structuredContent"]["error"]["code"], "scope_required",
         "{cleared}"
@@ -5735,7 +5739,7 @@ async fn current_answer_single_index_preserves_complete_pipe_cli_and_https_mcp_r
     let reply = mcp.request(
         2,
         "tools/call",
-        json!({"name":"answer","arguments":arguments}),
+        json!({"name":"gather_context","arguments":arguments}),
     )?;
     ensure!(
         reply.get("error").is_none(),
@@ -6149,7 +6153,7 @@ async fn current_answer_many_and_open_keep_complete_cli_pipe_and_https_mcp_packe
     let reply = mcp.request(
         2,
         "tools/call",
-        json!({"name":"answer","arguments":arguments}),
+        json!({"name":"gather_context","arguments":arguments}),
     )?;
     ensure!(
         reply.get("error").is_none(),

@@ -34,7 +34,7 @@ fn native_read(name: &str, native: &[Tool]) -> bool {
     name != "help"
         && native
             .iter()
-            .any(|tool| tool.name.strip_prefix("airk_") == Some(name))
+            .any(|tool| airk_core::tool_names::public_name_of_native(&tool.name) == Some(name))
 }
 
 /// U110: the `workspace` argument of the local agent session.
@@ -156,7 +156,10 @@ mod tests {
             let selected = SELECTORS.iter().all(|key| keys.contains(&(*key).into()));
             assert_eq!(selected, native_read(&tool.name, &native), "{}", tool.name);
         }
-        let search = local.iter().find(|tool| tool.name == "search").unwrap();
+        let search = local
+            .iter()
+            .find(|tool| tool.name == "search_passages")
+            .unwrap();
         assert_eq!(
             search.input_schema["properties"]["index_ids"]["maxItems"],
             32
@@ -175,7 +178,7 @@ mod tests {
         }
         let mut original = public
             .into_iter()
-            .find(|tool| tool.name == "search")
+            .find(|tool| tool.name == "search_passages")
             .unwrap();
         Arc::make_mut(&mut original.input_schema)["properties"]
             .as_object_mut()
@@ -191,7 +194,12 @@ mod tests {
     fn the_local_catalog_requires_a_scope_and_takes_a_workspace() {
         let local = catalog_names_with_workspace();
         // Literal expectations: the evidence reads and the list tool.
-        for name in ["search", "read_file", "symbols", LIST_SCOPES] {
+        for name in [
+            "search_passages",
+            "read_indexed_range",
+            "find_definition",
+            LIST_SCOPES,
+        ] {
             assert!(local.contains(&name.to_owned()), "{name}: {local:?}");
             assert!(takes_workspace(name), "{name}");
         }
@@ -199,7 +207,7 @@ mod tests {
         assert!(!takes_workspace("help"));
         let search = local_catalog()
             .into_iter()
-            .find(|tool| tool.name == "search")
+            .find(|tool| tool.name == "search_passages")
             .unwrap();
         let described = |key: &str| {
             search.input_schema["properties"][key]["description"]

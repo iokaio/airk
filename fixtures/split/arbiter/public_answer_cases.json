@@ -391,6 +391,6 @@
   },
   "maximum_question_utf8_bytes": 16384,
   "native_tool": "airk_answer",
-  "public_tool": "answer",
+  "public_tool": "gather_context",
   "schema": "airk.arbiter.public-answer-cases/1"
 }

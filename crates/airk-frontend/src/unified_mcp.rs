@@ -788,7 +788,7 @@ impl RemoteTools for Native {
         context: airk_mcp::read_attempt::ReadAttemptContext,
     ) -> RemoteFuture<'_> {
         Box::pin(async move {
-            if matches!(tool.as_str(), "status" | "airk_status")
+            if airk_core::tool_names::operation(&tool) == "status"
                 && let Some(selection) = self.backend.combined_scope()
             {
                 if let Some(install) = &self.install {

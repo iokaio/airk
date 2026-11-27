@@ -124,17 +124,15 @@ fn answer_with_catalog(
             .iter()
             .find(|entry| entry.name == *tool)
             .or_else(|| {
-                if let Some(public) = tool.strip_prefix("airk_") {
-                    // One known compatibility prefix only; never recursively
-                    // strip a malformed or unknown tool name.
-                    (!public.starts_with("airk_"))
-                        .then(|| tools.iter().find(|entry| entry.name == public))
-                        .flatten()
+                // One native/public mapping only; never recursively strip a
+                // malformed or unknown tool name. The old public name of a
+                // renamed tool selects nothing.
+                let other = if tool.starts_with("airk_") {
+                    airk_core::tool_names::public_name_of_native(tool).map(str::to_owned)
                 } else {
-                    tools
-                        .iter()
-                        .find(|entry| entry.name.strip_prefix("airk_") == Some(tool.as_str()))
-                }
+                    airk_core::tool_names::native_name_of_public(tool)
+                };
+                other.and_then(|name| tools.iter().find(|entry| entry.name == name))
             })
             .ok_or("unknown_mcp_tool")?;
         let content =
@@ -315,7 +313,7 @@ mod tests {
             .find(|t| t.name == "airk_search")
             .unwrap();
         let mut public = native.clone();
-        public.name = "search".into();
+        public.name = "search_passages".into();
         public.description = Some("Explicit public catalog entry".into());
         for catalog in [vec![native.clone()], vec![public.clone()]] {
             let exact = catalog[0].name.to_string();
@@ -324,7 +322,7 @@ mod tests {
                 Some(catalog.clone()),
             )
             .unwrap();
-            for name in ["search", "airk_search"] {
+            for name in ["search_passages", "airk_search"] {
                 assert_eq!(
                     answer_with_catalog(
                         args(json!({"tool":name,"max_bytes":32768})),
@@ -334,7 +332,8 @@ mod tests {
                     expected
                 );
             }
-            for name in ["airk_airk_search", "unknown", "airk_unknown"] {
+            // The old public name of a renamed tool is not callable at 1.9.
+            for name in ["search", "airk_airk_search", "unknown", "airk_unknown"] {
                 assert_eq!(
                     answer_with_catalog(args(json!({"tool":name})), Some(catalog.clone()))
                         .unwrap_err(),

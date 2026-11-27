@@ -31,10 +31,10 @@ test('A7 Workbench custom request matches the actual Rust public Answer case and
     const root=path.resolve(__dirname,'../../../..');
     const native=JSON.parse(await fs.readFile(path.join(root,'fixtures/split/arbiter/public_answer_cases.json'),'utf8'));
     assert.equal(native.schema,'airk.arbiter.public-answer-cases/1');
-    assert.equal(native.public_tool,'answer');assert.equal(native.native_tool,'airk_answer');
+    assert.equal(native.public_tool,'gather_context');assert.equal(native.native_tool,'airk_answer');
     assert.equal(native.maximum_question_utf8_bytes,16384);
     const manifest=JSON.parse(await fs.readFile(path.join(root,'packages/ui/generated/help-manifest.json'),'utf8'));
-    assert.deepEqual(manifest.tools.find((tool:{name:string})=>tool.name==='answer').inputSchema,native.input_schema,'the complete native public schema is retained without projection');
+    assert.deepEqual(manifest.tools.find((tool:{name:string})=>tool.name==='gather_context').inputSchema,native.input_schema,'the complete native public schema is retained without projection');
     const example=native.examples.find((row:{name:string})=>row.name==='complete_native_request');
     assert.equal(example.accepted,true);
     const f=fixture();

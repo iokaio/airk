@@ -35,8 +35,8 @@ test('Answer alone runs to its Rust-emitted 600000 ms ceiling plus the same 5000
     assert.equal(ANSWER_DEFAULT_DEADLINE_MS, fixture.answer_default_deadline_ms);
     assert.equal(ANSWER_OPERATION_DEADLINE_MS, fixture.answer_operation_deadline_ms);
     assert.equal(ANSWER_TRANSPORT_DEADLINE_MS, fixture.answer_transport_deadline_ms);
-    for (const tool of ['airk_answer', 'answer']) { assert.ok(isAnswerTool(tool)); assert.equal(transportDeadlineFor(tool), 605000); }
-    for (const tool of ['airk_search', 'search', 'airk_answers', undefined]) { assert.ok(!isAnswerTool(tool)); assert.equal(transportDeadlineFor(tool), 125000); }
+    for (const tool of ['airk_answer', 'answer', 'gather_context']) { assert.ok(isAnswerTool(tool)); assert.equal(transportDeadlineFor(tool), 605000); }
+    for (const tool of ['airk_search', 'search', 'search_passages', 'airk_answers', undefined]) { assert.ok(!isAnswerTool(tool)); assert.equal(transportDeadlineFor(tool), 125000); }
     assert.equal(invokeDeadlineLimitFor(['tools', 'call', 'airk_answer', '--args', '{}']), 605000);
     assert.equal(invokeDeadlineLimitFor(['tools', 'call', 'airk_search', '--args', '{}']), 125000);
     assert.equal(invokeDeadlineLimitFor(['version']), 125000);
