@@ -1,72 +1,203 @@
-# Arbiter research and attribution
+# Arbiter
 
-Arbiter is AIRK's optional local evidence/answer capability. See the
-[operator guide](user-guide.md), [implementation plan](final-plan.md) and
-[execution ledger](../simplify/one-process-ledger.md) for behavior and observed
-qualification. The selected publisher models, historical AIRK-trained candidates
-and proposed research datasets have separate identities. Attribution is not a
-claim of training admission, model quality, independent held-out evidence or
-release qualification.
+Arbiter is AIRK’s optional local model capability for gathering cited evidence
+from indexed sources. MiniLM retrieves candidates, Focus can rerank them, and
+Arbiter, the Context model, can assess what is missing and choose further reads
+within the caller’s scope and budget. The MCP `answer` tool returns an evidence
+packet for the calling agent to use. Gather Context is the name used in the
+current design for that workflow. See the [operator guide](user-guide.md) for
+setup and model controls.
 
-## Windows CUDA completion research
+## Development history
 
-The development index census, source checks and follow-up Search replay
-are available separately for [Bookbuilder](windows-index-research-bookbuilder.md)
-and [Munarium](windows-index-research-munarium.md). The
-[completion plan](completion-plan.md) records qualification and review gates.
-For the Windows review, [Claude's retrieval analysis](retrieval-strategy-anthropic.md)
-traces the 20 development tasks with ordinary source tools, maps each step to
-today's AIRK reads and proposes how to close the gaps. It is design input,
-not evaluation evidence.
+This history follows the split branches, the Answer-loop integration branches,
+and `feat/arbiter-final` through `26fbdc93` (26 November 2026). Commit IDs
+mark milestones within each batch.
 
-## Device and precision controls
+### 1. From semantic retrieval to local evidence assessment · 28 October–15 November
 
-The Service page separates Focus/Context model choice from execution variants.
-Each stage has **Auto / CPU** device policy and **Auto / FP32 / FP16** GPU
-precision preferences, independent enablement and explicit index consent.
-Selecting a model changes a draft; downloads remain separate explicit actions.
+AIRK 1.6.0 shipped bundled INT8 semantic retrieval (`5e0b8b3b`). The first
+Arbiter concept, checkpointed on `feat/split` and revised in `a45e09ce`,
+asked what the local service could do after retrieval. It proposed separate
+jobs for reranking candidates and deciding whether the evidence justified
+another read. The service would keep index access, deadlines and model
+activation under native control.
 
-Auto may fall back to an admitted CPU variant. Native status shows requested
-settings, selected execution and fallback/refusal reasons. GPU precision
-preferences leave the CPU profile unchanged: requested FP16 with a CPU selection
-does not mean FP16 execution, and unreported CPU precision stays unreported.
+On `feat/advanced-split`, `b6e5efc0` defined native and private Admin
+contracts, and `8fa1a2d0` made Focus and Context independent stages. The
+1.8.x candidates tried explicit, on-demand model downloads and index
+enrollment. MiniLM supplied candidates, Qwen3-Reranker-0.6B served as Focus,
+and Context offered Compact (Qwen3-1.7B) and Large (Qwen3-4B). The branch
+handed off at `76d84c53`.
+[Arbiter concept](concept.md) · [Split plan](../split/split-plan.md) ·
+[Split contracts](../split/contracts.md) · [Candidate issues](knownissues.md)
 
-The controls and native admission/fallback machinery are implemented. The current
-scientific GPU path is **Windows x64 CUDA SM86 only**. **No Arbiter GPU or FP16
-model variant is qualified yet.** Implemented controls and scoped tests do not
-establish GPU/model quality, memory/latency or supported-platform qualification.
+### 2. Model preparation, Windows CUDA and the FP16 decision · 15–21 November
 
-Use `airkctl arbiter status` for complete native status/3 and configuration/4.
-Current CLI arguments are:
+The final plan opened `feat/arbiter-final` with `b4cfb7d6` and organized
+lifecycle fixes, scoped model experiments and exact-artifact qualification.
+The weights work audited the rights and labels of candidate datasets and
+tested adaptations against the existing models. The team retained the
+publisher MiniLM weights after the replacement failed to improve the fixed
+development tasks. Device policy and runtime ownership landed in `c02643ad`,
+followed by conversion tooling and protected operations for FP16.
 
-| Action | Arguments after `airkctl arbiter` |
-| --- | --- |
-| Apply stage choices | `configure --file <request.json>` |
-| Download or remove an exact variant | `provision` or `remove`, with `--expected-revision <N> --profile <SHA>` |
-| Cancel or recover a stage operation | `cancel` or `recover`, with `--expected-revision <N> --stage <focus-or-context>` |
-| Import a verified local bundle | `import --expected-revision <N> --profile <SHA> --directory <absolute-folder>` |
-| Explicit disabled initialization | `initialize`, optionally `--expected-legacy-configuration <SHA>` |
-| Explicit retained-state migration | `migrate --expected-revision <N> --expected-configuration <SHA>` |
+Windows Large FP32 CUDA passed its prerequisite on 18 November
+(`e57f34a7`). Compact FP16 measurements then traced numerical differences
+through projection and attention. On 20 November, the user chose FP16 weight
+delivery for CPU and GPU, with FP32 arithmetic for the selected CPU fallback
+recipe, and made GPU use opt-in (`0b5fe97c`, `eaca06d5`). The 100-question
+calibration capture and the TechQA experiments remained useful engineering
+records. The product decision moved to real software tasks because those
+experiments could not show whether Answer helped an agent finish its work.
+[Final plan and decisions](final-plan.md#1-recorded-authority-and-decisions) ·
+[Weights experiment plan](weights-v2-plan.md) ·
+[FP16 exporter contract](../../scripts/arbiter-fp16-export/CONTRACT.md) ·
+[Evaluation redirection](final-plan.md#evaluation-direction-21-november-2026-americadenver)
 
-Configure files contain the complete native `configure_device` management
-request: `stage`, `expected_revision` and a nested per-stage `configuration`.
-`device_policy` and `gpu_precision` are fields inside that configuration. Use the
-[Rust-generated schema](../../packages/contracts-gen/arbiter.schema.json) and
-actual native revisions, index IDs and variant manifests. Explicit `status-legacy`
-and `--legacy` retain CPU configuration/3 and status/2 semantics; active device
-state that they cannot represent is refused. The [native CLI contract](../../crates/airkctl/src/contract/CONTRACT.md#d08-additive-native-device-management-transport)
-owns these flags and compatibility rules.
+### 3. One-turn Answer exposed the need for follow-up · 21–22 November
 
-## FP16 development tooling
+The revised plan (`90c97ddd`) compared Answer, Search and Parse on coding,
+writing, testing and architecture tasks from AIRK and Bookbuilder. A correct
+finish required the agent to receive the essential evidence and include it
+correctly in its brief. On the ten AIRK baseline tasks, Search finished two
+correctly and Answer finished zero. Even 100 results from the full task
+instruction reached the required region for only 5 of 53 essential notes.
+For 35 notes, the file itself was absent. Bookbuilder's baseline also ended
+with zero correct finishes across all paths.
 
-The maintained [graph exporter](../../scripts/export-arbiter-fp16.py) implements
-half-precision learned weights with protected FP32 operations. Its
-[contract](../../scripts/arbiter-fp16-export/CONTRACT.md) records exact source
-lineages, conversion rules, attention semantics and numerical gates. Synthetic
-controls validate conversion mechanics. The [conversion custody contract](../../scripts/arbiter-fp16-execution/CONTRACT.md)
-binds the selected model's Windows FP32 scoring and timing evidence and the
-separate native G5 prerequisites. The resulting candidate requires independent
-whole-graph, numerical, backend, resource and product checks.
+The first change sets tried wider evidence and different Search and Focus
+settings. The turn logs showed that Search agents recovered facts through
+further searches and file reads. Answer mainly read around its first hits,
+rarely pursued definitions, callers or tests, and could lose evidence while
+packing the reply. On 22 November the user directed Answer to do the
+investigative follow-up itself. The one-turn work was archived
+(`179bb1da`), and the loop plan took over (`4f103d0e`).
+[Evaluation plan](final-plan-fp16.md) ·
+[One-turn baseline](answer-evaluation/01-baseline.md) ·
+[One-turn change sets](answer-evaluation/02-change-set-1.md) ·
+[Second change set](answer-evaluation/03-change-set-2.md)
+
+### 4. The local loop and the Large model decision · 22–24 November
+
+Answer /3 split compound tasks into parts, planned what each part needed,
+retrieved and read evidence, checked coverage, followed leads, and composed
+and united the results. Work across the loop branches addressed deadlines,
+model batching, evidence identity, client parity and service-owned jobs.
+Munarium replaced AIRK in the evaluation, with ten new scenarios alongside
+Bookbuilder's ten. The integration included `loop/lh` and the
+`loop/l2c` merge (`38166936`). The parallel
+`codex/ui-arbiter-integration` branch checked the unified Workbench against
+native Answer at `d2b15aae`.
+
+On the same Windows CUDA build and indexes, the three model arms each
+finished zero of 20 tasks correctly (`c347dd7a`). Compact with Focus
+delivered 21 of 113 essential notes in its first replies, Large with
+Focus delivered 20, and Focus alone delivered 17. Large lost its only
+decisive comparison with Compact and was slower at the median.
+Compact also missed its acceptance bar against Focus alone. The user
+retired Large, renamed Compact to Arbiter, and kept separate switches
+for Focus and Arbiter (`360178c5`), allowing all four configurations.
+[Loop plan](final-plan-fp16.md) · [Loop change log](answer-loop-changes.md) ·
+[Windows model gate](answer-evaluation/04-gate-lg.md) ·
+[UI unification plan](../design/ui-review-unification-plan.md)
+
+### 5. Search and index experiments located where evidence was lost · 24–26 November
+
+The first judged Windows loop baseline (`ed039529`) ran 100 sessions on
+Bookbuilder and Munarium. Every path finished zero tasks correctly, and
+every Answer model configuration took more tool turns on average than
+Search in both repositories. Some Arbiter replies stopped as covered
+while missing structural evidence. The first change set required a
+definition, caller or governing-contract witness for those needs and
+widened initial retrieval. Its controlled replay recovered eight net
+essential spans in first replies. The judged sessions still produced
+zero correct finishes.
+[Loop baseline](answer-evaluation/05-loop-baseline.md) ·
+[Loop change set 1](answer-evaluation/06-loop-change-set-1.md)
+
+The plain-index read side was integrated in `0e5ad589`. A separate Search
+series tried ranked keywords, focused semantic queries, more diverse
+files, better source windows and an adaptive result count
+(`02e20e98` through `0b429557`). First-reply coverage rose from 14 to 20
+of 113 notes overall. Munarium rose from 9 to 17 of 52, while Bookbuilder
+fell from 5 to 3 of 61. No first reply covered all the essentials for its
+task. Later follow-up replays also lost two Munarium notes, so the Windows
+research retained the original Search control. Wider Focus scoring could
+only reorder the candidates it received.
+
+The per-repository audits verified archived Read File results against
+source bytes and tested task wording against fact-specific diagnostic
+queries. They found examples where the required source was present but
+the query, ranking or packed response lost it. A separate native
+experiment repaired missing lexical postings and replayed the original
+Window Search after verified publication (`d2553e18`). Windows CUDA
+also exercised the model switches and matched client transports
+(`68ff4c6a`, `49c5fa2f`).
+[Indexing performance plan](../indexing/performance-plan.md) ·
+[Search experiments and outcomes](search-improvement-plan.md#what-we-achieved-and-where-it-falls-short) ·
+[Bookbuilder audit](windows-index-research-bookbuilder.md) ·
+[Munarium audit](windows-index-research-munarium.md) ·
+[Autonomous repair plan](completion-plan.md#autonomous-index-repair)
+
+### 6. Complete evidence and the Gather Context review · 26 November
+
+To measure how agents used evidence once delivery was assured, the Windows
+experiment put every required source span in Sol's first reply. That amounted to 113 spans
+across 20 tasks. The agreed bar was 12 correct finishes overall and at
+least five per repository. Sol finished two Munarium tasks correctly
+and zero Bookbuilder tasks, triggering review before the fresh baseline
+and three change sets (`3b97a1eb`).
+
+Separate OpenAI and Anthropic walkthroughs traced the same 20 tasks with
+ordinary source tools. The design drew on how the agents started from a
+visible anchor, followed identifiers from retrieved source, read the
+governing branch or contract, and looked for a test or other evidence
+that resolved the remaining uncertainty. The Windows Gather
+Context diagnostic added scoped reads, source-derived leads and
+provenance-preserving assembly. Wider ordinary-tool allowances still
+produced zero correct finishes, and regrouping the same archived spans
+produced two where the original presentation produced zero. The
+deterministic candidate delivered the same authenticated ranges at higher
+native cost. Matched transport checks passed, and the review kept the
+judged baseline paused (`89a98609`, `68ccc194`, `3c646489`).
+[Complete-evidence experiment](completion-plan.md#what-the-gate-needs-and-how-to-steer-toward-it) ·
+[Combined walkthroughs and strategy](retrieval-strategy-combined.md) ·
+[Windows review disposition](../simplify/one-process-ledger.md#26-november-2026--gather-context-windows-review-disposition)
+
+### 7. Caller-stated needs and one Arbiter stage · 26 November
+
+The next design combined Focus and Context in one FP16 Arbiter stage and
+started judging Gather Context replies by whether they gave the caller
+enough evidence to proceed (`e3c7583d`). An external Qwen3-Reranker-4B
+probe tested the same frozen candidates with different queries. Whole-task
+queries put 40 of 113 required passages in the first five, fixed clause
+splits put 46 there, and needs written by a calling agent from the task
+alone put 56 there. Evaluator-written needs reached 92 and served as a
+diagnostic upper bound. Early coverage scores also gave incomplete
+passages high scores, so a relevance score alone could not reliably
+decide when to stop (`6749be0c`, `cfda4be6`).
+
+The user chose one call with optional `needs`, `anchors`, `deliverable`
+and `known`, and deferred quantization while the FP16 design was being
+proved. Commit `26fbdc93` added those fields to Answer /3 and wired stated
+needs and exact anchor lookups into the kernel. Independent jobs and
+result union by need remain part of the design. In a four-task run with
+both models off, supplying needs still opened only 1 of 21 required
+passages. The external FP16 prototype scored and followed evidence by
+need using live fixture reads and opened up to 12 of 21 (9 of 10 on
+Munarium, 3 of 11 on Bookbuilder). It took 100–385 seconds per task
+across measured runs. Bookbuilder's remaining misses included project
+guidance, test and routing files. The experiment points to candidate
+selection, follow-up reads and fewer scored pairs as the next problems
+to solve before integrating the model into the service.
+[Single-stage strategy](retrieval-strategy-combined.md#windows-cuda-model-comparison-and-iteration) ·
+[Answer contract change](answer-loop-changes.md#73-caller-stated-needs-and-anchors-on-the-version-3-request) ·
+[Prototype measurements](../simplify/one-process-ledger.md#26-november-2026--single-stage-loop-prototype-outside-the-runtime-first-results)
+
+The [native CLI contract](../../crates/airkctl/src/contract/CONTRACT.md#d08-additive-native-device-management-transport)
+and [generated schema](../../packages/contracts-gen/arbiter.schema.json) track
+the management interface.
 
 ## Research credits and permitted-use boundaries
 
@@ -123,3 +254,16 @@ No raw dataset, questions/answers, source snippets, labels, private fixtures or
 indexed user files are bundled as research notices. Source authors, annotators
 and publishers do not endorse AIRK. Dataset terms do not relicense AIRK, and
 AIRK's Apache-2.0 license does not relicense those datasets or their source works.
+
+## Ongoing work
+
+The [completion plan](completion-plan.md) records the Windows review and the
+remaining FP16 qualification. The planned Windows baseline and change sets
+remain paused at that review. The [combined retrieval strategy](retrieval-strategy-combined.md)
+tracks the move to one Arbiter stage, including retrieval by caller-stated
+need, evidence sufficiency, and the follow-up work needed to make the prototype
+fast enough for the service.
+
+Complete this history when that work is finished and AIRK 1.9 is released.
+Record the final design, the qualified platforms and model variants, and the
+published release.

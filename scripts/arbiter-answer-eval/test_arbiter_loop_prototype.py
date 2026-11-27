@@ -59,6 +59,31 @@ class RulesTest(unittest.TestCase):
         self.assertEqual(sum(item["path"] == "b.rs" for item in shared), 2)
         self.assertEqual(sum(item["path"] == "a.rs" for item in shared), 3)
 
+    def test_a_weak_need_keeps_more_passages_and_a_need_is_split_into_clauses(self):
+        strong = [passage("a.rs", 1, 5, 0.9), passage("a.rs", 20, 25, 0.2)]
+        unsure = [passage("b.rs", 1, 5, 0.3), passage("b.rs", 20, 25, 0.06), passage("b.rs", 40, 45, 0.01)]
+        delivered = proto.deliver([strong, unsure], keep=0.3, per_need_limit=9, budget=10_000, relative=0.5,
+                                  weak=[False, True])
+        self.assertEqual([(item["path"], item["start"]) for item in delivered],
+                         [("a.rs", 1), ("b.rs", 1), ("b.rs", 20), ("b.rs", 40)])
+        self.assertEqual(proto.clauses("Enforcement sites on the REST transport and on the gRPC transport, "
+                                       "and the error returned when exceeded"),
+                         ["Enforcement sites on the REST transport", "on the gRPC transport",
+                          "the error returned when exceeded"])
+
+    def test_cited_paths_and_the_cheap_first_cut(self):
+        texts = ["Run `pwsh pro/scripts/test-all.ps1 -Full` once.", "see pro/scripts/test-all.ps1 and "
+                 "dotnet test pro/src/App.Tests/App.Tests.csproj; not a path: v1.2 or and/or."]
+        self.assertEqual(proto.cited_paths(texts, 5),
+                         ["pro/scripts/test-all.ps1", "pro/src/App.Tests/App.Tests.csproj"])
+        pool = {("a.cs", 1, 9): {"text": "string GetDefaultModel(AIProviderType p) => p switch { _ => throw new "
+                                         "ArgumentOutOfRangeException() };"},
+                ("b.md", 1, 9): {"text": "The plan for onboarding screens and their colours."},
+                ("c.cs", 1, 9): {"text": "void Save() { repository.Save(item); }"}}
+        self.assertEqual(proto.likeliest("Places that could throw ArgumentOutOfRangeException for a provider "
+                                         "switch with a missing case", pool, 1), [("a.cs", 1, 9)])
+        self.assertEqual(proto.likeliest("nothing shared here", {("c.cs", 1, 9): pool[("c.cs", 1, 9)]}, 3), [])
+
     def test_a_delivered_passage_counts_as_opened_for_the_loss_stage_script(self):
         reply = proto.reply_of([passage("src/a.rs", 10, 60, 0.9)])
         scenario = {"notes": [{"id": "n1", "mark": "essential", "path": "src/a.rs", "lines": [20, 30]},
