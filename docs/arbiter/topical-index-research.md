@@ -7,6 +7,58 @@ of the gates below.
 
 [Governing strategy](retrieval-strategy-combined.md#strategy-from-27-november-2026) · [Ledger](../simplify/one-process-ledger.md) · [Evaluation tooling](../../scripts/arbiter-answer-eval/README.md)
 
+## Correction of 27 November 2026: the cost figures below were wrong
+
+Every cost comparison in this document made before this section was
+written compared arms priced differently, and is superseded by this
+section.
+
+**What happened.** A session's reported cost prices a cache write by its
+lifetime: $4.00 a million tokens for one hour, $2.50 for five minutes
+(fitted from 198 sessions' reported costs, which the five prices reproduce
+to the cent: input $2.00, output $10.00, cache read $0.10). The baseline
+ran entirely at the one-hour price. Partway through the oracle series the
+sessions changed to the five-minute price, and the prototype's series ran
+almost entirely at it. The later arms looked cheaper because their cache
+writes cost less, not because they used fewer tokens. `agent_cost_batch.py
+report` now prices every cache write at one price and prints each arm's
+five-minute share.
+
+**The figures at one price** (20 tasks, medians of 3, Sonnet, narrow tasks
+weighted four to one):
+
+| Arm | Cost against no tool, mean of per-task percentages | Cost against no tool, in weighted dollars | Round trips |
+| --- | --- | --- | --- |
+| Oracle: a perfect reply from the truth | 5.7 percent lower | 8.9 percent lower ($0.459 against $0.503) | 8.8 percent fewer |
+| Prototype, second version | 16.0 percent **higher** | 7.1 percent **higher** ($0.539 against $0.503) | 5.3 percent fewer |
+
+In tokens, over 60 sessions each: the prototype arm read 35.7 million
+tokens from cache against the baseline's 33.6 million, wrote 6.02 million
+against 5.66 million, and output 0.86 million against 0.82 million. It
+used more of everything.
+
+**Where the money goes**, from the baseline's tokens at the fitted prices:
+cache writes 66 percent (every new token entering the context: what the
+agent reads, tool replies, its own earlier messages), output 24 percent,
+cache reads 10 percent. The earlier estimate in "The ceiling" used
+assumed ratios and is replaced by this.
+
+**What it means.**
+
+1. A perfect reply saves 6 to 9 percent on these tasks. That is the
+   ceiling for any retrieval design, index or no index, with this agent
+   and this reply layout. The stated aim of about 30 percent is out of
+   reach here.
+2. The prototype finds the right places far more often than the kernel
+   reply (74 of 113 truth items at their lines against 32) and still
+   costs the agent more than using no tool, because the agent reads what
+   it would have read anyway and carries a 24,000-byte reply as well.
+3. Gate 2 below is therefore met in its stopping sense: a better reply
+   cannot pay on tasks like these. The decision in "If the ceiling stays
+   low" is now the open one.
+4. Placement results (which files and lines a reply names) do not depend
+   on prices and stand as written.
+
 ## Why this research
 
 The user's question, 27 November 2026: is indexing every file in full the
@@ -23,7 +75,7 @@ What was measured that day, on 20 tasks over two repositories:
 | Current Gather Context reply, 113 truth items | 7 carried, 16 named at their lines, 9 nearby, 32 file only, 49 file never reached |
 | Index lookups by exact name, 97 named truth items | definition lookup 84, exact lexical search 79, either 90 |
 | Index semantic search, given the truth's own description | 62 of 97 |
-| Oracle arm: a perfect reply from the truth (60 sessions, medians of 3) | 22.0 percent lower cost weighted four to one for narrow tasks; cheaper on all 20 tasks; round trips 8.8 percent lower |
+| Oracle arm: a perfect reply from the truth (60 sessions, medians of 3) | 5.7 percent lower cost at one price (see the correction above; 22.0 percent as first reported was a pricing artifact); round trips 8.8 percent lower |
 
 Three readings follow.
 

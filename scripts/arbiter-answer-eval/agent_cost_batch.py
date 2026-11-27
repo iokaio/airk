@@ -10,7 +10,9 @@ the 14 narrow tasks; ``--tasks`` narrows it.
 ``report`` reads the finished sessions and prints, per task and arm, the
 median cost and round trips over the repeats, and, where both arms exist,
 the percentage lower cost of each other arm (``tool``, ``oracle``) against
-the plain arm. The combined figure counts a narrow
+the plain arm, at one price for every cache write (see ``one_price``): the
+agent's own reported cost depends on which cache lifetime its account was
+on when the session ran, which is not a property of the arm. The combined figure counts a narrow
 task four times a broad one. It reports and does not judge: correctness is
 recorded separately against each task's frozen truth.
 
@@ -89,11 +91,63 @@ def run(args) -> int:
     return 0
 
 
+def final_usage(folder: pathlib.Path) -> dict | None:
+    """The session's last result event: its reported cost and the five token counts the cost is made of."""
+    stream = folder / "stream.jsonl"
+    if not stream.is_file():
+        return None
+    result = None
+    for line in stream.read_text(encoding="utf-8", errors="replace").splitlines():
+        if '"result"' in line:
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            if event.get("type") == "result" and isinstance(event.get("usage"), dict):
+                result = event
+    if result is None or result.get("total_cost_usd") is None:
+        return None
+    usage, written = result["usage"], result["usage"].get("cache_creation") or {}
+    return {"cost": result["total_cost_usd"], "input": usage.get("input_tokens") or 0, "output": usage.get("output_tokens") or 0,
+            "cache_read": usage.get("cache_read_input_tokens") or 0,
+            "write_5m": written.get("ephemeral_5m_input_tokens") or 0, "write_1h": written.get("ephemeral_1h_input_tokens") or 0}
+
+
+def one_price(rows: list[dict]) -> dict:
+    """Give every session a cost at one price for all cache writes, and say what was fitted.
+
+    A session's reported cost prices a cache write by its lifetime: an hour costs more than five minutes. The
+    lifetime is set by the account's state when the session ran, so two arms run at different times can differ in
+    cost for that reason alone (found on 27 November 2026: the baseline wrote at the hour price and a later arm at
+    the five-minute price, which made the later arm look 20 percent cheaper than it was). The five prices are
+    fitted from the sessions' own reported costs, which they reproduce exactly, and each session is then priced
+    again with all its cache writes at the hour price."""
+    import numpy
+
+    known = [row for row in rows if row.get("usage")]
+    if len(known) < 5:
+        return {"fitted": False, "sessions": len(known)}
+    keys = ("input", "output", "cache_read", "write_5m", "write_1h")
+    matrix = numpy.array([[row["usage"][key] for key in keys] for row in known], dtype=float)
+    costs = numpy.array([row["usage"]["cost"] for row in known])
+    prices, *_ = numpy.linalg.lstsq(matrix, costs, rcond=None)
+    error = float(numpy.abs(matrix @ prices - costs).max())
+    hour = prices[4] if any(row["usage"]["write_1h"] for row in known) else prices[3]
+    for row in known:
+        usage = row["usage"]
+        row["cost_one_price"] = float(usage["input"] * prices[0] + usage["output"] * prices[1] + usage["cache_read"] * prices[2]
+                                      + (usage["write_5m"] + usage["write_1h"]) * hour)
+    return {"fitted": True, "sessions": len(known), "usd_per_million": {key: round(float(price) * 1e6, 4) for key, price in zip(keys, prices)},
+            "largest_fit_error_usd": error, "cache_writes_priced_at": round(float(hour) * 1e6, 4)}
+
+
 def sessions(series: pathlib.Path) -> dict[tuple[str, str], list[dict]]:
     found: dict[tuple[str, str], list[dict]] = {}
     for path in sorted(series.glob("*/session.json")):
         task_id, arm, _ = path.parent.name.rsplit(".", 2)
-        found.setdefault((task_id, arm), []).append(json.loads(path.read_text(encoding="utf-8")))
+        row = json.loads(path.read_text(encoding="utf-8"))
+        row["usage"] = final_usage(path.parent)
+        found.setdefault((task_id, arm), []).append(row)
     return found
 
 
@@ -102,7 +156,12 @@ def medians(rows: list[dict]) -> dict:
     if not done:
         return {"runs": len(rows), "completed": 0}
     tokens = lambda key: statistics.median(row["tokens"].get(key) or 0 for row in done)  # noqa: E731
-    return {"runs": len(rows), "completed": len(done), "cost_usd": round(statistics.median(row["cost_usd"] for row in done), 4),
+    return {"runs": len(rows), "completed": len(done),
+            "cost_usd": round(statistics.median(row.get("cost_one_price", row["cost_usd"]) for row in done), 4),
+            "reported_cost_usd": round(statistics.median(row["cost_usd"] for row in done), 4),
+            "five_minute_share_of_cache_writes": round(
+                sum(row["usage"]["write_5m"] for row in done if row.get("usage"))
+                / max(1, sum(row["usage"]["write_5m"] + row["usage"]["write_1h"] for row in done if row.get("usage"))), 3),
             "round_trips": statistics.median(row["round_trips"] for row in done),
             "elapsed_s": round(statistics.median((row.get("elapsed_ms") or 0) / 1000 for row in done), 1),
             "cache_read": tokens("cache_read"), "cache_write": tokens("cache_write"), "output": tokens("output"),
@@ -118,6 +177,8 @@ def report(args) -> int:
         for key, rows in sessions(args.campaign / "agent-cost" / args.baseline).items():
             if key[1] == "plain":
                 found.setdefault(key, rows)
+    pricing = one_price([row for rows in found.values() for row in rows])
+    print(json.dumps({"pricing": pricing}))
     weights = {row["id"]: (NARROW_WEIGHT if row["set"] == "narrow" else 1) for row in working_set(args.campaign)}
     arms = ["plain"] + sorted({key[1] for key in found} - {"plain"})
     table, saved = [], {arm: [] for arm in arms[1:]}
@@ -153,11 +214,16 @@ def report(args) -> int:
                         "weighted_cost_lower_pct": round(sum(weight * cost for weight, cost, *_ in rows) / total, 1),
                         "weighted_round_trips_lower_pct": round(sum(weight * trips for weight, _, trips, *_ in rows) / total, 1),
                         "weighted_plain_cost_usd": round(sum(weight * plain for weight, _, _, plain, _ in rows) / total, 4),
-                        "weighted_arm_cost_usd": round(sum(weight * other for weight, _, _, _, other in rows) / total, 4)}
+                        "weighted_arm_cost_usd": round(sum(weight * other for weight, _, _, _, other in rows) / total, 4),
+                        "weighted_dollars_lower_pct": round(100 * (1 - sum(weight * other for weight, _, _, _, other in rows)
+                                                                   / sum(weight * plain for weight, _, _, plain, _ in rows)), 1),
+                        "five_minute_share_of_cache_writes": {
+                            "plain": round(statistics.mean(row["plain"]["five_minute_share_of_cache_writes"] for row in table if arm in row and "plain" in row and row["plain"].get("completed")), 3),
+                            arm: round(statistics.mean(row[arm]["five_minute_share_of_cache_writes"] for row in table if arm in row and row[arm].get("completed")), 3)}}
     if summary:
         print(json.dumps(summary))
     (series / "report.json").write_text(json.dumps({"schema": "airk.private.agent-cost-report/1", "series": args.series,
-                                                     "baseline": args.baseline, "tasks": table, "summary": summary},
+                                                     "baseline": args.baseline, "pricing": pricing, "tasks": table, "summary": summary},
                                                     indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
     return 0
 
