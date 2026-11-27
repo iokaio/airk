@@ -280,6 +280,19 @@ within noise of no line. The saving of the longer line came from its
 instruction ("Do not read those ranges again and do not search for more"),
 which the no-editorial rule now excludes. Whether to allow that
 instruction is the user's decision.
+**Set 4: the allowed instruction** (same conditions, series
+`t1-oracle-noreread-r1`). The user then allowed "There is no need to read
+these ranges again." after the assurance. Result: $0.589, 14.6 percent
+lower (0.54 to 0.76), 10 round trips, 133 KB read by the agent; within
+noise of no line and of the assurance alone.
+
+Finding: what moves the agent is not being told the passages are exact or
+need not be re-read, but being told they are all the task needs. A traced
+session shows why: after the call the agent still runs 12 searches and 12
+reads, most of them whole central files, looking for what else might
+matter. The 40.8 percent line said "together they are what this task
+needs ... do not search for more"; with a perfect reply that claim is
+true, but a real reply can only make it when its coverage supports it.
 ### Resume point (27 November 2026)
 
 Work can be picked up from here by another session.
