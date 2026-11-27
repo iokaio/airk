@@ -84,8 +84,10 @@ fn matches(
     q: &FactQuery,
     code_only: bool,
     options: &FactDiscoveryOptions,
+    range: Option<(usize, usize)>,
 ) -> bool {
-    (!code_only || fact.code.is_some())
+    range.is_none_or(|(start, end)| fact.start_line <= end && fact.end_line >= start)
+        && (!code_only || fact.code.is_some())
         && (!q.document_only
             || (fact.code.is_none() && !matches!(fact.kind.as_str(), "definition" | "import")))
         && q.kind.as_ref().is_none_or(|kind| kind == &fact.kind)
@@ -223,6 +225,7 @@ impl CurrentRead {
                 || query.name.as_ref().is_some_and(|name| !name.is_empty()),
             "name_match requires a nonempty name"
         );
+        let range = fact_options.line_range(query.path_exact)?;
         ensure!(
             !options.compact || !options.minimal,
             "choose compact facts or minimal navigation, not both"
@@ -612,15 +615,20 @@ impl CurrentRead {
                     continue;
                 }
                 let fact = &row.fact;
-                if matches(&artifact, fact, query, code_only, fact_options) {
+                if matches(&artifact, fact, query, code_only, fact_options, range) {
                     // Count only records actually checked under this page's
                     // existing work bounds, including the first unadmitted hit.
                     matched = matched.saturating_add(1);
                     let mut hit = fact_hit(&artifact, fact);
                     hit.continuity_key = row.continuity_key;
                     if let Some(minimal) = response.minimal.as_mut() {
-                        let Some(candidate) =
-                            minimal.candidate(&hit, &artifact, query.path_exact)?
+                        // Code-fact minimal rows also name their enclosing scope.
+                        let Some(candidate) = minimal.candidate_with_owner(
+                            &hit,
+                            &artifact,
+                            query.path_exact,
+                            code_only,
+                        )?
                         else {
                             response.truncated = true;
                             break 'files;

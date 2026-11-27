@@ -1286,6 +1286,9 @@ fn fields(tool: &str) -> &'static [&'static str] {
             "name_match",
             "include_count",
             "compact",
+            "start_line",
+            "end_line",
+            "minimal",
         ],
         "document_facts" => &[
             "document_key",
@@ -1449,7 +1452,8 @@ fn argument_schema(key: &str) -> Value {
         | "rich"
         | "include_symbols"
         | "include_documents"
-        | "include_suggestions" => json!({"type":"boolean"}),
+        | "include_suggestions"
+        | "minimal" => json!({"type":"boolean"}),
         "selectors" => json!({"type":"array","maxItems":64,"items":{"type":"object"}}),
         "mode" => json!({"type":"string","enum":["lexical","vector","hybrid"]}),
         "direction" => json!({"type":"string","enum":["incoming","outgoing"]}),
@@ -1529,6 +1533,57 @@ fn verification_controls(
             .map(|(key, value)| (key.clone(), value.clone()))
             .collect(),
     ))?)
+}
+/// Code-fact line range and minimal rows `(start_line, end_line, minimal)`,
+/// refused as the canonical MCP read and native page refuse them.
+fn code_fact_options(args: &Map<String, Value>) -> Result<(Option<usize>, Option<usize>, bool)> {
+    use airk_core::read_arguments::ReadArgumentError;
+    let line = |key| {
+        args.get(key)
+            .and_then(Value::as_u64)
+            .and_then(|n| usize::try_from(n).ok())
+    };
+    let (start_line, end_line) = (line("start_line"), line("end_line"));
+    let minimal = args
+        .get("minimal")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if args.contains_key("symbol_key") {
+        for (field, used) in [
+            ("start_line", start_line.is_some()),
+            ("end_line", end_line.is_some()),
+            ("minimal", minimal),
+        ] {
+            if used {
+                return Err(ReadArgumentError::new(
+                    "invalid_arguments",
+                    field,
+                    format!("{field} cannot be combined with symbol_key"),
+                )
+                .into());
+            }
+        }
+    }
+    FactDiscoveryOptions {
+        start_line,
+        end_line,
+        ..Default::default()
+    }
+    .line_range(args.contains_key("path"))?;
+    if minimal
+        && airk_core::reply::ReplyDetail::compact(
+            reply_detail(args)?,
+            args.get("compact").and_then(Value::as_bool),
+        )? == Some(false)
+    {
+        return Err(ReadArgumentError::new(
+            "invalid_arguments",
+            "minimal",
+            "minimal rows cannot be combined with compact=false or reply_detail=rich",
+        )
+        .into());
+    }
+    Ok((start_line, end_line, minimal))
 }
 fn reply_detail(args: &Map<String, Value>) -> Result<Option<airk_core::reply::ReplyDetail>> {
     args.get("reply_detail")
@@ -1617,6 +1672,7 @@ fn validate_step(step: &Step, prefix: &str, bound: bool) -> Result<()> {
                 | "include_symbols"
                 | "include_documents"
                 | "include_suggestions"
+                | "minimal"
         ) {
             ensure!(value.is_boolean(), "boolean argument required");
         } else {
@@ -1691,6 +1747,9 @@ fn validate_step(step: &Step, prefix: &str, bound: bool) -> Result<()> {
             number(&step.args, "start_line", 1) <= number(&step.args, "end_line", 1),
             "line range is reversed"
         );
+    }
+    if step.tool == "code_facts" {
+        code_fact_options(&step.args)?;
     }
     if let Some(value) = step.args.get("known_hash") {
         let hash = value.as_str().unwrap();
@@ -2779,8 +2838,14 @@ impl Kernel {
             .and_then(Value::as_str)
             .unwrap_or("");
         let reply = reply_detail(args)?;
-        let minimal = matches!(tool, "symbols" | "imports" | "outline")
-            && reply == Some(airk_core::reply::ReplyDetail::Lean);
+        let code_fact = if tool == "code_facts" {
+            code_fact_options(args)?
+        } else {
+            (None, None, false)
+        };
+        let minimal = (matches!(tool, "symbols" | "imports" | "outline")
+            && reply == Some(airk_core::reply::ReplyDetail::Lean))
+            || code_fact.2;
         let options = DiscoveryOptions {
             cursor: args
                 .get("cursor")
@@ -2977,6 +3042,8 @@ impl Kernel {
                         .get("include_count")
                         .and_then(Value::as_bool)
                         .unwrap_or(false),
+                    start_line: code_fact.0,
+                    end_line: code_fact.1,
                 };
                 serde_json::to_value(if tool == "code_facts" {
                     self.code_facts_page_with_options(&query, &options, &matching)?

@@ -414,6 +414,7 @@ fn explicit_fact_name_matching_is_scoped_case_sensitive_and_counted_without_extr
             &FactDiscoveryOptions {
                 name_match: Some(NameMatch::Exact),
                 include_count: false,
+                ..Default::default()
             },
         )?;
         assert_eq!(found.facts.len(), 1);
@@ -425,6 +426,7 @@ fn explicit_fact_name_matching_is_scoped_case_sensitive_and_counted_without_extr
         &FactDiscoveryOptions {
             name_match: Some(NameMatch::Exact),
             include_count: true,
+            ..Default::default()
         },
     )?;
     let count = exact.page.match_count.context("requested exact count")?;
@@ -448,6 +450,7 @@ fn explicit_fact_name_matching_is_scoped_case_sensitive_and_counted_without_extr
             &FactDiscoveryOptions {
                 name_match: Some(mode),
                 include_count: true,
+                ..Default::default()
             },
         )?;
         let names = result
@@ -470,6 +473,7 @@ fn explicit_fact_name_matching_is_scoped_case_sensitive_and_counted_without_extr
     let suffix = FactDiscoveryOptions {
         name_match: Some(NameMatch::Suffix),
         include_count: true,
+        ..Default::default()
     };
     let mut unicode = q.clone();
     unicode.name = Some("éssion".into());
@@ -533,6 +537,7 @@ fn matched_fact_continuations_bind_mode_counts_and_publication_and_report_partia
     let options = FactDiscoveryOptions {
         name_match: Some(NameMatch::Suffix),
         include_count: true,
+        ..Default::default()
     };
     let mut page = DiscoveryOptions::default();
     let first = kernel.code_facts_page_with_options(&q, &page, &options)?;
@@ -642,7 +647,8 @@ fn omitted_import_match_mode_keeps_case_insensitive_substring_behavior() -> Resu
                 &Default::default(),
                 &FactDiscoveryOptions {
                     name_match: Some(NameMatch::Contains),
-                    include_count: false
+                    include_count: false,
+                    ..Default::default()
                 },
             )?
             .facts
@@ -680,6 +686,7 @@ fn sparse_suffix_discovery_reports_unknown_total_and_advances_empty_bounded_page
     let options = FactDiscoveryOptions {
         name_match: Some(NameMatch::Suffix),
         include_count: true,
+        ..Default::default()
     };
     let first = kernel.code_facts_page_with_options(&q, &Default::default(), &options)?;
     assert!(first.truncated && first.facts.is_empty());
@@ -702,5 +709,150 @@ fn sparse_suffix_discovery_reports_unknown_total_and_advances_empty_bounded_page
     assert_eq!(count.total_matches, None);
     assert_eq!(count.lower_bound, 1);
     assert!(!count.complete);
+    Ok(())
+}
+
+#[test]
+fn code_fact_line_ranges_overlap_bind_cursors_and_feed_minimal_owner_rows() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    fs::write(
+        root.path().join("lib.rs"),
+        "pub struct Owner;\nimpl Owner {\n    pub fn run(&self) {\n        helper();\n        self.other();\n    }\n    fn other(&self) {}\n}\nfn helper() {}\n",
+    )?;
+    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_vectors(false)?;
+    kernel.index()?;
+    let q = FactQuery {
+        path_prefix: "lib.rs".into(),
+        kind: None,
+        limit: 100,
+        max_bytes: 65536,
+        ..query()
+    };
+    let range = |start, end| FactDiscoveryOptions {
+        start_line: Some(start),
+        end_line: Some(end),
+        ..Default::default()
+    };
+    let page = DiscoveryOptions::default();
+    let all = kernel.code_facts_page_with_options(&q, &page, &Default::default())?;
+    let line_four = kernel.code_facts_page_with_options(&q, &page, &range(4, 4))?;
+    // Independent expectation: every fact whose own span overlaps line 4.
+    let expected = all
+        .facts
+        .iter()
+        .filter(|fact| fact.citation.start_line <= 4 && fact.citation.end_line >= 4)
+        .map(|fact| (fact.kind.clone(), fact.name.clone()))
+        .collect::<BTreeSet<_>>();
+    let actual = line_four
+        .facts
+        .iter()
+        .map(|fact| (fact.kind.clone(), fact.name.clone()))
+        .collect::<BTreeSet<_>>();
+    assert_eq!(actual, expected);
+    assert!(actual.contains(&("definition".into(), "run".into())));
+    assert!(actual.contains(&("call".into(), "helper".into())));
+    assert!(!actual.iter().any(|(_, name)| name == "other"));
+    let tail = kernel.code_facts_page_with_options(&q, &page, &range(7, 9))?;
+    let tail_names = tail
+        .facts
+        .iter()
+        .map(|fact| fact.name.as_str())
+        .collect::<BTreeSet<_>>();
+    assert!(tail_names.contains("other") && tail_names.contains("helper"));
+    assert!(!tail_names.contains("run"));
+    // A range binds the cursor like the other filters.
+    let one = FactQuery {
+        limit: 1,
+        ..q.clone()
+    };
+    let first = kernel.code_facts_page_with_options(&one, &page, &range(1, 9))?;
+    assert!(first.truncated);
+    let resume = DiscoveryOptions {
+        cursor: first.page.cursor.clone(),
+        ..Default::default()
+    };
+    kernel.code_facts_page_with_options(&one, &resume, &range(1, 9))?;
+    for changed in [range(1, 8), Default::default()] {
+        assert!(
+            kernel
+                .code_facts_page_with_options(&one, &resume, &changed)
+                .is_err()
+        );
+    }
+    // Ranges need one exact file and ordered, paired bounds.
+    let prefix = FactQuery {
+        path_exact: false,
+        ..q.clone()
+    };
+    for (query, options, field) in [
+        (&prefix, range(1, 2), "path"),
+        (&q, range(3, 2), "start_line"),
+        (
+            &q,
+            FactDiscoveryOptions {
+                start_line: Some(2),
+                ..Default::default()
+            },
+            "end_line",
+        ),
+    ] {
+        let error = kernel
+            .code_facts_page_with_options(query, &page, &options)
+            .unwrap_err();
+        let typed = error
+            .downcast_ref::<airk_core::read_arguments::ReadArgumentError>()
+            .context("typed refusal")?;
+        assert_eq!(
+            (typed.code, typed.field.as_str()),
+            ("invalid_arguments", field)
+        );
+    }
+    // Minimal code-fact rows: owner named, file/provenance stated once.
+    let minimal = kernel.code_facts_page_with_options(
+        &q,
+        &DiscoveryOptions {
+            minimal: true,
+            ..Default::default()
+        },
+        &range(4, 4),
+    )?;
+    let rows = minimal.minimal.context("minimal rows")?;
+    assert_eq!(rows.items.len(), actual.len());
+    let call = rows
+        .items
+        .iter()
+        .find(|row| row.kind == "call" && row.name == "helper")
+        .context("helper call row")?;
+    assert_eq!(call.owner.as_deref(), Some("run"));
+    assert_eq!(call.lines, [4, 4]);
+    assert!(serde_json::to_vec(call)?.len() <= 150);
+    assert_eq!(rows.files.len(), 1);
+    assert_eq!(rows.files[0].path, "lib.rs");
+    assert_eq!(
+        rows.files[0].content_hash,
+        all.facts[0].citation.content_hash
+    );
+    // Symbols minimal rows keep their earlier shape: no owner.
+    let symbols = kernel.facts_page_with_options(
+        &FactQuery {
+            kind: Some("definition".into()),
+            ..q.clone()
+        },
+        &DiscoveryOptions {
+            minimal: true,
+            ..Default::default()
+        },
+        &Default::default(),
+    )?;
+    assert!(
+        symbols
+            .minimal
+            .context("symbol rows")?
+            .items
+            .iter()
+            .all(|row| row.owner.is_none())
+    );
     Ok(())
 }

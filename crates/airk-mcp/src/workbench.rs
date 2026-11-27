@@ -53,6 +53,8 @@ impl AirkServer {
             "symbols" | "imports" | "code_facts" | "document_facts" | "outline"
         ) && arguments.get("reply_detail").is_none_or(Value::is_null)
             && arguments.get("compact").is_none_or(Value::is_null)
+            // Explicit code-fact minimal rows are their own representation.
+            && arguments.get("minimal").and_then(Value::as_bool) != Some(true)
         {
             arguments.insert("compact".into(), json!(false));
         }

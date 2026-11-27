@@ -26,6 +26,10 @@ pub struct MinimalFact {
     pub statement_truncated: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub table: Option<TableEvidence>,
+    /// Innermost enclosing written scope name. Present only in code-fact
+    /// minimal rows (`candidate_with_owner`) whose fact has an enclosing scope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
 }
 fn is_false(value: &bool) -> bool {
     !value
@@ -71,6 +75,17 @@ impl MinimalFacts {
         hit: &FactHit,
         artifact: &Artifact,
         single_file: bool,
+    ) -> Result<Option<MinimalCandidate>> {
+        self.candidate_with_owner(hit, artifact, single_file, false)
+    }
+    /// As [`Self::candidate`]; `owner` also states the innermost enclosing
+    /// written scope of a code fact (code-fact minimal rows).
+    pub fn candidate_with_owner(
+        &self,
+        hit: &FactHit,
+        artifact: &Artifact,
+        single_file: bool,
+        owner: bool,
     ) -> Result<Option<MinimalCandidate>> {
         ensure!(
             artifact.path == hit.citation.path
@@ -169,6 +184,11 @@ impl MinimalFacts {
                 .document
                 .as_ref()
                 .and_then(|document| document.table.clone()),
+            owner: hit
+                .code
+                .as_ref()
+                .filter(|_| owner)
+                .and_then(|code| code.scope.last().cloned()),
         };
         let mut bytes = serde_json::to_vec(&row)?.len();
         if let Some(file) = &file {

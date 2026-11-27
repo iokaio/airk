@@ -33,6 +33,48 @@ pub struct FactDiscoveryOptions {
     pub name_match: Option<NameMatch>,
     #[serde(default)]
     pub include_count: bool,
+    /// 1-based inclusive line range of one exact file; a fact matches when its
+    /// own line span overlaps it. Both bounds or neither. Omitted bounds leave
+    /// the serialized options, and so every existing cursor binding, unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_line: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_line: Option<usize>,
+}
+
+impl FactDiscoveryOptions {
+    /// The validated overlap range. `path_exact` is the query's exact-file flag:
+    /// a range addresses lines of one file, never a prefix.
+    pub fn line_range(
+        &self,
+        path_exact: bool,
+    ) -> std::result::Result<Option<(usize, usize)>, crate::read_arguments::ReadArgumentError> {
+        use crate::read_arguments::ReadArgumentError;
+        match (self.start_line, self.end_line) {
+            (None, None) => Ok(None),
+            (Some(_), None) => Err(ReadArgumentError::new(
+                "invalid_arguments",
+                "end_line",
+                "start_line requires end_line; give both line bounds or neither",
+            )),
+            (None, Some(_)) => Err(ReadArgumentError::new(
+                "invalid_arguments",
+                "start_line",
+                "end_line requires start_line; give both line bounds or neither",
+            )),
+            (Some(start), Some(end)) if start == 0 || start > end => Err(ReadArgumentError::new(
+                "invalid_arguments",
+                "start_line",
+                "line bounds are 1-based and inclusive; start_line must be at least 1 and at most end_line",
+            )),
+            (Some(_), Some(_)) if !path_exact => Err(ReadArgumentError::new(
+                "invalid_arguments",
+                "path",
+                "start_line/end_line require an exact indexed file path",
+            )),
+            (Some(start), Some(end)) => Ok(Some((start, end))),
+        }
+    }
 }
 
 /// Counts logical matching records; the tool defines its record unit.
@@ -360,6 +402,53 @@ mod tests {
             )
             .is_err()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn line_ranges_are_both_or_neither_ordered_exact_file_and_omitted_from_old_bindings()
+    -> Result<()> {
+        let old = FactDiscoveryOptions {
+            name_match: Some(NameMatch::Exact),
+            include_count: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            serde_json::to_string(&old)?,
+            r#"{"name_match":"exact","include_count":true}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&FactDiscoveryOptions::default())?,
+            r#"{"include_count":false}"#
+        );
+        let range = |start, end| FactDiscoveryOptions {
+            start_line: start,
+            end_line: end,
+            ..Default::default()
+        };
+        assert_eq!(
+            range(Some(35), Some(119)).line_range(true)?,
+            Some((35, 119))
+        );
+        assert_eq!(range(Some(56), Some(56)).line_range(true)?, Some((56, 56)));
+        assert_eq!(range(None, None).line_range(false)?, None);
+        assert_eq!(
+            serde_json::to_string(&range(Some(1), Some(2)))?,
+            r#"{"include_count":false,"start_line":1,"end_line":2}"#
+        );
+        for (options, exact, field) in [
+            (range(Some(3), None), true, "end_line"),
+            (range(None, Some(3)), true, "start_line"),
+            (range(Some(0), Some(3)), true, "start_line"),
+            (range(Some(4), Some(3)), true, "start_line"),
+            (range(Some(1), Some(3)), false, "path"),
+        ] {
+            let error = options.line_range(exact).unwrap_err();
+            assert_eq!(
+                (error.code, error.field.as_str()),
+                ("invalid_arguments", field)
+            );
+        }
         Ok(())
     }
 

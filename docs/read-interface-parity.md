@@ -217,6 +217,45 @@ read-only contract. Selecting a binding does not widen its installed grant.
 
 Workbench requests full responses with explicit rich facts unless compact is chosen. Its forms and slash flags include every native read input apart from transport display controls. Conditional validators, artifact/continuity selectors, change selector arrays, extraction filters, paging/count options and detailed capabilities/help options remain available. Exact fact paths use the same native handler as prefix reads and remain scoped by the plan.
 
+### Code-fact line ranges and minimal rows (user decision, 26 November 2026)
+
+The Answer loop fetches structure around a located passage: the definition a
+line sits in, the calls inside a body and the places that call it. Two
+additive, opt-in `code_facts` inputs serve it through the one canonical page
+(`CurrentRead::native_facts_page_with_options`), so MCP, `airkctl code-facts`
+(`--path`, `--start-line`, `--end-line`, `--minimal`), Workbench and Parse
+steps (`/code-facts ... --start-line N --end-line M --minimal`) return the
+same records:
+
+- `start_line` and `end_line`: a 1-based inclusive range, both or neither,
+  `start_line <= end_line`, only with an exact `path`. A fact matches when its
+  own line span overlaps the range. Missing, unpaired, reversed or prefix-only
+  ranges, and a range with `symbol_key`, refuse with `invalid_arguments`
+  naming the field. The bounds are part of `FactDiscoveryOptions`, which binds
+  the cursor (`current-native-facts/2`); omitted bounds serialize nothing, so
+  every earlier cursor binding is byte-identical.
+- `minimal: true`: the existing minimal page (`items`, `files`, `provenance`,
+  `representation: "minimal"` under MCP) for code facts. Each row is `name`,
+  `kind`, `lines`, `signature`, the `file` index unless the read names one
+  exact file, `candidate` for call candidates, and `owner`, the innermost
+  enclosing written scope. Path, content hash, language and line basis are
+  stated once per file, producer/basis/coverage once per provenance entry, so
+  every row stays citable. Rows carry no symbol IDs: a native ID repeats the
+  path and would double the row, so ID-based follow-ups use a rich read.
+  `minimal` refuses `compact: false`, `reply_detail: "rich"` and `symbol_key`.
+  Symbols, imports and outline minimal rows never carry `owner`; their bytes
+  and every default code-fact reply are unchanged.
+
+`compact: true` (and `reply_detail: "lean"`) select the existing compact
+fact, about 800 bytes a row, because it repeats `coverage`, `producer`,
+`basis`, the citation hash and a nested location per row. No earlier
+combination selected minimal rows for code facts. A call row in minimal form
+is about 100 to 130 bytes, for example
+`{"name":"helper","kind":"call","lines":[4,4],"signature":null,"candidate":true,"owner":"run"}`.
+Tests: `airk-core` `discovery::tests::line_ranges_are_both_or_neither_ordered_exact_file_and_omitted_from_old_bindings`,
+`airk-kernel` integration `discovery::code_fact_line_ranges_overlap_bind_cursors_and_feed_minimal_owner_rows`,
+`airk-mcp` `tests::code_fact_ranges_and_minimal_rows_are_opt_in_and_refuse_conflicts`.
+
 Structured views offer **Complete response** even when cited cards are present. Full JSON and Markdown copies/exports preserve the complete response. Selected-evidence exports deliberately remain selected subsets and identify source uncertainty. Output/payload limits still apply; truncation, omitted records and failures are explicit. Previously saved turns keep their original response; rerun a command to collect new fields.
 
 ## Regression evidence

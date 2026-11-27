@@ -169,7 +169,7 @@ pub enum EvidenceCommand {
         #[arg(long)]
         cursor: Option<String>,
         /// Durable symbol key from indexed continuity evidence; excludes textual filters.
-        #[arg(long, conflicts_with_all = ["name", "kind", "language", "path_prefix", "cursor", "name_match", "include_count"])]
+        #[arg(long, conflicts_with_all = ["name", "kind", "language", "path_prefix", "cursor", "name_match", "include_count", "path", "start_line", "end_line", "minimal"])]
         symbol_key: Option<airk_core::identity::SymbolKey>,
         #[arg(long)]
         name: Option<String>,
@@ -179,6 +179,18 @@ pub enum EvidenceCommand {
         language: Option<String>,
         #[arg(long, default_value = "")]
         path_prefix: String,
+        /// Exact indexed file path; takes precedence over --path-prefix.
+        #[arg(long)]
+        path: Option<String>,
+        /// First line (1-based, inclusive) of a range in --path; facts whose lines overlap it match.
+        #[arg(long, requires_all = ["end_line", "path"])]
+        start_line: Option<usize>,
+        /// Last line (1-based, inclusive) of the --path range.
+        #[arg(long, requires_all = ["start_line", "path"])]
+        end_line: Option<usize>,
+        /// Minimal rows with their enclosing scope; path, hash and provenance once per file.
+        #[arg(long)]
+        minimal: bool,
         #[arg(long, default_value_t = 10)]
         limit: usize,
         #[arg(long, default_value_t = 8192)]
@@ -630,16 +642,28 @@ pub fn query(command: EvidenceCommand) -> Result<(&'static str, Value)> {
             name,
             kind,
             language,
+            path,
+            start_line,
+            end_line,
+            minimal,
             limit,
             max_bytes,
             ..
-        } => (
-            "airk_code_facts",
-            query_options(
-                json!({"compact":compact,"cursor":cursor,"symbol_key":symbol_key,"path_prefix":path_prefix,"name":name,"kind":kind,"language":language,"limit":limit,"max_bytes":max_bytes}),
-                matching,
-            )?,
-        ),
+        } => {
+            let mut arguments = json!({"compact":compact,"cursor":cursor,"symbol_key":symbol_key,"path_prefix":path_prefix,"name":name,"kind":kind,"language":language,"limit":limit,"max_bytes":max_bytes});
+            // Only given options are sent, so earlier requests keep their bytes.
+            for (key, value) in [
+                ("path", path.map(Value::from)),
+                ("start_line", start_line.map(Value::from)),
+                ("end_line", end_line.map(Value::from)),
+                ("minimal", minimal.then_some(Value::Bool(true))),
+            ] {
+                if let Some(value) = value {
+                    arguments[key] = value;
+                }
+            }
+            ("airk_code_facts", query_options(arguments, matching)?)
+        }
         EvidenceCommand::Relationships {
             symbol,
             direction,

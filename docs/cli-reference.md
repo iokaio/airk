@@ -1314,6 +1314,18 @@ Options:
       --path-prefix <PATH_PREFIX>
           [default: ""]
 
+      --path <PATH>
+          Exact indexed file path; takes precedence over --path-prefix
+
+      --start-line <START_LINE>
+          First line (1-based, inclusive) of a range in --path; facts whose lines overlap it match
+
+      --end-line <END_LINE>
+          Last line (1-based, inclusive) of the --path range
+
+      --minimal
+          Minimal rows with their enclosing scope; path, hash and provenance once per file
+
       --limit <LIMIT>
           [default: 10]
 
@@ -3870,7 +3882,7 @@ Options:
 
 
       --limit <LIMIT>
-          [default: 10]
+          Maximum number of results. Omit to let Search choose the count
 
       --max-bytes <MAX_BYTES>
           [default: 8192]

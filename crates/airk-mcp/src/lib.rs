@@ -675,6 +675,15 @@ pub struct CodeFactArgs {
     pub path_prefix: String,
     /// Exact indexed file path; takes precedence over path_prefix.
     pub path: Option<String>,
+    /// First line, 1-based and inclusive, of a range in the exact path; requires end_line. A fact matches when its own lines overlap the range, e.g. the definition containing a line.
+    #[schemars(range(min = 1))]
+    pub start_line: Option<usize>,
+    /// Last line, 1-based and inclusive; requires start_line and an exact path. Not combinable with symbol_key.
+    #[schemars(range(min = 1))]
+    pub end_line: Option<usize>,
+    /// Minimal rows: name, kind, lines, signature and owner (innermost enclosing scope); path, content hash and provenance once per file group. Rows omit symbol IDs. Not combinable with compact=false, reply_detail=rich or symbol_key.
+    #[serde(default)]
+    pub minimal: bool,
     #[serde(default = "default_limit")]
     #[schemars(range(min = 1, max = 100))]
     pub limit: usize,
@@ -729,6 +738,52 @@ fn continuity_selector(
     } else {
         airk_core::continuity::ContinuityKey::Document(key.parse()?)
     }))
+}
+/// Code-fact representation `(compact, minimal)`. Without `minimal` this is
+/// the existing choice: explicit compact/reply_detail, else compact under
+/// Agent Lean. `minimal` and the line range address facts of one file and
+/// are refused with a durable symbol key.
+fn code_fact_projection(
+    args: &CodeFactArgs,
+    applied_detail: impl FnOnce() -> anyhow::Result<Option<airk_core::extraction::IndexDetail>>,
+) -> anyhow::Result<(bool, bool)> {
+    use airk_core::read_arguments::ReadArgumentError;
+    if args.symbol_key.is_some() {
+        for (field, used) in [
+            ("start_line", args.start_line.is_some()),
+            ("end_line", args.end_line.is_some()),
+            ("minimal", args.minimal),
+        ] {
+            if used {
+                return Err(ReadArgumentError::new(
+                    "invalid_arguments",
+                    field,
+                    format!("{field} cannot be combined with symbol_key"),
+                )
+                .into());
+            }
+        }
+    }
+    let selected =
+        airk_core::reply::ReplyDetail::compact(args.response.reply_detail, args.compact)?;
+    if args.minimal {
+        if selected == Some(false) {
+            return Err(ReadArgumentError::new(
+                "invalid_arguments",
+                "minimal",
+                "minimal rows cannot be combined with compact=false or reply_detail=rich",
+            )
+            .into());
+        }
+        return Ok((false, true));
+    }
+    Ok((
+        match selected {
+            Some(value) => value,
+            None => applied_detail()? == Some(airk_core::extraction::IndexDetail::AgentLean),
+        },
+        false,
+    ))
 }
 fn default_direction() -> String {
     "incoming".into()
@@ -997,16 +1052,8 @@ impl AirkServer {
             args.response,
             args.verification.controls(),
             move |kernel| {
-                let compact = match airk_core::reply::ReplyDetail::compact(
-                    args.response.reply_detail,
-                    args.compact,
-                )? {
-                    Some(value) => value,
-                    None => {
-                        kernel.applied_index_detail()?
-                            == Some(airk_core::extraction::IndexDetail::AgentLean)
-                    }
-                };
+                let (compact, minimal) =
+                    code_fact_projection(&args, || kernel.applied_index_detail())?;
                 if let Some(key) = continuity_selector(
                     args.symbol_key.as_deref(),
                     true,
@@ -1034,13 +1081,15 @@ impl AirkServer {
                         document_only: false,
                     },
                     &airk_core::discovery::DiscoveryOptions {
-                        minimal: false,
+                        minimal,
                         cursor: args.cursor,
                         compact,
                     },
                     &airk_core::discovery::FactDiscoveryOptions {
                         name_match: args.name_match.map(Into::into),
                         include_count: args.include_count,
+                        start_line: args.start_line,
+                        end_line: args.end_line,
                     },
                 )
             },
@@ -1362,6 +1411,7 @@ impl AirkServer {
                 let matching = airk_core::discovery::FactDiscoveryOptions {
                     name_match: args.name_match.map(Into::into),
                     include_count: args.include_count,
+                    ..Default::default()
                 };
                 kernel.facts_page_with_options(
                     &args.query(Some("definition"), true, false),
@@ -1400,6 +1450,7 @@ impl AirkServer {
                 let matching = airk_core::discovery::FactDiscoveryOptions {
                     name_match: args.name_match.map(Into::into),
                     include_count: args.include_count,
+                    ..Default::default()
                 };
                 kernel.facts_page_with_options(
                     &args.query(Some("import"), false, false),
@@ -1989,6 +2040,76 @@ mod tests {
         );
         let schema = serde_json::to_value(schemars::schema_for!(DocumentFactArgs)).unwrap();
         assert!(schema["properties"].get("document_key").is_some());
+    }
+
+    #[test]
+    fn code_fact_ranges_and_minimal_rows_are_opt_in_and_refuse_conflicts() {
+        use airk_core::extraction::IndexDetail;
+        let args =
+            |value: serde_json::Value| -> CodeFactArgs { serde_json::from_value(value).unwrap() };
+        let lean = || Ok(Some(IndexDetail::AgentLean));
+        let detailed = || Ok(Some(IndexDetail::Detailed));
+        // Omitted controls keep the existing compact default per index detail.
+        assert_eq!(
+            code_fact_projection(&args(serde_json::json!({})), lean).unwrap(),
+            (true, false)
+        );
+        assert_eq!(
+            code_fact_projection(&args(serde_json::json!({})), detailed).unwrap(),
+            (false, false)
+        );
+        for value in [
+            serde_json::json!({"minimal":true}),
+            serde_json::json!({"minimal":true,"compact":true}),
+            serde_json::json!({"minimal":true,"reply_detail":"lean"}),
+        ] {
+            assert_eq!(
+                code_fact_projection(&args(value), detailed).unwrap(),
+                (false, true)
+            );
+        }
+        let key = "01".repeat(16);
+        for (value, field) in [
+            (
+                serde_json::json!({"minimal":true,"compact":false}),
+                "minimal",
+            ),
+            (
+                serde_json::json!({"minimal":true,"reply_detail":"rich"}),
+                "minimal",
+            ),
+            (
+                serde_json::json!({"symbol_key":key,"start_line":1}),
+                "start_line",
+            ),
+            (
+                serde_json::json!({"symbol_key":key,"end_line":1}),
+                "end_line",
+            ),
+            (
+                serde_json::json!({"symbol_key":key,"minimal":true}),
+                "minimal",
+            ),
+        ] {
+            let error = code_fact_projection(&args(value), lean).unwrap_err();
+            let typed = error
+                .downcast_ref::<airk_core::read_arguments::ReadArgumentError>()
+                .unwrap();
+            assert_eq!(
+                (typed.code, typed.field.as_str()),
+                ("invalid_arguments", field)
+            );
+        }
+        let schema = serde_json::to_value(schemars::schema_for!(CodeFactArgs)).unwrap();
+        for field in ["start_line", "end_line", "minimal"] {
+            assert!(schema["properties"].get(field).is_some(), "{field}");
+            assert!(
+                !schema["required"]
+                    .as_array()
+                    .is_some_and(|required| required.contains(&field.into())),
+                "{field}"
+            );
+        }
     }
 
     #[test]
