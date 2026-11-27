@@ -145,7 +145,7 @@ def live_backend(source: Path, map_file: Path, layout: str = "full", decline: bo
     """Answer every call from the live files and the topical map (``live_gather.py``); no service is called.
 
     With ``decline`` the approved decline rule (``gather_decline.py``) is applied first, and a declined
-    call is answered with the refusal, listing the files the rule found, as a tool error.
+    call is answered with the refusal, as a tool error.
     """
     import gather_decline
     import live_gather
@@ -161,7 +161,7 @@ def live_backend(source: Path, map_file: Path, layout: str = "full", decline: bo
             declined, _ = gather_decline.decide(seen)
             if declined:
                 text = json.dumps({"error": {"code": "gather_context_declined",
-                                             "message": gather_decline.refusal(seen, with_files=True)}},
+                                             "message": gather_decline.refusal(seen)}},
                                   ensure_ascii=False, separators=(",", ":"))
                 return text, True, text.encode("utf-8")
         brief = gather(repository, arguments)
