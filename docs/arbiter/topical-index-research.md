@@ -144,6 +144,19 @@ brought in where an experiment calls for choosing among what is gathered.
   that call the tool on tasks where it should and should not be used.
   The decline rule stays as the backstop for calls the description does
   not prevent.
+- *Later experiment: a description that follows the repository (user,
+  27 November 2026).* For the prototype one description is overridden by
+  hand for a test. In the product the description may need to be
+  composed from what the topical index finds: a repository that is
+  mostly documents may need different words from one that is mostly
+  Python, C# or Rust. To try once a description has been found that
+  works on the current two repositories: derive a few facts from the map
+  (share of files by role and language, how many guidance files, how
+  large the repository is, whether tests sit beside sources) and test
+  whether a description built from them beats the single best fixed
+  one, on repositories of different make-up. It needs at least one
+  document-heavy repository and one in a language not yet covered, so
+  it belongs with the fresh-task phase.
 - *Stop rule.* If a task's best result stays under half of its oracle
   saving after its set, that is recorded as the finding for that task and
   work moves on. If that happens on three tasks running, the series stops

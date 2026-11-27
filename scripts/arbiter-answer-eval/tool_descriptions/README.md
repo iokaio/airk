@@ -35,5 +35,15 @@ loses.
 | --- | --- | --- | --- | --- | --- | --- |
 | `d0-build` | kernel brief | all 20, first round trip only | 20 of 20 sessions called, on every task | same | not a cost series | `tool-firstcall-r1` |
 
+## Later: descriptions that follow the repository
+
+These fixed texts are for the prototype. The product may need to compose
+the description from what the topical index finds, since a repository
+that is mostly documents may need different words from one that is
+mostly Python, C# or Rust. That experiment is noted in the plan
+("Later experiment: a description that follows the repository") and
+waits for a description that works on the current two repositories and
+for repositories of a different make-up.
+
 Rows are added as series finish. A variant is not called effective from
 one task: the row says which tasks it was run on.
