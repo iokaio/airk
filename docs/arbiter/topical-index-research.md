@@ -183,6 +183,48 @@ captures none of it, and the repository is small, so calls are quick.
 Next in line: bookbuilder-N-C3, in the other repository and a narrow
 coding task.
 
+### Round 1: munarium-T1
+
+All conditions five repeats on Sonnet, at one price, compared by
+`agent_cost_task.py`. The unaided baseline is $0.689 (0.54 to 0.80),
+11 round trips, 154 KB read through the agent's own tools.
+
+**Set 1: which layout, with perfect content** (ceiling first).
+
+| Condition | Hypothesis | Median cost | Against no tool | Spread | Round trips | Own reads | Reply |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Passages (the original oracle) | reference | $0.493 | 28.6% lower | 0.46 to 0.74 | 9 | 110 KB | 10.4 KB |
+| Ranges with Read offsets, no text | A small reply steers the agent to partial reads | $0.552 | 20.0% lower | 0.47 to 0.81 | 9 | 131 KB | 2.1 KB |
+| Ranges plus "read only these" | Telling the agent to stay in the ranges cuts whole-file reads | $0.587 | 14.9% lower | 0.47 to 0.64 | 10 | 131 KB | 2.3 KB |
+| Passages plus "do not read these again" | Text replaces reads if the agent is told it may rely on it | $0.408 | **40.8% lower** | 0.36 to 0.49 | 8 | 85 KB | 10.7 KB |
+
+Findings:
+
+1. Text in the reply beats pointers to it. With ranges only, the agent
+   reads the files anyway, and mostly whole: the small reply saves nothing
+   that the reads do not spend again.
+2. A line saying the passages are the exact current text and need not be
+   read again takes the saving from 29 to 41 percent and makes it
+   steady: the five runs fall between $0.36 and $0.49, where every other
+   condition has a run near the baseline.
+3. The same kind of line on ranges does not help. Telling the agent what
+   not to do works only when the reply already holds what it would
+   otherwise fetch.
+4. Kept for this task: passages with the line.
+
+**Before set 2: the prototype's ranking is the weak point.** A focused
+layout was added to the prototype (`live_gather.focus`): the ranges of the
+six best files only, their text within 14,000 bytes, the line, a compact
+census, and no outline or path list. On the replay it carries 23 truth
+items as passages, up from none, and loses most of the rest: 26 of 113 at
+their lines and 42 files reached, against 74 and 99 for the full layout.
+The cause is the order of files: only 33 of the 85 distinct truth files
+are among a task's first six ranked files, and 48 among the first 16; the
+rest are found by the census and never ranked high enough to be given
+ranges. So the layout that pays needs a precise short list, and the
+prototype's list is not precise. Ranking is the next thing to improve,
+and it is the reranker's natural place.
+
 ### Where the tool costs more
 
 Started from the three 20-task series already run, at one price, medians
