@@ -144,6 +144,45 @@
         ],
         "type": "object"
       },
+      "Deliverable": {
+        "description": "What the caller will produce from the gathered context.",
+        "enum": [
+          "code_change",
+          "test",
+          "document",
+          "analysis"
+        ],
+        "type": "string"
+      },
+      "KnownRange": {
+        "additionalProperties": false,
+        "description": "A repository-relative path, whole or with inclusive one-based lines.",
+        "properties": {
+          "end_line": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "start_line": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
       "ResponseMode": {
         "enum": [
           "terse",
@@ -159,6 +198,13 @@
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,
     "properties": {
+      "anchors": {
+        "description": "Exact strings from the caller's task. Each gets an exact lookup in\nround one. An anchor is data, never a pattern.",
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
       "budget": {
         "$ref": "#/$defs/BudgetV3"
       },
@@ -172,6 +218,16 @@
           }
         ],
         "description": "A ticket or continuation id, to attach to an existing job."
+      },
+      "deliverable": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/Deliverable"
+          },
+          {
+            "type": "null"
+          }
+        ]
       },
       "fresh": {
         "description": "Start an independent run; never reuse a job by digest.",
@@ -192,6 +248,20 @@
           "string",
           "null"
         ]
+      },
+      "known": {
+        "description": "Source the caller already holds. Evidence wholly inside a known range\nis withheld and counted.",
+        "items": {
+          "$ref": "#/$defs/KnownRange"
+        },
+        "type": "array"
+      },
+      "needs": {
+        "description": "What the caller must find out, one fact each. When present these are\nthe request's sub-needs, in this order, and the kernel derives none.",
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
       },
       "project": {
         "description": "Configured source scope from projects. Required when this connection has no single default; never follows the Explorer dropdown.",

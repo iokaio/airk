@@ -310,6 +310,10 @@ fn decision_mode_is_absent_or_top_score() -> Result<()> {
 fn context_template() -> Result<airk_core::arbiter::answer_loop::ContextRequestV3> {
     use airk_core::arbiter::answer_loop::{BudgetV3, ContextRequestV3, REQUEST_SCHEMA_V3};
     let request = ContextRequestV3 {
+        needs: Vec::new(),
+        anchors: Vec::new(),
+        deliverable: None,
+        known: Vec::new(),
         schema: REQUEST_SCHEMA_V3.into(),
         question: "__PRIVATE_FROZEN_QUESTION__".into(),
         budget: BudgetV3::default(),

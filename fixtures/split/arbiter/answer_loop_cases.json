@@ -1258,7 +1258,7 @@
       "replace": [
         {
           "pointer": "/parts/0/rounds/0/calls",
-          "value": 8
+          "value": 24
         }
       ]
     },

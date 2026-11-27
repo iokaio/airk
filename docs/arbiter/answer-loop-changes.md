@@ -4215,3 +4215,41 @@ authority. Scope and range refusals remain canonical.
 The Windows complete-evidence failure remains recorded. The offline and
 fresh diagnostic comparison measures retrieval and delivery separately from
 the paused judged baseline.
+
+### 73. Caller-stated needs and anchors on the version 3 request
+
+The user decided on 26 November 2026 that the calling agent states the needs.
+A probe of the published Qwen3-Reranker-4B outside AIRK had shown that it
+finds the required passages when the query states the need and not from the
+task alone.
+
+**Contract.** A version 3 request may carry `needs`, `anchors`,
+`deliverable` and `known`. Each is omitted when absent or empty, so a request
+without them keeps its bytes and digest. The single part of a request with
+caller needs holds up to `MAX_NEEDS` (8) sub-needs. Kernel-derived sub-needs
+keep `MAX_SUB_NEEDS` (4), with `MAX_CARD_SEGMENTS` and `MAX_DECISIONS`
+unchanged. A first draft renamed that limit inside the two card policy
+sources, which changed every profile's task policy identity and made the
+fixture refuse its installed models; the sources were restored byte for byte. A reply sub-need gains `origin`, present only when
+the caller stated it. Round one may hold one exact lookup per anchor, and the
+reply check allows 16.
+[Core contract](../../crates/airk-core/src/arbiter/CONTRACT.md#optional-caller-inputs-user-decision-26-november-2026)
+
+**Kernel.** A request with needs is one part with no Split and no Plan
+decision. The caller's statements are its sub-needs in order, each searched
+in its own words. Each anchor gets one exact lexical search in round one,
+and a failed lookup does not refuse the request.
+[Kernel contract](../../crates/airk-kernel/src/arbiter/CONTRACT.md#caller-needs-and-anchors-26-november-2026)
+
+**Generated.** The reviewed schema capture gained 88 lines and lost none.
+The TypeScript types were regenerated from it. One Rust-emitted refusal case
+changed its boundary value from 8 to 24 round-one reads.
+
+The public Answer cases fixture gained 70 lines, because the public tool's
+schema is generated from the request type and now advertises the four fields.
+
+**Not done.** `deliverable` and `known` do not change gathering yet. The
+public tool's description does not ask callers to fill the new fields, and
+`task` is not implemented. Needs do not yet run as
+separate jobs with a union by need, and no model judges against a need's own
+statement. Nothing here was run on the real indexes.

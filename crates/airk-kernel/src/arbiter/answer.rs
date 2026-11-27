@@ -417,6 +417,14 @@ impl Loop<'_> {
     fn split(&mut self) -> Result<()> {
         self.fence()?;
         let question = self.request.question.as_str();
+        if !self.request.needs.is_empty() {
+            // Caller needs make the request one part, with no Split decision
+            // (Core CONTRACT "Optional caller inputs").
+            let span = split::part_span(question, (0, question.len()));
+            self.parts
+                .push(PartState::new(1, span, &question[span.0..span.1]));
+            return self.cut_shares();
+        }
         let plan = split::propose(question, self.request.budget.max_parts);
         let cards: Vec<LoopCard> = plan
             .cards
@@ -451,6 +459,11 @@ impl Loop<'_> {
                 &question[span.0..span.1],
             ));
         }
+        self.cut_shares()
+    }
+
+    /// Cut the per-part shares once the parts are known.
+    fn cut_shares(&mut self) -> Result<()> {
         // The Split call is charged before the shares are cut.
         let split_tokens: usize = self.used_tokens.values().sum();
         self.shares = shares::Shares::allocate(
@@ -477,6 +490,26 @@ impl Loop<'_> {
     fn plan(&mut self) -> Result<()> {
         let question = self.request.question.clone();
         for index in 0..self.parts.len() {
+            if !self.request.needs.is_empty() {
+                // The caller's statements are the sub-needs, in order; the
+                // kernel proposes none and no Plan decision is taken.
+                self.parts[index].needs = self
+                    .request
+                    .needs
+                    .iter()
+                    .enumerate()
+                    .map(|(position, text)| {
+                        NeedState::stated(retrieve::Need {
+                            id: position as u8 + 1,
+                            kind: retrieve::NeedKind::Overview,
+                            subject: None,
+                            query: text.clone(),
+                        })
+                    })
+                    .collect();
+                self.progress(index, v3::LoopStage::Plan);
+                continue;
+            }
             let proposals = plan::propose(&self.parts[index].text, &question);
             let cards = plan::cards(&proposals);
             let fallback = plan::deterministic(&proposals, self.request.budget.max_sub_needs);
@@ -833,6 +866,11 @@ impl Loop<'_> {
             let text = self.parts[part].text.clone();
             let search = retrieve::part_search(&mut self.gather, id, &text)?;
             self.offer(part, search)?;
+            // Every caller anchor gets an exact lookup in round one.
+            for anchor in &self.request.anchors {
+                let lookup = retrieve::anchor_search(&mut self.gather, id, anchor)?;
+                self.offer(part, lookup)?;
+            }
             let needs: Vec<_> = self.parts[part]
                 .needs
                 .iter()

@@ -412,6 +412,12 @@ Past any of them, the call gets `Busy` and no job is made.
   above.
   - The request digest covers the schema, the question and every budget
     field except `deadline_ms`. The continuation is not part of it.
+  - The caller inputs (`needs`, `anchors`, `deliverable`, `known`) join the
+    digest as one more segment when any is present. A request without them
+    keeps the digest it had before 26 November 2026, and a request with
+    them never attaches to a job that lacked them. The first build of the
+    caller inputs left them out, and a real-task run with needs was
+    answered from the stored job of the bare task.
   - The same question asked in another scope is a separate job.
 - **Continuations.** An explicit continuation attaches only within its own
   scope, and only to the same request on a current publication.

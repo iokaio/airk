@@ -127,6 +127,10 @@ async fn public_answer_sdk_preserves_advertised_schema_full_utf8_question_and_bu
         question: "amber_marker".into(),
         budget: budget.clone(),
         continuation: None,
+        needs: Vec::new(),
+        anchors: Vec::new(),
+        deliverable: None,
+        known: Vec::new(),
     };
     short.validate()?;
     let mut full_question = "amber_marker é中".to_owned();

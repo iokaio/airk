@@ -1316,6 +1316,60 @@ the same day. Version 3 lands beside version 2. Request and response /1 and
 kernel, MCP, frontend and CLI and delete them; there is no backward
 compatibility after that.
 
+### Optional caller inputs (user decision, 26 November 2026)
+
+A version 3 request may carry four optional fields. Each is omitted from the
+serialized request when absent or empty, so a request without them keeps its
+bytes and its digest. The schema name stays `airk.arbiter.context.request/3`.
+
+- `needs`: up to 8 statements (`MAX_NEEDS`), each 1 to 400 bytes of UTF-8
+  without control characters, no two alike. When present they are the
+  sub-needs of the request, in the caller's order, and the kernel derives none
+  of its own. A request with `needs` is one part.
+- `anchors`: up to 16 exact strings (`MAX_ANCHORS`), each 1 to 200 bytes, no
+  two alike. Each gets an exact lookup in the first round. An anchor is data
+  and is never interpreted as a pattern.
+- `deliverable`: one of `code_change`, `test`, `document`, `analysis`.
+- `known`: up to 32 repository-relative paths (`MAX_KNOWN`), each whole or
+  with an inclusive one-based line range. Evidence wholly inside a known
+  range is not returned again and is counted as withheld.
+
+The four fields are inputs to the request digest when present, so two requests
+that differ in any of them are different jobs.
+
+The single part of a request with caller needs holds up to `MAX_NEEDS` (8)
+sub-needs. Everything about kernel-derived sub-needs keeps `MAX_SUB_NEEDS`
+(4): the budget's `max_sub_needs`, Plan's chosen cards, `MAX_CARD_SEGMENTS`
+(16) and `MAX_DECISIONS` (101). One part of eight caller needs takes 50
+decisions, inside the same bound. `MAX_SUB_NEEDS` keeps its name and value
+because the card policy sources that use it (`answer_loop/cards.rs` and the
+retrieval crate's `loop_cards.rs`) are hashed into each model profile's task
+policy identity: editing them, even to rename a constant, makes every
+installed profile stale.
+
+A part's first round may hold one exact lookup per anchor beside its part
+search and its sub-needs' reads. A reply does not carry its request, so the
+reply check allows `MAX_ANCHORS` (16) such reads in round one for any reply.
+The request's call budget still bounds the reads actually made.
+
+A reply sub-need carries `origin`: `caller` when the request stated it, and
+absent when the kernel derived it, so replies without caller needs keep their
+bytes. A part's sub-needs are all derived or all the caller's. A part may hold
+more than the budget's `max_sub_needs` only when its sub-needs are the
+caller's and it is the reply's only part.
+
+Tests: `a_request_without_caller_inputs_keeps_its_bytes` and
+`caller_inputs_round_trip_and_keep_their_bounds` in `answer_loop::tests`, and
+the reviewed schema capture `packages/contracts-gen/arbiter.schema.json`.
+
+Not done yet, each with its owner: the kernel uses `needs` and `anchors`
+(kernel `arbiter/CONTRACT.md`); `deliverable` and `known` are accepted and
+validated and do not yet change gathering. The public Answer tool's schema is
+generated from this request type, so it now advertises the four fields
+(`fixtures/split/arbiter/public_answer_cases.json`, 70 lines added). Its
+description does not yet ask callers to fill them, and the `task` argument
+is not implemented (MCP).
+
 ### Reply frame: 128 KiB for Answer (user decision, 22 November 2026)
 
 The user raised the Answer reply limit to 128 KiB (plan section 12.9, which

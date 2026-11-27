@@ -53,7 +53,9 @@ historical runs use their original MiniLM inputs.
   `cal100-focus1024-launch-r1/inputs.json`, SHA-256 `8fbde10f…373d`). The
   selector requires exactly one Focus, one Compact and one Large profile, and
   a fresh installation copies all three weight files (about 24.1 GB).
-- The bundled MiniLM (`artifacts/advanced-split/bundled-model-v3/minilm-l6-v2-u8-v3`).
+- The bundled FP16 MiniLM
+  (`artifacts/indexing-plan/minilm-fp16-build-inputs-r1/minilm-l6-v2-fp16-v1`),
+  the profile the service build embeds.
 - For `leak-probe`: the scenario JSON files under
   `<evaluation>/scenarios/*/*.json` and `<evaluation>/sealed/*/*.json` of each
   probed index's repository (the index's own name and every name that

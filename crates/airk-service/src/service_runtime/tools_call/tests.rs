@@ -8,6 +8,10 @@ fn short_answer_arguments() -> Result<Map<String, Value>> {
         ..Default::default()
     };
     let request = airk_core::arbiter::answer_loop::ContextRequestV3 {
+        needs: Vec::new(),
+        anchors: Vec::new(),
+        deliverable: None,
+        known: Vec::new(),
         schema: airk_core::arbiter::answer_loop::REQUEST_SCHEMA_V3.into(),
         question: "synthetic bounded source question".into(),
         budget,

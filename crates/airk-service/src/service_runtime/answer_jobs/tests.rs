@@ -60,6 +60,10 @@ fn publication(generation: u8) -> Sha256Digest {
 
 fn request(question: &str, deadline_ms: u64) -> ContextRequestV3 {
     ContextRequestV3 {
+        needs: Vec::new(),
+        anchors: Vec::new(),
+        deliverable: None,
+        known: Vec::new(),
         schema: REQUEST_SCHEMA_V3.into(),
         question: question.into(),
         budget: BudgetV3 {
@@ -829,6 +833,36 @@ fn the_request_digest_ignores_the_deadline_and_the_continuation() {
     let mut c = request("q", 300_000);
     c.budget.rounds = 2;
     assert_ne!(request_digest(&a).unwrap(), request_digest(&c).unwrap());
+}
+
+/// Found on 26 November 2026: the digest left the caller inputs out, so a
+/// call with needs was answered from the stored job of the bare question.
+#[test]
+fn the_request_digest_covers_caller_inputs_and_is_unchanged_without_them() {
+    let bare = request("q", 300_000);
+    let mut budget = bare.budget.clone();
+    budget.deadline_ms = 0;
+    let before = airk_core::identity::framed_digest(
+        b"airk.answer.job.request/1",
+        &[
+            bare.schema.as_bytes(),
+            b"q",
+            &serde_json::to_vec(&budget).unwrap(),
+        ],
+    );
+    assert_eq!(request_digest(&bare).unwrap(), before);
+    let mut needs = request("q", 300_000);
+    needs.needs = vec!["where the limit is defined".into()];
+    let mut anchors = request("q", 300_000);
+    anchors.anchors = vec!["MAX_TOKENS".into()];
+    let mut both = needs.clone();
+    both.anchors = anchors.anchors.clone();
+    let digests = [&bare, &needs, &anchors, &both].map(|item| request_digest(item).unwrap());
+    for (index, left) in digests.iter().enumerate() {
+        for right in &digests[index + 1..] {
+            assert_ne!(left, right);
+        }
+    }
 }
 
 // --- The async table on paused Tokio time. -----------------------------

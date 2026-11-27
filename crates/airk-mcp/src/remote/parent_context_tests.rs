@@ -93,6 +93,10 @@ async fn routed_answer_admission_preserves_complete_canonical_arguments_and_repl
 -> anyhow::Result<()> {
     let backend = Observed::default();
     let mut request = serde_json::to_value(airk_core::arbiter::answer_loop::ContextRequestV3 {
+        needs: Vec::new(),
+        anchors: Vec::new(),
+        deliverable: None,
+        known: Vec::new(),
         schema: airk_core::arbiter::answer_loop::REQUEST_SCHEMA_V3.into(),
         question: "routed original allowance".into(),
         budget: airk_core::arbiter::answer_loop::BudgetV3 {

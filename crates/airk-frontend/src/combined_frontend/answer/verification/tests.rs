@@ -3,6 +3,10 @@ use super::*;
 
 fn args(mode: Option<&str>) -> Map<String, Value> {
     let request = airk_core::arbiter::answer_loop::ContextRequestV3 {
+        needs: Vec::new(),
+        anchors: Vec::new(),
+        deliverable: None,
+        known: Vec::new(),
         schema: airk_core::arbiter::answer_loop::REQUEST_SCHEMA_V3.into(),
         question: "exact evidence".into(),
         budget: Default::default(),

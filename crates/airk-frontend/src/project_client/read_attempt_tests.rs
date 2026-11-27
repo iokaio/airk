@@ -321,6 +321,10 @@ async fn partition_purpose_exchange(row: &str, refusals: bool) -> Result<()> {
         .remove(0)
         .context("one admitted Answer member")?;
         let request = airk_core::arbiter::answer_loop::ContextRequestV3 {
+            needs: Vec::new(),
+            anchors: Vec::new(),
+            deliverable: None,
+            known: Vec::new(),
             schema: airk_core::arbiter::answer_loop::REQUEST_SCHEMA_V3.into(),
             question: "fixed native purpose control".into(),
             budget: allowance.clamp(&parent)?,

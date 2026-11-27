@@ -821,6 +821,33 @@ tracks the source record that prompted it. Excerpt evidence alone joins the
 public records. The published request and reply schemas are unchanged.
 
 
+### Caller needs and anchors (26 November 2026)
+
+Core owns the request fields (Core CONTRACT, "Optional caller inputs"). The
+kernel uses two of them.
+
+- **`needs`.** A request with caller needs is one part over the whole
+  question, with no Split decision. Its sub-needs are the caller's
+  statements, in order, each searched in its own words, with no Plan
+  decision. Each takes the overview recipe: a search, whole chunks of the
+  kept hits and their outlines. The reply marks each such sub-need
+  `origin: caller`.
+- **`anchors`.** Each anchor gets one exact lexical search in round one, as
+  a part-level read beside the part search. The anchor is the whole query
+  and is never read as a pattern. Unlike the part search, a lookup that
+  fails or finds nothing does not refuse the request. On the wire its
+  record use is a part search.
+- **Not used yet.** `deliverable` and `known` are validated by Core and do
+  not change gathering. Per-need jobs still share one part's budget shares
+  and one reply paragraph each; the union by need and the returned
+  vocabulary of the plan are not built.
+
+Tests: `arbiter::answer::tests::caller` (needs become the ordered sub-needs
+of one part without Split or Plan decisions, a request without needs keeps
+its reply shape, every anchor gets one lexical lookup, and a failed lookup
+does not refuse the request). They run the real loop on canned reads with
+no model.
+
 A later round can follow an exact quoted action or route from a cited
 native source read. A known second occurrence with an independent source
 context permits a hash-bound Read File. With no known target, lexical

@@ -78,7 +78,7 @@ DEFAULT_INPUTS_SHA256 = "8fbde10f3fc8a42d1d05ec0f362a1e0527840ad49fa6686224f1fee
 # configuration emitter authenticates the selected manifest and asset bytes.
 MINILM = Path(os.environ["AIRK_EVALUATION_MINILM_DIRECTORY"]).resolve(strict=True) if (
     "AIRK_EVALUATION_MINILM_DIRECTORY" in os.environ
-) else ROOT / "artifacts/advanced-split/bundled-model-v3/minilm-l6-v2-u8-v3"
+) else ROOT / "artifacts/indexing-plan/minilm-fp16-build-inputs-r1/minilm-l6-v2-fp16-v1"
 REPOSITORIES = {"airk": Path(r"D:\code\Github\airk"), "bookbuilder": Path(r"D:\code\Github\bookbuilder"),
                 # A fresh bookbuilder index (22 Nov 2026): its denies are source policy before the first index
                 # pass, because trimming the live bookbuilder index degraded its vector publication (token 267).

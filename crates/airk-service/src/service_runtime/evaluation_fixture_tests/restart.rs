@@ -572,7 +572,11 @@ mod cuda_restart {
     };
     use airk_store::service::{ServiceLease, registry::ServiceRegistry};
 
-    const MAX_SUCCESSORS: usize = 16;
+    /// CUDA restarts one evaluation installation may chain. Raised from 16 to 64 on
+    /// 26 November 2026 by user decision: the settled Windows publications had
+    /// reached 16 and re-indexing them to continue was not warranted. Every link
+    /// is still read and checked.
+    const MAX_SUCCESSORS: usize = 64;
 
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]

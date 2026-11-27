@@ -64,7 +64,7 @@ def launch(concurrent):
         E/"windows-fresh-cpu-ort-r3/cpu-environment.json",E/"q","x86_64-pc-windows-msvc"))
     env.update(TEMP=str(OUT/"temp"),TMP=str(OUT/"temp"),TMPDIR=str(OUT/"temp"),APPDATA=str(OUT/"appdata"),
                LOCALAPPDATA=str(OUT/"localappdata"),PYTHONDONTWRITEBYTECODE="1",CARGO_TARGET_DIR=str(ROOT/"target"),
-               AIRK_BUNDLED_MODEL_DIR=str(ROOT/"artifacts/advanced-split/bundled-model-v3"))
+               AIRK_BUNDLED_MODEL_DIR=str(ROOT/"artifacts/indexing-plan/minilm-fp16-build-inputs-r1"))
     cmd=[sys.executable,"-I","-B","-S",str(script),"--runtime-dir",str(product["OUT"]/"runtime"),
          "--admin-inventory",str(product["ADMIN"]),"--unsigned","--iscc",str(ISCC)]
     saved_support=seal(E/"windows-stock-installer-prospective-private-links-source.txt",

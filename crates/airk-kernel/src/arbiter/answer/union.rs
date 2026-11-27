@@ -596,6 +596,7 @@ fn build(
                     .filter(|id| removed_ids.contains(id))
                     .count();
                 v3::SubNeed {
+                    origin: state.origin,
                     id: state.need.id,
                     text: state.need.query.clone(),
                     kind: state.need.kind.wire(),

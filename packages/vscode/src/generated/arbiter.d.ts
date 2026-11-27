@@ -403,11 +403,27 @@ export type ContextRequestV2 = {
 };
 
 export type ContextRequestV3 = {
+    /**
+     * Exact strings from the caller's task. Each gets an exact lookup in
+     * round one. An anchor is data, never a pattern.
+     */
+    anchors?: Array<string>;
     budget: BudgetV3;
     /**
      * A ticket or continuation id, to attach to an existing job.
      */
     continuation?: Sha256Digest | null;
+    deliverable?: Deliverable | null;
+    /**
+     * Source the caller already holds. Evidence wholly inside a known range
+     * is withheld and counted.
+     */
+    known?: Array<KnownRange>;
+    /**
+     * What the caller must find out, one fact each. When present these are
+     * the request's sub-needs, in this order, and the kernel derives none.
+     */
+    needs?: Array<string>;
     question: string;
     schema: string;
 };
@@ -716,6 +732,11 @@ export type Degradation = {
 };
 
 export type DegradationReason = "deadline_estimate" | "queue_wait" | "device_unavailable" | "memory_unavailable" | "model_unavailable";
+
+/**
+ * What the caller will produce from the gathered context.
+ */
+export type Deliverable = "code_change" | "test" | "document" | "analysis";
 
 /**
  * The deterministic order of section 12.2.
@@ -1101,6 +1122,15 @@ export type JointRule = {
     allowed_relevance: Array<RelevanceHypothesis>;
     allowed_roles: Array<EvidenceRole>;
     minimum_raw_margin: number;
+};
+
+/**
+ * A repository-relative path, whole or with inclusive one-based lines.
+ */
+export type KnownRange = {
+    end_line?: number | null;
+    path: string;
+    start_line?: number | null;
 };
 
 export type LoopCalibration = {
@@ -1544,6 +1574,10 @@ export type SubNeed = {
     id: number;
     kind: SubNeedKind;
     /**
+     * Who stated this sub-need. Absent means the kernel derived it.
+     */
+    origin?: SubNeedOrigin;
+    /**
      * The sub-need's own query wording.
      */
     text: string;
@@ -1554,6 +1588,8 @@ export type SubNeed = {
 };
 
 export type SubNeedKind = "definition" | "callers" | "tests" | "contract" | "documentation" | "configuration" | "other";
+
+export type SubNeedOrigin = "derived" | "caller";
 
 export type Task = "airk.request_supported.v1" | "airk.retrieval_route.v1" | "airk.recipe_choice.v1" | "airk.evidence_relevance.v1" | "airk.evidence_role.v1" | "airk.context_next_read.v1" | "airk.context_gap.v1" | "airk.context_action.v1" | "airk.focus_rank.v1" | "airk.context_plan.v1" | "airk.context_coverage.v1" | "airk.context_follow_up.v1" | "airk.context_split.v1";
 

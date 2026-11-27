@@ -149,7 +149,7 @@ def launch(args):
     env.update(static["load_environment_file"](E/"windows-fresh-cpu-ort-r3/cpu-environment.json",E/"q",ort["TARGET"]))
     env.update(TEMP=str(scratch),TMP=str(scratch),TMPDIR=str(scratch),CARGO_TARGET_DIR=str(target),
                CARGO_BUILD_JOBS="2",CARGO_INCREMENTAL="1",VSCMD_SKIP_SENDTELEMETRY="1",PYTHONDONTWRITEBYTECODE="1",
-               AIRK_BUNDLED_MODEL_DIR=str(ROOT/"artifacts/advanced-split/bundled-model-v3"))
+               AIRK_BUNDLED_MODEL_DIR=str(ROOT/"artifacts/indexing-plan/minilm-fp16-build-inputs-r1"))
     command = [sys.executable,"-I","-B","-S",str(SRC),"--destination",str(OUT/"runtime"),"--profile","debug",
                "--admin-inventory",str(ADMIN),"--staging-parent",str(staging_parent)]
     proof_paths = [Path(__file__).resolve(),Path(__file__).with_name("audit-windows-product-target.ps1"),TOOLS,SRC,ADMIN,custody,FIRST/"execution.json",cargo/"execution.json",E/"windows-fresh-cpu-ort-r3/cpu-environment.json"]

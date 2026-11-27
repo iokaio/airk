@@ -285,6 +285,7 @@ pub(crate) fn fixture() -> Result<Fixture> {
     fixture_with(owner.clone(), owner)
 }
 
+mod caller;
 mod transfer;
 
 pub(crate) fn fixture_with<T: NativeController + 'static>(
@@ -505,6 +506,10 @@ pub(crate) fn canned(
 
 pub(crate) fn request(question: &str) -> v3::ContextRequestV3 {
     v3::ContextRequestV3 {
+        needs: Vec::new(),
+        anchors: Vec::new(),
+        deliverable: None,
+        known: Vec::new(),
         schema: v3::REQUEST_SCHEMA_V3.into(),
         question: question.into(),
         budget: v3::BudgetV3::default(),

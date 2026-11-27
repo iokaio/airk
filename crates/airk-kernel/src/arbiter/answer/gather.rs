@@ -49,6 +49,9 @@ fn canonical(value: &Value) -> Value {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Cause {
     PartSearch,
+    /// A caller anchor's exact lookup: a part-level search of round one
+    /// that, unlike the part search, may fail without refusing the request.
+    Anchor,
     NeedSearch,
     Structural,
     FollowUp,
@@ -56,7 +59,7 @@ pub(crate) enum Cause {
 impl Cause {
     fn wire(self) -> v3::UseCause {
         match self {
-            Self::PartSearch => v3::UseCause::PartSearch,
+            Self::PartSearch | Self::Anchor => v3::UseCause::PartSearch,
             Self::NeedSearch => v3::UseCause::NeedSearch,
             Self::Structural => v3::UseCause::StructuralRead,
             Self::FollowUp => v3::UseCause::FollowUp,

@@ -189,6 +189,10 @@ fn scoped() -> Result<Scoped> {
 
 fn request(deadline_ms: u64) -> ContextRequestV3 {
     ContextRequestV3 {
+        needs: Vec::new(),
+        anchors: Vec::new(),
+        deliverable: None,
+        known: Vec::new(),
         schema: REQUEST_SCHEMA_V3.into(),
         question: "which policy does amber_seam own".into(),
         budget: BudgetV3 {

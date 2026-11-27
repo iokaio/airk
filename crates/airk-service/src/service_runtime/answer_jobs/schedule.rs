@@ -113,18 +113,37 @@ pub(crate) fn publication_digest(publication: &RevisionEnvelope) -> Result<Sha25
 }
 
 /// The digest a retry attaches by: the question and every budget field but
-/// the deadline. The continuation is never part of it.
+/// the deadline. The continuation is never part of it. Caller inputs
+/// (`needs`, `anchors`, `deliverable`, `known`) join it as one more segment
+/// only when any is present, so a request without them keeps its digest and
+/// a request with them is never answered from a job that lacked them.
 pub(crate) fn request_digest(request: &ContextRequestV3) -> Result<Sha256Digest> {
     let mut budget = request.budget.clone();
     budget.deadline_ms = 0;
-    Ok(framed_digest(
-        b"airk.answer.job.request/1",
-        &[
-            request.schema.as_bytes(),
-            request.question.as_bytes(),
-            &serde_json::to_vec(&budget)?,
-        ],
-    ))
+    let budget = serde_json::to_vec(&budget)?;
+    let mut segments: Vec<&[u8]> = vec![
+        request.schema.as_bytes(),
+        request.question.as_bytes(),
+        &budget,
+    ];
+    let caller = if request.needs.is_empty()
+        && request.anchors.is_empty()
+        && request.deliverable.is_none()
+        && request.known.is_empty()
+    {
+        None
+    } else {
+        Some(serde_json::to_vec(&(
+            &request.needs,
+            &request.anchors,
+            &request.deliverable,
+            &request.known,
+        ))?)
+    };
+    if let Some(caller) = &caller {
+        segments.push(caller);
+    }
+    Ok(framed_digest(b"airk.answer.job.request/1", &segments))
 }
 
 #[derive(Clone, Debug)]

@@ -117,6 +117,10 @@ fn budget_bounds_accept_each_maximum_and_refuse_beyond() -> Result<()> {
 
 fn request() -> ContextRequestV3 {
     ContextRequestV3 {
+        needs: Vec::new(),
+        anchors: Vec::new(),
+        deliverable: None,
+        known: Vec::new(),
         schema: "airk.arbiter.context.request/3".into(),
         question: QUESTION.into(),
         budget: budget(),
@@ -149,6 +153,92 @@ fn request_keeps_the_question_bound_and_optional_continuation() -> Result<()> {
     let mut raw = serde_json::to_value(&request)?;
     raw["unknown"] = true.into();
     assert!(serde_json::from_value::<ContextRequestV3>(raw).is_err());
+    Ok(())
+}
+
+#[test]
+fn a_request_without_caller_inputs_keeps_its_bytes() -> Result<()> {
+    // The bytes a request had before the optional caller inputs existed.
+    let text = serde_json::to_string(&request())?;
+    let raw: serde_json::Value = serde_json::from_str(&text)?;
+    let keys: Vec<&str> = raw
+        .as_object()
+        .expect("request object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(keys, ["budget", "question", "schema"]);
+    let built = ContextRequestV3::new(QUESTION, budget());
+    assert_eq!(serde_json::to_string(&built)?, text);
+    let parsed: ContextRequestV3 = serde_json::from_str(&text)?;
+    assert!(parsed.needs.is_empty() && parsed.anchors.is_empty());
+    assert!(parsed.deliverable.is_none() && parsed.known.is_empty());
+    Ok(())
+}
+
+#[test]
+fn caller_inputs_round_trip_and_keep_their_bounds() -> Result<()> {
+    let mut full = request();
+    full.needs = (0..8).map(|n| format!("need {n}")).collect();
+    full.anchors = (0..16).map(|n| format!("ANCHOR_{n}")).collect();
+    full.deliverable = Some(Deliverable::CodeChange);
+    full.known = vec![
+        KnownRange {
+            path: "src/a.rs".into(),
+            start_line: None,
+            end_line: None,
+        },
+        KnownRange {
+            path: "src/b.rs".into(),
+            start_line: Some(3),
+            end_line: Some(3),
+        },
+    ];
+    full.validate()?;
+    let raw = serde_json::to_value(&full)?;
+    assert_eq!(raw["deliverable"], "code_change");
+    assert_eq!(raw["known"][0], serde_json::json!({"path":"src/a.rs"}));
+    assert_eq!(
+        raw["known"][1],
+        serde_json::json!({"path":"src/b.rs","start_line":3,"end_line":3})
+    );
+    let parsed: ContextRequestV3 = serde_json::from_value(raw)?;
+    assert_eq!(parsed.needs.len(), 8);
+    assert_eq!(parsed.anchors.len(), 16);
+
+    let refuse = |change: &dyn Fn(&mut ContextRequestV3)| {
+        let mut wrong = full.clone();
+        change(&mut wrong);
+        assert!(wrong.validate().is_err());
+    };
+    refuse(&|r| r.needs.push("a ninth need".into()));
+    refuse(&|r| r.needs[0] = "x".repeat(401));
+    refuse(&|r| r.needs[0] = "   ".into());
+    refuse(&|r| r.needs[0] = "line\nbreak".into());
+    refuse(&|r| r.needs[1] = r.needs[0].clone());
+    refuse(&|r| r.anchors.push("a seventeenth".into()));
+    refuse(&|r| r.anchors[0] = "x".repeat(201));
+    refuse(&|r| r.anchors[1] = r.anchors[0].clone());
+    refuse(&|r| r.known[0].path = "../outside.rs".into());
+    refuse(&|r| r.known[1].start_line = Some(0));
+    refuse(&|r| r.known[1].end_line = Some(2));
+    refuse(&|r| r.known[1].end_line = None);
+    refuse(&|r| {
+        r.known = (0..33)
+            .map(|n| KnownRange {
+                path: format!("src/{n}.rs"),
+                start_line: None,
+                end_line: None,
+            })
+            .collect()
+    });
+    let mut edge = full.clone();
+    edge.needs[0] = "x".repeat(400);
+    edge.anchors[0] = "y".repeat(200);
+    edge.validate()?;
+    let mut unknown = serde_json::to_value(&full)?;
+    unknown["deliverable"] = "essay".into();
+    assert!(serde_json::from_value::<ContextRequestV3>(unknown).is_err());
     Ok(())
 }
 
@@ -399,6 +489,7 @@ fn response() -> ContextResponseV3 {
                 },
                 deadline_share_ms: 120_000,
                 sub_needs: vec![SubNeed {
+                    origin: Default::default(),
                     id: 1,
                     text: "where is the restart guard defined".into(),
                     kind: SubNeedKind::Definition,
@@ -420,6 +511,7 @@ fn response() -> ContextResponseV3 {
                 },
                 deadline_share_ms: 120_000,
                 sub_needs: vec![SubNeed {
+                    origin: Default::default(),
                     id: 1,
                     text: "README section on search".into(),
                     kind: SubNeedKind::Documentation,
@@ -669,7 +761,8 @@ fn refusals() -> Vec<(&'static str, Mutation, &'static str)> {
         ),
         (
             "round_reads_over_structure",
-            |r| r.parts[0].rounds[0].calls = 8,
+            // One part search, sixteen anchor lookups and six reads for the one sub-need allow 23.
+            |r| r.parts[0].rounds[0].calls = 24,
             "Answer round reads exceed its structural limit",
         ),
         (
@@ -1627,7 +1720,10 @@ fn reply_validates_against_its_log() -> Result<()> {
     unfocused.model_work.focus_profile = Some(digest(10));
     unfocused.model_work.focus_calls = 0;
     unfocused.decision_log.focus_calls = 0;
-    assert!(unfocused.validate(&budget()).is_err(), "profile without calls");
+    assert!(
+        unfocused.validate(&budget()).is_err(),
+        "profile without calls"
+    );
     // Union omitted the oldest deterministic decision.
     let mut omitted = packet.clone();
     omitted.decisions.remove(0);
@@ -1930,6 +2026,7 @@ fn full_loop() -> ContextResponseV3 {
         let mut needs = Vec::new();
         for need in 1..=4u8 {
             needs.push(SubNeed {
+                origin: Default::default(),
                 id: need,
                 text: format!("sub-need {need} of part {part}: where and who and which tests"),
                 kind: SubNeedKind::Callers,

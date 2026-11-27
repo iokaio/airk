@@ -120,6 +120,26 @@ pub(crate) fn part_search(gather: &mut Gathering, part: u8, text: &str) -> Resul
     )
 }
 
+/// Hits an exact anchor lookup may return.
+const ANCHOR_HITS: usize = 8;
+
+/// A caller anchor's exact lookup, a part-level read of round one. The
+/// anchor is the whole lexical query and is never read as a pattern. A
+/// lookup that fails or finds nothing does not refuse the request.
+pub(crate) fn anchor_search(gather: &mut Gathering, part: u8, anchor: &str) -> Result<Dispatch> {
+    let mut arguments = search_args(anchor, ANCHOR_HITS, true);
+    arguments["mode"] = json!("lexical");
+    gather.dispatch(
+        ("search", v3::LoopRead::Search),
+        arguments,
+        (part, None, 1),
+        Cause::Anchor,
+        FollowUp::Keyword,
+        Step::Leaf,
+        anchor,
+    )
+}
+
 /// The first reads of a sub-need in round one.
 pub(crate) fn initial(gather: &mut Gathering, part: u8, need: &Need) -> Result<Vec<Dispatch>> {
     let at = (part, Some(need.id), 1);

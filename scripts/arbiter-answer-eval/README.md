@@ -1220,3 +1220,57 @@ python -B scripts/arbiter-answer-eval/arbiter_probe_cases.py --scenarios (Join-P
 & $venvPython -B scripts/arbiter-answer-eval/arbiter_pair_probe.py --model $model --pairs $pairs --output $result --precision fp16
 python -B -m unittest discover -s scripts/arbiter-answer-eval -p 'test_arbiter_pair_probe.py'
 ~~~
+
+### Caller needs on real indexes
+
+`gather_context_needs_run.py` sends each chosen task to a ready fixture
+lifetime twice through the native Answer tool: alone, and with the `needs`
+and `anchors` a calling agent wrote. It keeps each reply as
+`<arm>/<case>.reply.json`, the shape the loss-stage script reads, and a
+`run.json` with the requests, the model stages observed, whether each job
+was reused and how many sub-needs the caller stated. A reused job means the
+request was not gathered for, so that arm is void. It is a development
+diagnostic, not a judged pass.
+
+~~~powershell
+python -B scripts/arbiter-answer-eval/gather_context_needs_run.py --handle $handle --scenarios (Join-Path $campaign 'scenarios') --needs $needs --budget-from $settledCase --output $out --cases munarium-C3 bookbuilder-T2
+python -B -m unittest discover -s scripts/arbiter-answer-eval -p 'test_gather_context_needs_run.py'
+~~~
+
+### Single-stage Arbiter loop prototype
+
+`arbiter_loop_prototype.py` runs the single-stage loop outside the AIRK
+runtime, to settle the design before it is built in the kernel. One model,
+Qwen3-Reranker-4B in FP16 through PyTorch, does every model job. For each
+task it takes the caller's needs and anchors and, through a ready fixture
+lifetime's own read tools:
+
+1. fetches candidates with one search per need, per anchor and for the task;
+2. judges every need against its candidates;
+3. reads the project's guidance files and the files beside each need's best
+   passages, reads around those passages, and looks up the names the model
+   chooses from them;
+4. delivers each need's best passages inside one byte budget.
+
+Its switches are the experiment: `--second-pass` adds a stricter judgment
+that breaks ties among relevant passages, `--relative` keeps a passage by
+its share of the need's best score, `--settled` stops fetching for a need
+that has strong evidence, `--shares` gives each need its own part of the
+budget, and `--floor` and `--keep` are the fixed alternatives. It never
+reads a scenario's notes. It writes `<case>.reply.json` for the loss-stage
+script and `<case>.trace.json` with every judged candidate.
+
+`arbiter_loop_misses.py` is evaluator-side: for each essential note it
+reports whether the passage was delivered, fetched and judged (with its
+score and rank), found only in the same file, or never fetched.
+
+The prototype needs the private environment with PyTorch and the downloaded
+checkpoint. It is a development diagnostic, not product code and not a
+judged pass.
+
+~~~powershell
+& $venvPython -B scripts/arbiter-answer-eval/arbiter_loop_prototype.py --handle $handle --scenarios (Join-Path $campaign 'scenarios') --needs $needs --model $model --output $out --second-pass 30 --relative 0.5 --settled 0.6 --shares --cases munarium-C3 bookbuilder-T2
+python -B scripts/arbiter-answer-eval/gather_context_loss_stage.py --scenarios (Join-Path $campaign 'scenarios') --replies $out
+python -B scripts/arbiter-answer-eval/arbiter_loop_misses.py --scenarios (Join-Path $campaign 'scenarios') --traces $out
+python -B -m unittest discover -s scripts/arbiter-answer-eval -p 'test_arbiter_loop_prototype.py'
+~~~

@@ -293,6 +293,10 @@ async fn wired(config: JobTableConfig, open: bool) -> Result<Wired> {
 
 fn arguments(question: &str, deadline_ms: u64) -> Result<serde_json::Map<String, Value>> {
     let request = ContextRequestV3 {
+        needs: Vec::new(),
+        anchors: Vec::new(),
+        deliverable: None,
+        known: Vec::new(),
         schema: REQUEST_SCHEMA_V3.into(),
         question: question.into(),
         budget: BudgetV3 {
@@ -722,6 +726,10 @@ fn seam_call(question: &str, deadline: Duration, work: AnswerWork) -> AnswerCall
     AnswerCall {
         scope,
         request: ContextRequestV3 {
+            needs: Vec::new(),
+            anchors: Vec::new(),
+            deliverable: None,
+            known: Vec::new(),
             schema: REQUEST_SCHEMA_V3.into(),
             question: question.into(),
             budget: BudgetV3 {

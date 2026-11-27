@@ -124,6 +124,10 @@ fn combined_context_partition_admission_binds_attempt_index_and_actual_nested_bu
     .unwrap();
     let mut request = query(None, "airk_answer");
     request.arguments = serde_json::to_value(ContextRequestV3 {
+        needs: Vec::new(),
+        anchors: Vec::new(),
+        deliverable: None,
+        known: Vec::new(),
         schema: REQUEST_SCHEMA_V3.into(),
         question: "original question".into(),
         budget: allowance.clamp(&parent)?,

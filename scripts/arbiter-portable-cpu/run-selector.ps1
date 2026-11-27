@@ -38,7 +38,7 @@ if (-not $IsWindows) { throw 'run-selector.ps1 sets a Windows affinity mask; see
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 . (Join-Path $repo 'scripts/dev/assert-human-execution.ps1')
 Assert-AirkHumanExecution $ExpectedSid | Out-Null
-if (-not $BundledModelDir) { $BundledModelDir = Join-Path $repo 'artifacts\advanced-split\bundled-model-v3' }
+if (-not $BundledModelDir) { $BundledModelDir = Join-Path $repo 'artifacts\indexing-plan\minilm-fp16-build-inputs-r1' }
 if (-not $TargetDir) { $TargetDir = Join-Path $repo 'target' }
 
 $module = 'inference_engine::pool::arbiter::qualification::portable_cpu'

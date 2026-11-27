@@ -52,6 +52,10 @@ fn request(question: &str, budget: BudgetV3) -> Result<serde_json::Map<String, V
         question: question.into(),
         budget,
         continuation: None,
+        needs: Vec::new(),
+        anchors: Vec::new(),
+        deliverable: None,
+        known: Vec::new(),
     };
     request.validate()?;
     let mut arguments = serde_json::to_value(&request)?;

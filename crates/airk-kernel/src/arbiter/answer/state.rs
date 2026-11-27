@@ -35,10 +35,20 @@ pub(crate) struct NeedState {
     /// The latest follow-up candidates, for the unrun list.
     pub(crate) candidates: Vec<Candidate>,
     pub(crate) unrun: Vec<v3::UnrunRead>,
+    /// Who stated the sub-need: the caller's request or the kernel's plan.
+    pub(crate) origin: v3::SubNeedOrigin,
 }
 impl NeedState {
+    /// A sub-need the caller stated in the request's `needs`.
+    pub(crate) fn stated(need: Need) -> Self {
+        Self {
+            origin: v3::SubNeedOrigin::Caller,
+            ..Self::new(need)
+        }
+    }
     pub(crate) fn new(need: Need) -> Self {
         Self {
+            origin: v3::SubNeedOrigin::Derived,
             need,
             coverage: v3::Coverage::Missing,
             coverage_by_model: false,

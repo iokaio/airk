@@ -25,7 +25,18 @@ pub const PACKET_SCHEMA_V2: &str = "airk.arbiter.packet/2";
 /// Same question bound as requests /1 and /2.
 pub const MAX_QUESTION_BYTES: usize = 16_384;
 pub const MAX_PARTS: usize = 4;
+/// Sub-needs the kernel derives for one part, and the bound of the budget's
+/// `max_sub_needs`. A reply with several parts holds at most this many each.
+/// The name and value stay as the card policy sources use them: those
+/// sources are hashed into every model profile's task policy identity.
 pub const MAX_SUB_NEEDS: usize = 4;
+/// Caller inputs of a request (CONTRACT "Optional caller inputs"). The single
+/// part of a request with caller `needs` holds up to this many sub-needs.
+pub const MAX_NEEDS: usize = 8;
+pub const MAX_NEED_BYTES: usize = 400;
+pub const MAX_ANCHORS: usize = 16;
+pub const MAX_ANCHOR_BYTES: usize = 200;
+pub const MAX_KNOWN: usize = 32;
 pub const MAX_ROUNDS: usize = 3;
 /// Round one of a sub-need: its search, then symbols, references, imports or
 /// outline, the governing CONTRACT.md or README, and tests.
@@ -84,7 +95,8 @@ pub const DEFAULT_DEADLINE_MS: u64 = 300_000;
 /// One Context card call at the Compact and Large profile ceiling.
 pub const CONTEXT_CALL_TOKENS: usize = 8192;
 /// Split once, Plan once per part, then coverage and follow-up per sub-need
-/// and round: 1 + 4 x (1 + 3 x 4 x 2) = 101.
+/// and round: 1 + 4 x (1 + 3 x 4 x 2) = 101. One part of eight caller needs
+/// takes 1 + 1 + 3 x 8 x 2 = 50, inside the same bound.
 pub const MAX_DECISIONS: usize = 1 + MAX_PARTS * (1 + MAX_ROUNDS * MAX_SUB_NEEDS * 2);
 pub const MAX_TEXT_BYTES: usize = 1024;
 pub const MAX_UNRUN_READS: usize = 4;
@@ -216,8 +228,75 @@ pub struct ContextRequestV3 {
     /// A ticket or continuation id, to attach to an existing job.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub continuation: Option<Sha256Digest>,
+    /// What the caller must find out, one fact each. When present these are
+    /// the request's sub-needs, in this order, and the kernel derives none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub needs: Vec<String>,
+    /// Exact strings from the caller's task. Each gets an exact lookup in
+    /// round one. An anchor is data, never a pattern.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub anchors: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deliverable: Option<Deliverable>,
+    /// Source the caller already holds. Evidence wholly inside a known range
+    /// is withheld and counted.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub known: Vec<KnownRange>,
 }
+
+/// What the caller will produce from the gathered context.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Deliverable {
+    CodeChange,
+    Test,
+    Document,
+    Analysis,
+}
+
+/// A repository-relative path, whole or with inclusive one-based lines.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct KnownRange {
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_line: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_line: Option<u32>,
+}
+impl KnownRange {
+    fn validate(&self) -> Result<()> {
+        ensure!(
+            crate::index_catalog::relative_path(&self.path, false).is_ok()
+                && match (self.start_line, self.end_line) {
+                    (None, None) => true,
+                    (Some(start), Some(end)) => start > 0 && start <= end,
+                    _ => false,
+                },
+            "invalid Answer known range"
+        );
+        Ok(())
+    }
+}
+
+fn caller_text(text: &str, limit: usize) -> bool {
+    !text.trim().is_empty() && text.len() <= limit && !text.chars().any(char::is_control)
+}
+
 impl ContextRequestV3 {
+    /// A request for `question` with no caller inputs.
+    pub fn new(question: impl Into<String>, budget: BudgetV3) -> Self {
+        Self {
+            schema: REQUEST_SCHEMA_V3.into(),
+            question: question.into(),
+            budget,
+            continuation: None,
+            needs: Vec::new(),
+            anchors: Vec::new(),
+            deliverable: None,
+            known: Vec::new(),
+        }
+    }
     pub fn validate(&self) -> Result<()> {
         ensure!(
             self.schema == REQUEST_SCHEMA_V3,
@@ -229,6 +308,34 @@ impl ContextRequestV3 {
             self.question.len() + MIN_REPLY_SKELETON_BYTES <= self.budget.max_bytes,
             "Answer retention bytes cannot hold the question and a minimal reply"
         );
+        ensure!(
+            self.needs.len() <= MAX_NEEDS
+                && self
+                    .needs
+                    .iter()
+                    .all(|need| caller_text(need, MAX_NEED_BYTES))
+                && self
+                    .needs
+                    .iter()
+                    .enumerate()
+                    .all(|(index, need)| !self.needs[..index].contains(need)),
+            "invalid Answer needs"
+        );
+        ensure!(
+            self.anchors.len() <= MAX_ANCHORS
+                && self
+                    .anchors
+                    .iter()
+                    .all(|anchor| caller_text(anchor, MAX_ANCHOR_BYTES))
+                && self
+                    .anchors
+                    .iter()
+                    .enumerate()
+                    .all(|(index, anchor)| !self.anchors[..index].contains(anchor)),
+            "invalid Answer anchors"
+        );
+        ensure!(self.known.len() <= MAX_KNOWN, "invalid Answer known ranges");
+        self.known.iter().try_for_each(KnownRange::validate)?;
         Ok(())
     }
 }
@@ -406,6 +513,24 @@ pub struct SubNeed {
     pub evidence_omitted: u16,
     /// Reads chosen or proposed but not run, for the agent to run itself.
     pub unrun_reads: Vec<UnrunRead>,
+    /// Who stated this sub-need. Absent means the kernel derived it.
+    #[serde(default, skip_serializing_if = "SubNeedOrigin::is_derived")]
+    pub origin: SubNeedOrigin,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SubNeedOrigin {
+    /// The kernel derived it from the question.
+    #[default]
+    Derived,
+    /// The caller stated it in the request's `needs`.
+    Caller,
+}
+impl SubNeedOrigin {
+    pub fn is_derived(&self) -> bool {
+        *self == Self::Derived
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1092,8 +1217,25 @@ impl ContextResponseV3 {
             shares = shares
                 .checked_add(part.deadline_share_ms)
                 .ok_or_else(|| anyhow::anyhow!("Answer deadline share overflow"))?;
+            // A part's sub-needs are all derived or all the caller's. Caller
+            // needs fill the single part of their request, up to MAX_NEEDS;
+            // derived ones keep the budget's limit.
+            let stated = part
+                .sub_needs
+                .iter()
+                .filter(|need| need.origin == SubNeedOrigin::Caller)
+                .count();
             ensure!(
-                !part.sub_needs.is_empty() && part.sub_needs.len() <= effective.sub_needs,
+                stated == 0 || stated == part.sub_needs.len(),
+                "Answer sub-need origins are mixed"
+            );
+            ensure!(
+                !part.sub_needs.is_empty()
+                    && if stated == 0 {
+                        part.sub_needs.len() <= effective.sub_needs
+                    } else {
+                        self.parts.len() == 1 && part.sub_needs.len() <= MAX_NEEDS
+                    },
                 "Answer sub-need limit"
             );
             for (position, need) in part.sub_needs.iter().enumerate() {
@@ -1197,7 +1339,10 @@ impl ContextResponseV3 {
                 "noncanonical Answer round number"
             );
             let reads = if index == 0 {
-                PART_SEARCHES + needs * FIRST_ROUND_READS_PER_SUB_NEED
+                // Round one also holds one exact lookup per caller anchor. A
+                // reply does not carry its request, so the bound is the most
+                // anchors a request may state.
+                PART_SEARCHES + MAX_ANCHORS + needs * FIRST_ROUND_READS_PER_SUB_NEED
             } else {
                 needs * FOLLOW_UP_READS_PER_SUB_NEED_ROUND
             };

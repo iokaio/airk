@@ -5273,6 +5273,10 @@ fn answer_reply_comparison_normalizes_only_transport_identities_custody_and_timi
 
 fn current_answer_request() -> Result<(airk_core::arbiter::answer_loop::BudgetV3, Value)> {
     let request = airk_core::arbiter::answer_loop::ContextRequestV3 {
+        needs: Vec::new(),
+        anchors: Vec::new(),
+        deliverable: None,
+        known: Vec::new(),
         schema: airk_core::arbiter::answer_loop::REQUEST_SCHEMA_V3.into(),
         question: "boundaryneedle".into(),
         budget: Default::default(),

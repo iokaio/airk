@@ -24,9 +24,13 @@ def _scope(handle: common.Handle, repositories: dict) -> list[dict]:
     return observations
 
 
-def _native_call(handle: common.Handle, repo: str, instruction: str, defaults: dict, call_timeout: float):
+def _native_call(handle: common.Handle, repo: str, instruction: str, defaults: dict, call_timeout: float,
+                 caller: dict | None = None):
+    """One native Answer call. ``caller`` adds the optional caller inputs (needs, anchors, deliverable,
+    known) to the request; without it the request is the canonical first call."""
     tool, arguments = replay.canonical_first_call("answer", instruction, defaults)
     arguments["response_mode"] = "full"
+    arguments.update(caller or {})
     started = time.monotonic()
     deadline = started + min(call_timeout, arguments["budget"]["deadline_ms"] / 1000)
 
