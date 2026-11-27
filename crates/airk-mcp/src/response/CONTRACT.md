@@ -62,3 +62,27 @@ member.result; it never fuses authorities or global enrollment state. Complete
 copy/export retains precision, native fallback reasons and all variant metadata.
 The additional observation is bounded256KiB inside unchanged original reply/frame
 ceilings. No retries or replacement clock are introduced.
+
+## Parse reply allowance (user decision, 26 November 2026)
+
+A scoped Parse reply was held to the ordinary 65,536-byte read frame
+(`scope_reply_budget`, for example `required_bytes` 86,037 for a plan that
+declared `output.max_bytes` 262,144), although plan validation accepts output
+allowances up to 524,288 and an unscoped Parse reply is already bounded only by
+its plan. `reply_limit_for` now gives Parse its own validated plan allowance:
+`plan.output.max_bytes` of the materialized result, clamped to
+`workbench::MAX_OUTPUT_BYTES` (524,288, the bound plan validation enforces)
+and never below 65,536. That one value bounds `annotate_scoped_read_within`,
+the returned-source verification room and the rendered-result check, measured
+on the same rendered representation as before. Every other operation keeps
+`reply_limit` (Answer 131,072, others 65,536); a Parse error or a result
+without a plan keeps 65,536. The worker query frame for Parse is
+`service::MAX_PARSE_REPLY_FRAME_BYTES` (524,288 plus 16 KiB envelope room) at
+the worker's write and the frontend's read (`query_reply_frame`). No owner
+contract recorded the 65,536 Parse bound as a security or memory limit: the
+Arbiter reply-frame decision raised Answer alone and left other tools at their
+existing frame. Kernel `fit_verification_frame` still fits a plan with plan-level or step
+verification to 65,536 bytes, so only plans with verification off use the
+larger allowance. Tests:
+`response::tests::parse_reply_ceiling_follows_its_plan_output_within_the_validated_bound`
+and `scoped_observation_tests::scoped_parse_reply_follows_its_plan_output_allowance_not_the_read_frame`.

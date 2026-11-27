@@ -287,3 +287,67 @@ async fn preserved_read_failure_retains_current_scope_fence_and_rejects_foreign_
     assert_eq!(reply.is_error, Some(true));
     Ok(())
 }
+
+#[tokio::test]
+async fn scoped_parse_reply_follows_its_plan_output_allowance_not_the_read_frame() -> Result<()> {
+    let temporary = tempfile::tempdir()?;
+    let root = temporary.path().join("source");
+    std::fs::create_dir_all(root.join("public"))?;
+    let text: String = (1..=1200)
+        .map(|line| {
+            format!(
+                "Line {line:04}: the scoped plan reply keeps its own declared output allowance.\n"
+            )
+        })
+        .collect();
+    std::fs::write(root.join("public/large.txt"), text)?;
+    let kernel = Kernel::open(&root, Some(temporary.path().join("data")))?;
+    kernel.configure_vectors(false)?;
+    kernel.index()?;
+    let authority = authority(&kernel)?;
+    let owner = local::LocalTools::new(kernel.clone()).await?;
+    let scoped = owner
+        .selection_session_with_client(authority, ClientFamily::Cli)
+        .await?;
+    let plan = |output: usize| {
+        let steps = [(1, 380), (381, 760), (761, 1140)]
+            .iter()
+            .enumerate()
+            .map(|(index, (start, end))| json!({"id":format!("r{index}"),"tool":"read_file",
+                "args":{"path":"public/large.txt","start_line":start,"end_line":end,"max_bytes":32768}}))
+            .collect::<Vec<_>>();
+        json!({"schema":"airk.parse.request/1","mode":"execute","verification":"off",
+            "plan":{"steps":steps},"output":{"view":"raw","max_bytes":output}})
+    };
+    let wide = scoped
+        .call(
+            "airk_parse".into(),
+            plan(262_144).as_object().unwrap().clone(),
+        )
+        .await?;
+    let wide_bytes = serde_json::to_vec(&wide)?.len();
+    assert_ne!(wide.is_error, Some(true), "{wide:?}");
+    let body = payload(&wide)?;
+    assert!(body["scope_observation"].is_object());
+    assert_eq!(body["plan"]["output"]["max_bytes"], 262_144);
+    assert!(
+        body["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|step| step["status"] == "complete" && step["result"].is_object()),
+        "{body}"
+    );
+    // The complete reply is larger than the ordinary 64 KiB read frame.
+    assert!(wide_bytes > airk_core::MAX_RESPONSE_BYTES, "{wide_bytes}");
+    assert!(wide_bytes <= 262_144);
+    // A plan declaring the ordinary allowance keeps the ordinary bound.
+    let narrow = scoped
+        .call(
+            "airk_parse".into(),
+            plan(65_536).as_object().unwrap().clone(),
+        )
+        .await?;
+    assert!(serde_json::to_vec(&narrow)?.len() <= airk_core::MAX_RESPONSE_BYTES);
+    Ok(())
+}

@@ -1775,10 +1775,12 @@ fn render<T: Serialize>(
     {
         object.insert("request_id".into(), id.into());
     }
+    // Parse follows its plan's validated output allowance; other tools keep theirs.
+    let reply_limit = response::reply_limit_for(operation, logical.as_ref());
     let scope_error = readiness_error.or_else(|| {
         logical.as_mut().and_then(|logical| {
             kernel
-                .annotate_scoped_read_within(logical, response::reply_limit(operation))
+                .annotate_scoped_read_within(logical, reply_limit)
                 .err()
         })
     });
@@ -1796,12 +1798,8 @@ fn render<T: Serialize>(
         if let Some(budget) = verification {
             // The receipt shares the tool's own reply ceiling (Answer /3:
             // 131,072), the frame its Union packed the reply into.
-            match kernel.verify_returned_sources_within(
-                display,
-                budget,
-                read_deadline,
-                response::reply_limit(operation),
-            ) {
+            match kernel.verify_returned_sources_within(display, budget, read_deadline, reply_limit)
+            {
                 Ok(receipt) => match airk_core::verification::attach_response(display, receipt) {
                     Ok(failed) => verification_failed = failed,
                     Err(error) => verification_error = Some(error),
@@ -1836,7 +1834,6 @@ fn render<T: Serialize>(
         Err(error) => response::scoped_error_result(kernel, &error),
     };
     let mut bytes = serde_json::to_vec(&rendered).map_or(0, |v| v.len());
-    let reply_limit = response::reply_limit(operation);
     if kernel.scope_observation().is_some() && bytes.saturating_add(2048) > reply_limit {
         rendered = response::scoped_error_result(
             kernel,

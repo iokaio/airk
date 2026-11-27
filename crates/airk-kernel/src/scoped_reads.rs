@@ -1056,7 +1056,8 @@ impl Kernel {
         self.annotate_scoped_read_within(value, airk_core::MAX_RESPONSE_BYTES)
     }
     /// As [`Self::annotate_scoped_read`], bounded by the caller's reply frame:
-    /// Answer's 131,072 bytes, or every other tool's 65,536.
+    /// Answer's 131,072 bytes, Parse's validated plan output allowance (at
+    /// least 65,536, at most 524,288), or every other tool's 65,536.
     pub fn annotate_scoped_read_within(
         &self,
         value: &mut serde_json::Value,

@@ -1467,6 +1467,11 @@ errors. The kernel Focus reply budget (`arbiter/focus.rs`) and
 `context_reply_reserve` belong to L3. Time ceilings for Answer are recorded in
 the [read-attempt contract](../read_attempt/CONTRACT.md).
 
+**Later amendment (26 November 2026).** A scoped Parse reply now follows its
+plan's validated output allowance (at most 524,288) instead of 65,536, with its
+own worker frame; see the [MCP response contract](../../../airk-mcp/src/response/CONTRACT.md#parse-reply-allowance-user-decision-26-november-2026).
+Answer's limits above are unchanged.
+
 ### Request
 
 `airk.arbiter.context.request/3` is `schema`, `question` (the /2 bound: not

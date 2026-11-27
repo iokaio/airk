@@ -8,6 +8,14 @@ pub const PLAN_SCHEMA: &str = "airk.parse.plan/1";
 pub const RESULT_SCHEMA: &str = "airk.workbench.result/1";
 pub const CATALOG: &str = "airk.evidence-plans/1";
 pub use crate::read_limits::MAX_STEP_REPORTS;
+/// Hard upper bound of a plan's `output.max_bytes` (and `budgets.max_bytes`),
+/// which plan validation enforces in `1024..=MAX_OUTPUT_BYTES`.
+pub const MAX_OUTPUT_BYTES: usize = 524_288;
+
+/// The MCP tool names of Parse.
+pub fn is_parse_tool(tool: &str) -> bool {
+    matches!(tool, "airk_parse" | "parse")
+}
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]

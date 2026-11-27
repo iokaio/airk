@@ -157,3 +157,12 @@ its maker's session teardown, for a selection and an open read, and ends
 with its selection, its lease and the owner's close; one selection's
 revocation leaves another's jobs alone), and through the real `query()` path in `airk-cli`
 `tests/combined_reads.rs` (`answer_jobs_*`).
+
+## Parse reply frame (26 November 2026)
+
+A worker query for `airk_parse`/`parse` writes, and the frontend reads, its
+reply under `service::MAX_PARSE_REPLY_FRAME_BYTES` (524,288 plus 16 KiB),
+because a Parse reply follows its plan's validated output allowance (at most
+524,288; `airk-mcp` `response/CONTRACT.md`). Native reads and every other tool
+keep `MAX_FRAME_BYTES`; Answer keeps its own frame. Admission, deadlines and
+the closed envelope rules above are unchanged.

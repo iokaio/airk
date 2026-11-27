@@ -24,6 +24,29 @@ pub fn reply_limit(operation: airk_core::usage::UsageOperation) -> usize {
     }
 }
 
+/// The scoped reply ceiling of one materialized result. A Parse result follows
+/// its own validated plan output allowance (`plan.output.max_bytes`, which
+/// plan validation bounds by `workbench::MAX_OUTPUT_BYTES`), never below the
+/// ordinary 65,536-byte frame. Every other operation keeps [`reply_limit`].
+pub fn reply_limit_for(
+    operation: airk_core::usage::UsageOperation,
+    logical: Option<&Value>,
+) -> usize {
+    let ordinary = reply_limit(operation);
+    if operation != airk_core::usage::UsageOperation::Parse {
+        return ordinary;
+    }
+    logical
+        .and_then(|value| value.pointer("/plan/output/max_bytes"))
+        .and_then(Value::as_u64)
+        .and_then(|bytes| usize::try_from(bytes).ok())
+        .map_or(ordinary, |bytes| {
+            bytes
+                .min(airk_core::workbench::MAX_OUTPUT_BYTES)
+                .max(ordinary)
+        })
+}
+
 /// Bound optional receipt bytes in the actual native SDK representation before
 /// scoring. The existing result/envelope ceiling is not widened for Focus.
 pub(crate) fn focus_reply_headroom(
@@ -769,6 +792,43 @@ fn share_record(record: &mut Map<String, Value>, table: &mut Vec<Value>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn parse_reply_ceiling_follows_its_plan_output_within_the_validated_bound() {
+        use airk_core::usage::UsageOperation;
+        let plan = |bytes: u64| serde_json::json!({"plan":{"output":{"max_bytes":bytes}}});
+        for (bytes, expected) in [
+            (262_144, 262_144),
+            (524_288, 524_288),
+            (1_048_576, 524_288),
+            (4_096, 65_536),
+            (65_536, 65_536),
+        ] {
+            assert_eq!(
+                reply_limit_for(UsageOperation::Parse, Some(&plan(bytes))),
+                expected
+            );
+        }
+        assert_eq!(reply_limit_for(UsageOperation::Parse, None), 65_536);
+        assert_eq!(
+            reply_limit_for(UsageOperation::Parse, Some(&serde_json::json!({}))),
+            65_536
+        );
+        // Ordinary reads and Answer keep their own ceilings whatever they carry.
+        for operation in [UsageOperation::Search, UsageOperation::CodeFacts] {
+            assert_eq!(reply_limit_for(operation, Some(&plan(262_144))), 65_536);
+        }
+        assert_eq!(
+            reply_limit_for(UsageOperation::Answer, Some(&plan(524_288))),
+            131_072
+        );
+        assert_eq!(airk_core::service::query_reply_frame("airk_search"), 65_536);
+        for tool in ["airk_parse", "parse"] {
+            assert_eq!(
+                airk_core::service::query_reply_frame(tool),
+                airk_core::workbench::MAX_OUTPUT_BYTES + 16_384
+            );
+        }
+    }
     #[test]
     fn helper_failure_uses_complete_canonical_receipt_without_replay_or_private_details() {
         let error = anyhow::anyhow!("private transport path and request details").context(
