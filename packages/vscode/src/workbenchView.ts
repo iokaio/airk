@@ -282,7 +282,8 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
         session.turns.push(turn); this.busy = true; this.notice = undefined; this.send();
         try {
             // Answer waits for its own deadline plus delivery (up to 605 s); every other tool keeps 125 s.
-            const result = await runAnswer({ call: (body, timeout) => client.call('airk_answer', body, { supersede: 'workbench', timeout }) }, request);
+            // The Workbench reads the full reply shape; the terse default is the agent's small brief.
+            const result = await runAnswer({ call: (body, timeout) => client.call('airk_answer', { ...body, response_mode: 'full' }, { supersede: 'workbench', timeout }) }, request);
             if (generation !== this.generation || session !== this.session || client !== this.client
                 || identity !== this.clientIdentity || identity !== this.evidenceIdentity() || !this.permitted()) return;
             turn.envelope = result.rawPayload ?? result.payload;

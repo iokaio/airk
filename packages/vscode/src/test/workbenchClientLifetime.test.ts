@@ -41,7 +41,7 @@ test('A7 Workbench custom request matches the actual Rust public Answer case and
     try{
         await f.state.select(A);await tick();f.respond(async()=>({payload:emittedReply()}));
         await f.state.message({type:'answer',question:example.arguments.question,budget:example.arguments.budget});
-        assert.deepEqual(f.created[0].requests.find(entry=>entry.tool==='airk_answer')?.args,example.arguments,'all native custom budget fields and the mandatory native schema travel unchanged');
+        assert.deepEqual(f.created[0].requests.find(entry=>entry.tool==='airk_answer')?.args,{...example.arguments,response_mode:'full'},'all native custom budget fields and the mandatory native schema travel unchanged, and the Workbench asks for the full reply it reads');
     }finally{f.provider.dispose();}
 });
 
@@ -54,7 +54,7 @@ test('A7 Workbench Answer sends /3 with the Core default budget, waits past 125 
         f.respond(async tool => ({ payload: tool === 'airk_answer' ? native : { tag: tool } }));
         await f.state.message({ type: 'answer', question: 'Find the ownership fence', budget: DEFAULT_BUDGET }); await f.state.saveQueue;
         const request = f.created[0].requests.find(entry => entry.tool === 'airk_answer');
-        assert.deepEqual(request?.args, { schema: loopCases.request_schema, question: 'Find the ownership fence', budget: DEFAULT_BUDGET });
+        assert.deepEqual(request?.args, { schema: loopCases.request_schema, question: 'Find the ownership fence', budget: DEFAULT_BUDGET, response_mode: 'full' });
         assert.equal(request?.options?.timeout, DEFAULT_BUDGET.deadline_ms + 5000, 'Answer waits its deadline plus delivery, not the 125 s read cap');
         const turn = f.state.session!.turns.at(-1)!; assert.deepEqual(turn.envelope, native);
         const exported = JSON.parse(renderExport(f.state.session!, 'json', turn.id));
@@ -92,11 +92,11 @@ test('A7 full question and custom budget survive request transport rerun and com
         await f.state.message({type:'answer',question,budget});await f.state.saveQueue;
         const turn=f.state.session!.turns.at(-1)!;
         assert.equal(turn.input.length,4096);assert.equal(turn.request?.question,question);
-        assert.deepEqual(f.created[0].requests.find(entry=>entry.tool==='airk_answer')?.args,{schema:'airk.arbiter.context.request/3',question,budget});
+        assert.deepEqual(f.created[0].requests.find(entry=>entry.tool==='airk_answer')?.args,{schema:'airk.arbiter.context.request/3',question,budget,response_mode:'full'});
         assert.equal(JSON.parse(renderExport(f.state.session!,'json',turn.id)).turns[0].request.question,question);
         assert.ok(renderExport(f.state.session!,'markdown',turn.id).includes(question));
         await f.state.message({type:'rerun',turn:turn.id});
-        assert.deepEqual(f.created[0].requests.filter(entry=>entry.tool==='airk_answer').at(-1)?.args,{schema:'airk.arbiter.context.request/3',question,budget});
+        assert.deepEqual(f.created[0].requests.filter(entry=>entry.tool==='airk_answer').at(-1)?.args,{schema:'airk.arbiter.context.request/3',question,budget,response_mode:'full'});
     }finally{f.provider.dispose();}
 });
 const spec=(project:string):LaunchSpec=>({command:'/fixture/airk',root:`/fixture/${project}`,dataDir:`/fixture/data-${project}`,collection:'fixture',name:project===A?'A':'B',service:{installDir:'/fixture/runtime',project}});

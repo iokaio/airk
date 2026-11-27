@@ -22,6 +22,12 @@ pub use answer::{
 
 pub const SUMMARY_SCHEMA: &str = "airk.combined-context/1";
 pub const MAX_DELIVERY_BINDINGS: usize = 2 * MAX_SELECTION;
+/// The schema of the public Gather Context brief reply (`airk-mcp`
+/// `response::brief`, user decision of 27 November 2026). A brief is a terse
+/// projection of an Answer /3 reply; it carries that reply's delivery
+/// bindings verbatim in `delivery_bindings` (absent when there are none), so
+/// the delivery fence binds the same model work as for the reply itself.
+pub const GATHER_CONTEXT_BRIEF_SCHEMA: &str = "airk.gather-context.brief/1";
 
 pub fn known_budget_failure(packet: &crate::arbiter::context_action::ContextResponseV2) -> bool {
     use crate::arbiter::context_action::{
@@ -421,6 +427,14 @@ pub fn context_delivery_bindings(value: &serde_json::Value) -> Result<Vec<Contex
         )?;
         return reply_delivery_bindings(&typed);
     }
+    if body.get("schema").and_then(Value::as_str) == Some(GATHER_CONTEXT_BRIEF_SCHEMA) {
+        let bindings: Vec<ContextDeliveryBinding> = match body.get("delivery_bindings") {
+            Some(rows) => serde_json::from_value(rows.clone())?,
+            None => Vec::new(),
+        };
+        validate_stage_roster(&bindings)?;
+        return Ok(bindings);
+    }
     if let Some(binding) = canonical_search_focus_binding(body)? {
         return Ok(vec![binding]);
     }
@@ -436,6 +450,7 @@ pub fn context_delivery_bindings(value: &serde_json::Value) -> Result<Vec<Contex
                 parsed.get("schema").and_then(Value::as_str),
                 Some(crate::arbiter::context_action::CONTEXT_SCHEMA_V2)
                     | Some(crate::arbiter::answer_loop::CONTEXT_SCHEMA_V3)
+                    | Some(GATHER_CONTEXT_BRIEF_SCHEMA)
                     | Some(crate::combined_reads::COMBINED_READ_SCHEMA)
             ) || (parsed.get("focus").is_some()
                 && parsed.get("hits").is_some()

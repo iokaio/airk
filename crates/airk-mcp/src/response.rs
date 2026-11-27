@@ -5,6 +5,7 @@ use rmcp::schemars;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+pub mod brief;
 #[cfg(test)]
 mod identity_tests;
 mod open_status;
@@ -570,6 +571,21 @@ impl Session {
         let explicit = explicit_status(object, include_status);
         self.status(object, explicit);
         terse_envelope(object);
+    }
+
+    /// [`Self::display`], then, for a terse Answer reply, its brief
+    /// ([`brief`]). Full mode and every other tool keep `display` alone.
+    pub(crate) fn display_for(
+        &self,
+        value: &mut Value,
+        mode: ResponseMode,
+        include_status: bool,
+        operation: airk_core::usage::UsageOperation,
+    ) {
+        self.display(value, mode, include_status);
+        if mode == ResponseMode::Terse && operation == airk_core::usage::UsageOperation::Answer {
+            brief::project(value);
+        }
     }
 
     fn status(&self, object: &mut Map<String, Value>, explicit: bool) {

@@ -1097,3 +1097,38 @@ async fn one_answer_twice_on_one_session_gives_byte_equal_records_and_decisions(
     tools.close().await?;
     Ok(())
 }
+
+/// Change-log entry 76: the handler's terse Answer reply is the brief of the
+/// same kernel reply full mode returns, through the real render path.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn terse_answer_reply_is_the_brief_of_the_full_reply() -> Result<()> {
+    use crate::response::brief::{BRIEF_SCHEMA, BriefReply, MAX_BRIEF_BYTES, brief_of};
+    let text: String = (1..=120)
+        .map(|line| {
+            if line % 30 == 0 {
+                format!("amber_marker {line} keeps the original deadline.\n")
+            } else {
+                format!("Line {line}: the delivery stays bound to its publication.\n")
+            }
+        })
+        .collect();
+    let fixture = scoped_kernel(&[("public/policy.md", text)], Arc::new(Disabled))?;
+    let mut tools = local::LocalTools::new(fixture.kernel.clone()).await?;
+    let ask = request("amber_marker", BudgetV3::default())?;
+    let full = body(&tools.call("airk_answer".into(), ask.clone()).await?)?;
+    ensure!(full["schema"] == CONTEXT_SCHEMA, "{full}");
+    let mut terse = ask;
+    terse.insert("response_mode".into(), json!("terse"));
+    let reply = body(&tools.call("airk_answer".into(), terse).await?)?;
+    ensure!(reply["schema"] == BRIEF_SCHEMA, "{reply}");
+    ensure!(serde_json::to_vec(&reply)?.len() <= MAX_BRIEF_BYTES);
+    let actual: BriefReply = serde_json::from_value(reply)?;
+    let expected = brief_of(&full).context("the full reply has a brief")?;
+    assert!(!actual.needs.is_empty());
+    assert_eq!(actual.needs, expected.needs);
+    assert_eq!(actual.passages, expected.passages);
+    assert_eq!(actual.omitted, expected.omitted);
+    assert_eq!(actual.publication, expected.publication);
+    tools.close().await?;
+    Ok(())
+}

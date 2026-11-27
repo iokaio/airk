@@ -26,7 +26,9 @@ Only unchanged top-level freshness, readiness, discovery observation and
 indexing fields may be omitted. Full, include_status and explicit status,
 diagnostics, capabilities and changes repeat them. Error envelopes retain
 status. Complete source-verification facts, read_scope, scope_observation,
-provenance and arbitrary nested evidence/user objects remain unchanged.
+provenance and arbitrary nested evidence/user objects remain unchanged, except
+in the terse Gather Context brief below, which summarizes the verification
+receipt in one line.
 Text and structured representations are changed together only when both
 already agree. Unrecognized representations or invalid scope metadata are
 preserved. Receipt-bound combined-read bodies are never transformed.
@@ -86,3 +88,70 @@ verification to 65,536 bytes, so only plans with verification off use the
 larger allowance. Tests:
 `response::tests::parse_reply_ceiling_follows_its_plan_output_within_the_validated_bound`
 and `scoped_observation_tests::scoped_parse_reply_follows_its_plan_output_allowance_not_the_read_frame`.
+## Gather Context brief (user decision, 27 November 2026)
+
+Owner: `airk-mcp::response::brief`. Reason: Gather Context exists to lower
+what an agent spends on its model, and everything a tool returns is sent
+again on every later round trip. In the first measured session one call with
+a task, five needs, two anchors and a deliverable returned 106,547 bytes in
+the terse mode, and the session cost $0.38 against $0.10 without the tool in
+the same nine round trips. `records` took 71,645 bytes (39 records of about
+4.6 KB of raw read results), `source_verification` 12,442, `paragraphs`
+9,649, `parts` 6,793 and `record_uses` 5,413. The useful map was under 10 KB.
+
+In terse mode, after `Session::display`, a successful Answer /3 reply
+(`airk.arbiter.context/3`) is replaced by its brief, schema
+`airk.gather-context.brief/1` (`Session::display_for`, called by the one
+render path every reader of the public tool goes through: the native
+handler, the unified and per-index public entries, the service's
+`tools call` for the CLI and Admin, and the HTTP MCP endpoint). Full mode,
+a plan's inner Answer read (always full), a combined member (always full)
+and every other tool render exactly as before. A combined multi-index
+Answer keeps its receipt-bound `airk.combined-read/1` wrapper. Errors and
+values the projection cannot read are unchanged.
+
+The brief, in this order: `schema`; `task` (at most `MAX_TASK_BYTES`, 512,
+then an ellipsis); `publication.token` once; `result` (`complete` or
+`partial`) with `why` (the partial marker's reason and stage, a part stopped
+by budget, deadline, staleness, refusal or lack of support, or records the
+frame left out); `stop` (the parts' stop reasons); `full` (one sentence:
+`response_mode=full` returns the complete reply); the kernel's `ticket`
+unchanged; `degradations` by kind; `needs` (number, text, origin, status
+`covered`, `partly covered` or `open`, and `where`: at most
+`WHERE_PER_NEED`, 4, locations `path:start-end` with `why`, the passage's
+first line, the read that fetched it, its cause for this need and its role);
+`passages` (whole delivered texts with `at` and the needs they serve);
+`not_found` (needs with no location, with what the reply records as
+searched); `omitted` (cited locations whose text the brief does not carry,
+at most 48, `omitted_more` counts the rest); `next` (unrun reads, files the
+evidence names that no location opens, the parts' gaps, and how to ask
+again); `gathering` (one line per stage: reads, passages delivered,
+milliseconds); `elapsed_ms`; `verification` (one line: status, sources
+checked, matched, differing, not checked, and up to four differing paths);
+`delivery_bindings` (the reply's delivery bindings, unchanged, when there
+are any); `read_status` with `include_status`; and the transport's
+`request_id`, `error`, `delivery`, status, `scope_observation` and
+`read_scope` unchanged. Records, record uses, paragraphs, decisions, the
+decision log, applications, union and work are left out.
+
+Locations come from each sub-need's paragraph in the kernel's order; a
+compact paragraph without locations falls back to the spans of the
+sub-need's cited records. A passage is the text the location's row
+carries, or the row its `same_as` names. A row trimmed of an overlap does
+not hold its own lines whole and is never a passage. A row the kernel cut is
+kept to its last whole line, its range shortened and marked `clipped`.
+Passages are chosen in rounds, each need's best before any need's second,
+from its listed locations, inside `BRIEF_PASSAGE_BYTES` (16,000); a passage
+two needs share is sent once; one that does not fit is omitted and the next
+is tried, so smaller passages still fit. The serialized brief is at most
+`MAX_BRIEF_BYTES` (24,000): passages are dropped from the last chosen, then
+the map is trimmed in levels (fewer locations, omitted and next entries,
+then bare locations and need texts of 160 bytes). Carried status is never
+dropped, because the session has acknowledged it.
+
+The Core delivery fence (`combined_context::context_delivery_bindings`)
+reads a brief's `delivery_bindings`, so a brief binds the same model work
+as the reply it projects. No kernel reply field, request field, budget,
+digest, persisted format or reply ceiling changes. Tests:
+`response::brief::tests` and
+`arbiter_handler_tests::terse_answer_reply_is_the_brief_of_the_full_reply`.
