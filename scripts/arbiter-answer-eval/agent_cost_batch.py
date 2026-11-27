@@ -73,9 +73,11 @@ def run(args) -> int:
                 if arm == "oracle":
                     command += ["--oracle-layout", args.oracle_layout] + (["--oracle-trust"] if args.oracle_trust else [])
                 if arm == "live":
-                    command += ["--live-map", str(args.maps / f"{row['snapshot'].name}.map.json")]
+                    command += ["--live-map", str(args.maps / f"{row['snapshot'].name}.map.json"), "--live-layout", args.live_layout]
                     if args.instructions_file:
                         command += ["--instructions-file", str(args.instructions_file)]
+                    if args.description_file:
+                        command += ["--description-file", str(args.description_file)]
                     if args.dose > 0:
                         command += ["--judge", str(args.judge), "--dose", str(args.dose)]
                 jobs.append((out.name, command))
@@ -241,8 +243,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--workers", type=int, default=3)
     parser.add_argument("--handle", type=pathlib.Path)
     parser.add_argument("--instructions-file", type=pathlib.Path)
+    parser.add_argument("--description-file", type=pathlib.Path, help="serve this tool description in place of the build's own")
     parser.add_argument("--tasks", nargs="*")
     parser.add_argument("--maps", type=pathlib.Path, help="folder of <snapshot>.map.json topical maps, for the live arm")
+    parser.add_argument("--live-layout", default="full", help="live arm: full or focus")
     parser.add_argument("--oracle-layout", default="passages", help="oracle arm: passages or ranges")
     parser.add_argument("--oracle-trust", action="store_true", help="oracle arm: add the line saying what need not be read again")
     parser.add_argument("--baseline", help="report: take the plain arm from this series when this one has none")

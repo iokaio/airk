@@ -323,6 +323,54 @@ def gather(repository: Repository, arguments: dict) -> dict:
     return brief
 
 
+FOCUS_FILES = 6
+FOCUS_PASSAGE_BYTES = 14_000
+FOCUS_TERMS = 12
+FOCUS_USE = ("The passages below are the exact current text of the listed line ranges, read from the files just now. Work from "
+             "them and do not read those ranges again. They are the places this search ranked highest, not a promise that "
+             "nothing else matters: read further only for lines not shown here, with offset and limit, and search only for "
+             "what the census does not already count.")
+
+
+def focus(repository: Repository, brief: dict) -> dict:
+    """The brief narrowed to what the first task's layout experiments favoured: few files, their text, and a line
+    saying the text need not be read again.
+
+    On munarium-T1, with perfect content, passages with such a line cost 41 percent less than no tool, passages
+    alone 29 percent, and ranges without text 15 to 20 percent; and every file a reply named tended to be read
+    whole. So this keeps the ranges of the ``FOCUS_FILES`` best files only, carries their text within
+    ``FOCUS_PASSAGE_BYTES``, lists the next few locations without text, and drops the outline, the path list and
+    the per-line census."""
+    files, kept, passages, rest, spent = [], [], [], [], 0
+    for row in brief["needs"][0]["where"]:
+        path, _, lines = row["at"].rpartition(":")
+        first, _, last = lines.partition("-")
+        if path not in files and len(files) >= FOCUS_FILES:
+            rest.append(row["at"])
+            continue
+        text = "\n".join(repository.texts[path][int(first) - 1:int(last)]) + "\n"
+        size = len(text.encode("utf-8"))
+        if spent + size > FOCUS_PASSAGE_BYTES:
+            rest.append(row["at"])
+            continue
+        if path not in files:
+            files.append(path)
+        kept.append(row)
+        passages.append({"at": row["at"], "needs": [1], "text": text})
+        spent += size
+    census = []
+    for row in brief.get("census") or []:
+        if not row.get("occurrences") or "note" in row or len(census) >= FOCUS_TERMS:
+            continue
+        census.append({"term": row["term"], "occurrences": row["occurrences"], "files": row["files"],
+                       "in": [entry.rstrip("…").rpartition(":")[0] for entry in (row.get("in") or [])[:4]]})
+    return {"schema": brief["schema"], "use": FOCUS_USE, "task": brief["task"], "result": brief["result"],
+            "searched": brief["searched"], "census": census,
+            "needs": [{**brief["needs"][0], "where": kept}], "passages": passages,
+            **({"omitted": rest[:8]} if rest else {}),
+            "next": {"ask": brief["next"]["ask"]}, "elapsed_ms": brief.get("elapsed_ms")}
+
+
 def census_spans(brief: dict) -> list[str]:
     """Census lines as single-line locations, for the placement check."""
     found = []
@@ -350,6 +398,8 @@ def replay(args) -> int:
         if folder not in repositories:
             repositories[folder] = Repository(row["snapshot"], json.loads((args.maps / f"{folder}.map.json").read_text(encoding="utf-8")))
         brief = gather(repositories[folder], recorded[task_id])
+        if args.layout == "focus":
+            brief = focus(repositories[folder], brief)
         (args.output / f"{task_id}.brief.json").write_text(json.dumps(brief, ensure_ascii=False, indent=1) + "\n", encoding="utf-8", newline="\n")
         scored = {**brief, "omitted": census_spans(brief)}
         stages = replay_check.classify(json.loads(row["task"].read_text(encoding="utf-8")), scored, {})
@@ -359,6 +409,7 @@ def replay(args) -> int:
         size = len(json.dumps(brief, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
         results.append({"task": task_id, "notes": stages, **counts, "brief_bytes": size, "elapsed_ms": brief["elapsed_ms"],
                         "terms": len(brief["census"]), "ranges": len(brief["needs"][0]["where"]), "passages": len(brief["passages"])})
+        brief.setdefault("outline", [])
         print(f"{task_id:<22} " + " ".join(f"{stage}={counts[stage]}" for stage in replay_check.STAGES if stage != "gathered")
               + f" | {size} bytes, {results[-1]['terms']} terms, {results[-1]['ranges']} ranges, {brief['elapsed_ms']} ms | not at lines: "
               + " ".join(f"{note}:{stage}" for note, stage in stages.items() if stage in ("file", "missed")))
@@ -379,6 +430,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--maps", required=True, type=pathlib.Path)
     parser.add_argument("--output", required=True, type=pathlib.Path)
     parser.add_argument("--tasks", nargs="*")
+    parser.add_argument("--layout", choices=("full", "focus"), default="full")
     args = parser.parse_args(argv)
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     return replay(args)

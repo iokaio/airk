@@ -160,6 +160,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="oracle: the tool answers with the task's truth (gather_context_oracle.py); "
                              "live: it answers from the live files and --live-map (live_gather.py)")
     parser.add_argument("--live-map", type=Path, help="topical map of the snapshot, for the live arm")
+    parser.add_argument("--live-layout", default="full", help="live arm: full or focus")
     parser.add_argument("--oracle-layout", default="passages", help="oracle arm: passages or ranges")
     parser.add_argument("--oracle-trust", action="store_true", help="oracle arm: add the line saying what need not be read again")
     parser.add_argument("--model", required=True)
@@ -167,6 +168,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--handle", type=Path)
     parser.add_argument("--repo")
     parser.add_argument("--instructions-file", type=Path, help="server guidance the build gives an MCP client")
+    parser.add_argument("--description-file", type=Path, help="serve this tool description in place of the build's own")
     parser.add_argument("--judge", type=Path, help="state file of a running arbiter_judge_service.py (model-dose experiment)")
     parser.add_argument("--dose", type=int, default=0, help="judgments a call the model spends choosing passages")
     parser.add_argument("--max-round-trips", type=int, default=80)
@@ -183,6 +185,11 @@ def main(argv: list[str] | None = None) -> int:
         common.require(args.handle is not None and args.repo, "the tool and oracle arms need --handle and --repo")
         handle = common.load_handle(args.handle.resolve(strict=True))
         tool = advertised_tool(handle)
+        tool["description_source"] = "build"
+        if args.description_file:
+            # A description under test replaces the build's own (tool_descriptions/README.md).
+            tool["description"] = args.description_file.read_text(encoding="utf-8").strip()
+            tool["description_source"] = args.description_file.name
         tool_file = args.output / "tool.json"
         tool_file.write_text(json.dumps(tool, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
         server = [sys.executable, "-B", str(HERE / "gather_context_mcp.py"), "--handle", str(args.handle.resolve()),
@@ -195,7 +202,8 @@ def main(argv: list[str] | None = None) -> int:
             server += ["--oracle-task", str(args.task.resolve()), "--oracle-snapshot", str(snapshot),
                        "--oracle-layout", args.oracle_layout] + (["--oracle-trust"] if args.oracle_trust else [])
         if args.arm == "live":
-            server += ["--live-source", str(snapshot), "--live-map", str(args.live_map.resolve(strict=True))]
+            server += ["--live-source", str(snapshot), "--live-map", str(args.live_map.resolve(strict=True)),
+                       "--live-layout", args.live_layout]
         servers[SERVER] = {"command": server[0], "args": server[1:]}
     mcp_config = args.output / "mcp-config.json"
     mcp_config.write_text(json.dumps({"mcpServers": servers}, indent=2) + "\n", encoding="utf-8", newline="\n")
@@ -228,7 +236,11 @@ def main(argv: list[str] | None = None) -> int:
                                   "judgments": sum((row.get("dose") or {}).get("judgments") or 0 for row in calls),
                                   "dose_applied": sum(bool((row.get("dose") or {}).get("applied")) for row in calls),
                                   "advertised": None if tool is None else {"listed_name": tool["listed_name"],
-                                                                           "description_bytes": len(tool["description"])}},
+                                                                           "description_bytes": len(tool["description"]),
+                                                                           "description_source": tool["description_source"],
+                                                                           "description_sha256": common.sha256_bytes(
+                                                                               tool["description"].encode("utf-8")),
+                                                                           "guidance": args.instructions_file.name if args.instructions_file else None}},
                "changed_files": changed}
     with (args.output / "session.json").open("x", encoding="utf-8", newline="\n") as file:
         file.write(json.dumps(session, indent=2, sort_keys=True) + "\n")

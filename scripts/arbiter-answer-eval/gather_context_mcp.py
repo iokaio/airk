@@ -141,7 +141,7 @@ def oracle_backend(task: dict, snapshot: Path, layout: str = "passages", trust: 
     return call
 
 
-def live_backend(source: Path, map_file: Path):
+def live_backend(source: Path, map_file: Path, layout: str = "full"):
     """Answer every call from the live files and the topical map (``live_gather.py``); no service is called."""
     import live_gather
     import live_gather_v3
@@ -151,7 +151,10 @@ def live_backend(source: Path, map_file: Path):
     gather = live_gather_v3.gather if index.get("schema") == live_gather_v3.SCHEMA else live_gather.gather
 
     def call(native: str, repo: str, arguments: dict) -> tuple[str, bool, bytes]:
-        text = json.dumps(gather(repository, arguments), ensure_ascii=False, separators=(",", ":"))
+        brief = gather(repository, arguments)
+        if layout == "focus":
+            brief = live_gather.focus(repository, brief)
+        text = json.dumps(brief, ensure_ascii=False, separators=(",", ":"))
         return text, False, text.encode("utf-8")
     return call
 
@@ -171,6 +174,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--oracle-trust", action="store_true")
     parser.add_argument("--live-source", type=Path, help="answer from these live files and --live-map instead of the service")
     parser.add_argument("--live-map", type=Path)
+    parser.add_argument("--live-layout", choices=("full", "focus"), default="full")
     parser.add_argument("--judge", type=Path, help="state file of a running arbiter_judge_service.py")
     parser.add_argument("--dose", type=int, default=0, help="judgments a call the model spends choosing passages")
     args = parser.parse_args(argv)
@@ -185,7 +189,7 @@ def main(argv: list[str] | None = None) -> int:
     server = Server(tool=tool, repo=args.repo, log_dir=args.log_dir, instructions=instructions,
                     backend=(oracle_backend(json.loads(args.oracle_task.read_text(encoding="utf-8")), args.oracle_snapshot,
                                             args.oracle_layout, args.oracle_trust)
-                             if args.oracle_task else live_backend(args.live_source, args.live_map) if args.live_source
+                             if args.oracle_task else live_backend(args.live_source, args.live_map, args.live_layout) if args.live_source
                              else fixture_backend(handle, args.call_timeout)), max_calls=args.max_calls,
                     score=score, dose=args.dose)
     mcp_wrapper.serve(server, sys.stdin.buffer, sys.stdout.buffer)
