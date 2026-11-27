@@ -141,8 +141,13 @@ def oracle_backend(task: dict, snapshot: Path, layout: str = "passages", trust: 
     return call
 
 
-def live_backend(source: Path, map_file: Path, layout: str = "full"):
-    """Answer every call from the live files and the topical map (``live_gather.py``); no service is called."""
+def live_backend(source: Path, map_file: Path, layout: str = "full", decline: bool = False):
+    """Answer every call from the live files and the topical map (``live_gather.py``); no service is called.
+
+    With ``decline`` the approved decline rule (``gather_decline.py``) is applied first, and a declined
+    call is answered with the refusal, listing the files the rule found, as a tool error.
+    """
+    import gather_decline
     import live_gather
     import live_gather_v3
     index = json.loads(map_file.read_text(encoding="utf-8"))
@@ -151,6 +156,14 @@ def live_backend(source: Path, map_file: Path, layout: str = "full"):
     gather = live_gather_v3.gather if index.get("schema") == live_gather_v3.SCHEMA else live_gather.gather
 
     def call(native: str, repo: str, arguments: dict) -> tuple[str, bool, bytes]:
+        if decline:
+            seen = gather_decline.features(repository, arguments)
+            declined, _ = gather_decline.decide(seen)
+            if declined:
+                text = json.dumps({"error": {"code": "gather_context_declined",
+                                             "message": gather_decline.refusal(seen, with_files=True)}},
+                                  ensure_ascii=False, separators=(",", ":"))
+                return text, True, text.encode("utf-8")
         brief = gather(repository, arguments)
         if layout == "focus":
             brief = live_gather.focus(repository, brief)
@@ -176,6 +189,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--live-source", type=Path, help="answer from these live files and --live-map instead of the service")
     parser.add_argument("--live-map", type=Path)
     parser.add_argument("--live-layout", choices=("full", "focus"), default="full")
+    parser.add_argument("--live-decline", action="store_true")
     parser.add_argument("--judge", type=Path, help="state file of a running arbiter_judge_service.py")
     parser.add_argument("--dose", type=int, default=0, help="judgments a call the model spends choosing passages")
     args = parser.parse_args(argv)
@@ -192,7 +206,7 @@ def main(argv: list[str] | None = None) -> int:
     server = Server(tool=tool, repo=args.repo, log_dir=args.log_dir, instructions=instructions,
                     backend=(oracle_backend(json.loads(args.oracle_task.read_text(encoding="utf-8")), args.oracle_snapshot,
                                             args.oracle_layout, args.oracle_trust, args.oracle_complete)
-                             if args.oracle_task else live_backend(args.live_source, args.live_map, args.live_layout) if args.live_source
+                             if args.oracle_task else live_backend(args.live_source, args.live_map, args.live_layout, args.live_decline) if args.live_source
                              else fixture_backend(handle, args.call_timeout)), max_calls=args.max_calls,
                     score=score, dose=args.dose)
     mcp_wrapper.serve(server, sys.stdin.buffer, sys.stdout.buffer)

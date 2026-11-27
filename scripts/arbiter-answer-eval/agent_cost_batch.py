@@ -88,6 +88,7 @@ def run(args) -> int:
                     command += ["--oracle-complete"] if args.oracle_complete else []
                 if arm == "live":
                     command += ["--live-map", str(args.maps / f"{row['snapshot'].name}.map.json"), "--live-layout", args.live_layout]
+                    command += ["--live-decline"] if args.live_decline else []
                 jobs.append((out.name, command))
     print(f"{len(jobs)} session(s) to run", flush=True)
 
@@ -257,6 +258,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--tasks", nargs="*")
     parser.add_argument("--maps", type=pathlib.Path, help="folder of <snapshot>.map.json topical maps, for the live arm")
     parser.add_argument("--live-layout", default="full", help="live arm: full or focus")
+    parser.add_argument("--live-decline", action="store_true", help="live arm: apply the decline rule first")
     parser.add_argument("--oracle-layout", default="passages", help="oracle arm: passages or ranges")
     parser.add_argument("--oracle-trust", action="store_true", help="oracle arm: add the line saying what need not be read again")
     parser.add_argument("--oracle-complete", action="store_true", help="oracle arm: add the completeness line when every need is covered")
