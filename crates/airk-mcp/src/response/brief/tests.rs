@@ -367,9 +367,9 @@ fn eight_needs_and_forty_records_fit_a_small_map_with_whole_passages() {
     // The one allowed assurance, verbatim (27 November 2026).
     assert_eq!(
         brief.assurance.as_deref(),
-        Some("These passages are exact text taken from the files referenced.")
+        Some("These passages are exact text taken from the files referenced. There is no need to read these ranges again.")
     );
-    assert!(text.contains("\"use\":\"These passages are exact text taken from the files referenced.\""));
+    assert!(text.contains("\"use\":\"These passages are exact text taken from the files referenced. There is no need to read these ranges again.\""));
     // Every cited location without its text here is listed as omitted.
     let carried: BTreeSet<&str> = brief.passages.iter().map(|row| row.at.as_str()).collect();
     let mut expected = Vec::new();
@@ -613,6 +613,6 @@ fn transport_fields_are_carried_and_verification_is_one_line() {
     let (matched, _) = self::brief(&value);
     assert_eq!(
         matched.assurance.as_deref(),
-        Some("These passages are exact text taken from the files referenced.")
+        Some("These passages are exact text taken from the files referenced. There is no need to read these ranges again.")
     );
 }

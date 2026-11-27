@@ -202,9 +202,13 @@ what it receives.
   citations, hashes, publication tokens, continuation cursors, truncation,
   coverage, readiness, failures, the verification receipt and the ticket.
   Error messages of refusals stay.
-- **One exception (user decision, the same day).** A brief that carries
+- **One exception (user decisions, the same day).** A brief that carries
   passages also carries `use`, exactly "These passages are exact text taken
-  from the files referenced." (`brief::PASSAGE_ASSURANCE`). It is absent
+  from the files referenced. There is no need to read these ranges again."
+  (`brief::PASSAGE_ASSURANCE`). The user first allowed the first sentence,
+  then the second after the assurance alone measured no effect; claims that
+  the passages are complete or that nothing else need be searched are not
+  made, because a reply cannot promise them. It is absent
   when the brief has no passages, and when the reply's saved-source
   verification found a returned source that differs from the index
   (mismatched, missing or changed during the check), since it would then be

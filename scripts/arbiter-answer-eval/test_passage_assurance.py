@@ -10,7 +10,7 @@ import gather_context_dose
 import gather_context_oracle
 
 # Literal from the user's decision of 27 November 2026, not read from the code under test.
-ASSURANCE = "These passages are exact text taken from the files referenced."
+ASSURANCE = "These passages are exact text taken from the files referenced. There is no need to read these ranges again."
 
 
 class PassageAssurance(unittest.TestCase):
