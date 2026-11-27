@@ -1328,7 +1328,7 @@ class SettledIndexReuseTests(unittest.TestCase):
                 self.subTest(error=error),
                 patch.object(fixture, "tool_body", return_value=status),
                 patch.object(fixture, "probe_search", return_value=observed),
-                patch.object(fixture, "unfinished_jobs", return_value=[]),
+                patch.object(fixture, "unfinished_jobs", return_value={}),  # the helper returns jobs by id
                 patch.object(fixture, "source_io_jobs", return_value=jobs),
             ):
                 commands.reset_mock()
