@@ -67,8 +67,14 @@ pub(crate) fn part(
         let mut withheld = 0;
         // Prefer the source reads that followed a lead. Preserve the ranked
         // order within each group, then include the earlier rounds' citations.
+        // Delivery by need (rule 6) lists the passages it chose, best first.
+        let listed: Vec<&super::coverage::Span> = if state.delivered.is_empty() {
+            state.spans.iter().chain(&state.history).collect()
+        } else {
+            state.delivered.iter().collect()
+        };
         for bounded in [true, false] {
-            for span in state.spans.iter().chain(&state.history) {
+            for span in listed.iter().copied() {
                 let record = &gather.records[span.record];
                 if bounded_read(record.operation) != bounded
                     || !state.evidence.contains(&span.record)

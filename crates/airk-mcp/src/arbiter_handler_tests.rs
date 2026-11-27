@@ -987,6 +987,18 @@ fn without_timing(mut packet: Value) -> Value {
         .as_object_mut()
         .unwrap()
         .remove("timings");
+    // Each gathering stage's wall-clock time, like `elapsed_ms`.
+    for stage in object
+        .get_mut("gathering")
+        .and_then(|gathering| gathering.get_mut("stages"))
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten()
+    {
+        if let Some(stage) = stage.as_object_mut() {
+            stage.remove("elapsed_ms");
+        }
+    }
     if let Some(status) = object.get_mut("read_status").and_then(Value::as_object_mut) {
         for field in status.values_mut() {
             if let Some(field) = field.as_object_mut() {

@@ -286,6 +286,7 @@ pub(crate) fn fixture() -> Result<Fixture> {
 }
 
 mod caller;
+mod gathering;
 mod transfer;
 
 pub(crate) fn fixture_with<T: NativeController + 'static>(

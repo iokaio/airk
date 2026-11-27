@@ -94,7 +94,7 @@
               "type": "null"
             }
           ],
-          "description": "What you will produce. Checked; does not change gathering yet."
+          "description": "What you will produce. It selects standing needs the reply also\ncovers: project rules, how tests run, the build file."
         },
         "known": {
           "description": "Up to 32 path ranges you already read. Checked; does not change\ngathering yet.",
@@ -1684,6 +1684,17 @@
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
+        },
+        "gathering": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GatheringReport"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Per-stage counts and timings of the kernel's gathering. Absent on a\nticket reply."
         },
         "model_work": {
           "$ref": "#/$defs/LoopModelWork"
@@ -3974,6 +3985,165 @@
       ],
       "type": "string"
     },
+    "GatheringReads": {
+      "additionalProperties": false,
+      "description": "Reads of one operation dispatched in a stage.",
+      "properties": {
+        "count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "operation": {
+          "$ref": "#/$defs/LoopRead"
+        }
+      },
+      "required": [
+        "operation",
+        "count"
+      ],
+      "type": "object"
+    },
+    "GatheringReport": {
+      "additionalProperties": false,
+      "description": "Per-stage counts and timings of one Answer's gathering. Disclosure only:\nno record id, digest or decision binds it.",
+      "properties": {
+        "rules": {
+          "description": "The gathering rules that were on for this request.",
+          "items": {
+            "$ref": "#/$defs/GatheringRule"
+          },
+          "type": "array"
+        },
+        "stages": {
+          "items": {
+            "$ref": "#/$defs/GatheringStage"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "rules",
+        "stages"
+      ],
+      "type": "object"
+    },
+    "GatheringRule": {
+      "description": "A gathering rule of the kernel's Answer loop (kernel CONTRACT \"Gathering\nrules\"), named in a reply's `gathering` when it was on for the request.",
+      "enum": [
+        "search_lanes",
+        "standing_needs",
+        "project_guidance",
+        "cited_files",
+        "structure_following",
+        "every_passage_to_every_need",
+        "delivery_by_need"
+      ],
+      "type": "string"
+    },
+    "GatheringStage": {
+      "additionalProperties": false,
+      "description": "What one gathering stage did and how long it took.",
+      "properties": {
+        "elapsed_ms": {
+          "description": "Wall-clock time spent in this stage.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "lookups": {
+          "description": "Private index lookups charged as calls (code facts, listings,\nreferences); they choose reads and are never evidence themselves.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "model_judgments": {
+          "description": "Focus pairs and card decisions taken in this stage.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "passages_delivered": {
+          "description": "Passages from this stage's records the reply delivers to a sub-need.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "passages_fetched": {
+          "description": "Hits of the records this stage retained.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "passages_offered": {
+          "description": "(sub-need, passage) pairs this stage put before a sub-need's ranking.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reads": {
+          "description": "Evidence reads admitted in this stage, by operation.",
+          "items": {
+            "$ref": "#/$defs/GatheringReads"
+          },
+          "type": "array"
+        },
+        "stage": {
+          "$ref": "#/$defs/GatheringStageKind"
+        }
+      },
+      "required": [
+        "stage",
+        "reads",
+        "lookups",
+        "passages_fetched",
+        "passages_offered",
+        "passages_delivered",
+        "model_judgments",
+        "elapsed_ms"
+      ],
+      "type": "object"
+    },
+    "GatheringStageKind": {
+      "description": "A stage of the kernel's gathering, as `gathering` reports it.",
+      "oneOf": [
+        {
+          "const": "retrieve",
+          "description": "Round one's searches and their recipe reads.",
+          "type": "string"
+        },
+        {
+          "const": "guidance",
+          "description": "Project guidance files: folder listings and reads.",
+          "type": "string"
+        },
+        {
+          "const": "cited",
+          "description": "Files the evidence names by path.",
+          "type": "string"
+        },
+        {
+          "const": "structure",
+          "description": "Enclosing definitions, callees, call sites and users of inherited types.",
+          "type": "string"
+        },
+        {
+          "const": "coverage",
+          "description": "Round barriers: Focus, coverage and follow-up choices.",
+          "type": "string"
+        },
+        {
+          "const": "follow_up",
+          "description": "The reads of rounds two and later.",
+          "type": "string"
+        },
+        {
+          "const": "delivery",
+          "description": "Choosing each sub-need's passages, Compose and Union.",
+          "type": "string"
+        }
+      ]
+    },
     "GpuBackend": {
       "enum": [
         "cuda",
@@ -6172,6 +6342,11 @@
         {
           "const": "caller",
           "description": "The caller stated it in the request's `needs`.",
+          "type": "string"
+        },
+        {
+          "const": "standing",
+          "description": "The kernel added it by the request's `deliverable`: a need every piece\nof work of that kind has and callers seldom state.",
           "type": "string"
         }
       ]

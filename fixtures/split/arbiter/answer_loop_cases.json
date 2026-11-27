@@ -1258,7 +1258,52 @@
       "replace": [
         {
           "pointer": "/parts/0/rounds/0/calls",
-          "value": 24
+          "value": 74
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer standing sub-needs follow the others, in a one-part reply",
+      "id": "standing_need_in_a_two_part_reply",
+      "replace": [
+        {
+          "pointer": "/parts/1/sub_needs/0/origin",
+          "value": "standing"
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer gathering reads and lookups differ from the reply's calls",
+      "id": "gathering_calls_differ_from_the_work",
+      "replace": [
+        {
+          "pointer": "/gathering",
+          "value": {
+            "rules": [
+              "search_lanes"
+            ],
+            "stages": [
+              {
+                "elapsed_ms": 10,
+                "lookups": 0,
+                "model_judgments": 0,
+                "passages_delivered": 2,
+                "passages_fetched": 4,
+                "passages_offered": 4,
+                "reads": [
+                  {
+                    "count": 5,
+                    "operation": "search"
+                  }
+                ],
+                "stage": "retrieve"
+              }
+            ]
+          }
         }
       ]
     },

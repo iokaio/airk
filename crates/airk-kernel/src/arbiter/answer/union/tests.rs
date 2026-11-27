@@ -249,6 +249,8 @@ fn assembly<'a>(built: &'a Built, scope: &'a ScopeBinding, limit: usize) -> Asse
         elapsed_ms: 240_000,
         limit,
         unknown_tokens: BTreeMap::new(),
+        gathering: None,
+        delivered_only: false,
     }
 }
 

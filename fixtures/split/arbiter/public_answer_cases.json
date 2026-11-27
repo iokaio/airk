@@ -267,7 +267,7 @@
             "type": "null"
           }
         ],
-        "description": "What you will produce. Checked; does not change gathering yet."
+        "description": "What you will produce. It selects standing needs the reply also\ncovers: project rules, how tests run, the build file."
       },
       "fresh": {
         "description": "Start an independent run; never reuse a job by digest.",

@@ -14,6 +14,7 @@ use airk_core::arbiter::{Asset, AssetRole};
 
 const INPUTS: &str = "AIRK_ARBITER_EVALUATION_CHANGE_SET_INPUTS";
 const LAYERS: &str = "AIRK_ARBITER_EVALUATION_ANSWER_LAYERS";
+const GATHERING: &str = "AIRK_ARBITER_EVALUATION_ANSWER_GATHERING";
 const SEED: &str = "AIRK_ARBITER_EVALUATION_CHANGE_SET_SEED_CPU";
 const OUTPUT: &str = "AIRK_ARBITER_EVALUATION_CHANGE_SET_OUTPUT";
 
@@ -374,6 +375,16 @@ pub(in crate::service_runtime::evaluation_fixture_tests) async fn run_with(
     };
     let seed = seed(std::env::var(SEED).ok().as_deref(), restart.is_some())?;
     airk_kernel::arbiter::software::bind_evaluation_layers(layers)?;
+    // The Answer loop's gathering rules (kernel CONTRACT "Gathering rules"):
+    // all on unless the run names them, for example `all,-structure`.
+    if let Some(rules) = std::env::var(GATHERING)
+        .ok()
+        .filter(|text| !text.is_empty())
+    {
+        airk_kernel::arbiter::bind_gathering_rules(airk_kernel::arbiter::GatheringRules::parse(
+            &rules,
+        )?)?;
+    }
     let parent_pin = OpenedDirectory::open(&parent)?;
     let work_pin = crate::ipc::endpoint::create_root_at(
         &parent_pin,

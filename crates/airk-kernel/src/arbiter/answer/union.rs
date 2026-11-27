@@ -40,6 +40,11 @@ pub(crate) struct Assembly<'a> {
     /// Reservations of card calls whose outcome is unknown, per part and
     /// round: still charged, so retained by the rounds and the work.
     pub(crate) unknown_tokens: BTreeMap<(u8, u8), usize>,
+    /// The per-stage counts and timings the reply carries.
+    pub(crate) gathering: Option<v3::GatheringReport>,
+    /// Rule 6 (delivery by need) chose each sub-need's passages: the reply
+    /// carries only those spans' text, from the first packing attempt on.
+    pub(crate) delivered_only: bool,
 }
 
 fn truncate(text: &str, limit: usize) -> (&str, bool) {
@@ -403,7 +408,12 @@ pub(crate) fn assemble(
     for part in assembly.parts {
         for need in &part.needs {
             cited.extend(need.evidence.iter().copied());
-            for span in &need.history {
+            let spans = if need.delivered.is_empty() {
+                &need.history
+            } else {
+                &need.delivered
+            };
+            for span in spans {
                 if need.evidence.contains(&span.record) {
                     let slot = cited_spans
                         .entry(span.record)
@@ -484,7 +494,7 @@ fn build(
         let cited = cited_spans.get(&index).unwrap_or(&empty);
         for (position, (pointer, hit)) in found.iter().enumerate() {
             let focus = cited.get(pointer);
-            if level >= 1 && focus.is_none() {
+            if (level >= 1 || assembly.delivered_only) && focus.is_none() {
                 continue;
             }
             keys.push((index, position));
@@ -750,6 +760,7 @@ fn build(
         omitted_count,
         applications: vec![assembly.application.clone()],
         read_status: read_status(gather),
+        gathering: assembly.gathering.clone(),
     })
 }
 

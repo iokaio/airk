@@ -37,6 +37,7 @@ fn record(hits: &[&str]) -> Record {
         seq: 1,
         uses: Vec::new(),
         failure: false,
+        stage: v3::GatheringStageKind::Retrieve,
     }
 }
 

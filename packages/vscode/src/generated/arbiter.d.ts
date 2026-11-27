@@ -41,7 +41,8 @@ export type AnswerCallV3 = {
      */
     continuation?: Sha256Digest | null;
     /**
-     * What you will produce. Checked; does not change gathering yet.
+     * What you will produce. It selects standing needs the reply also
+     * covers: project rules, how tests run, the build file.
      */
     deliverable?: Deliverable | null;
     /**
@@ -522,6 +523,11 @@ export type ContextResponseV3 = {
      * Wall-clock milliseconds from admission to the reply, set by the kernel.
      */
     elapsed_ms: number;
+    /**
+     * Per-stage counts and timings of the kernel's gathering. Absent on a
+     * ticket reply.
+     */
+    gathering?: GatheringReport | null;
     model_work: LoopModelWork;
     omitted_count: number;
     /**
@@ -1094,6 +1100,73 @@ export type FollowUp = {
 
 export type Gap = "sufficient" | "definition" | "constraint" | "example" | "test" | "counterevidence" | "ambiguous" | "unsupported";
 
+/**
+ * Reads of one operation dispatched in a stage.
+ */
+export type GatheringReads = {
+    count: number;
+    operation: LoopRead;
+};
+
+/**
+ * Per-stage counts and timings of one Answer's gathering. Disclosure only:
+ * no record id, digest or decision binds it.
+ */
+export type GatheringReport = {
+    /**
+     * The gathering rules that were on for this request.
+     */
+    rules: Array<GatheringRule>;
+    stages: Array<GatheringStage>;
+};
+
+/**
+ * A gathering rule of the kernel's Answer loop (kernel CONTRACT "Gathering
+ * rules"), named in a reply's `gathering` when it was on for the request.
+ */
+export type GatheringRule = "search_lanes" | "standing_needs" | "project_guidance" | "cited_files" | "structure_following" | "every_passage_to_every_need" | "delivery_by_need";
+
+/**
+ * What one gathering stage did and how long it took.
+ */
+export type GatheringStage = {
+    /**
+     * Wall-clock time spent in this stage.
+     */
+    elapsed_ms: number;
+    /**
+     * Private index lookups charged as calls (code facts, listings,
+     * references); they choose reads and are never evidence themselves.
+     */
+    lookups: number;
+    /**
+     * Focus pairs and card decisions taken in this stage.
+     */
+    model_judgments: number;
+    /**
+     * Passages from this stage's records the reply delivers to a sub-need.
+     */
+    passages_delivered: number;
+    /**
+     * Hits of the records this stage retained.
+     */
+    passages_fetched: number;
+    /**
+     * (sub-need, passage) pairs this stage put before a sub-need's ranking.
+     */
+    passages_offered: number;
+    /**
+     * Evidence reads admitted in this stage, by operation.
+     */
+    reads: Array<GatheringReads>;
+    stage: GatheringStageKind;
+};
+
+/**
+ * A stage of the kernel's gathering, as `gathering` reports it.
+ */
+export type GatheringStageKind = "retrieve" | "guidance" | "cited" | "structure" | "coverage" | "follow_up" | "delivery";
+
 export type GpuBackend = "cuda" | "direct_ml" | "core_ml";
 
 export type GpuPrecisionPreference = "auto" | "fp32" | "fp16";
@@ -1639,7 +1712,7 @@ export type SubNeed = {
 
 export type SubNeedKind = "definition" | "callers" | "tests" | "contract" | "documentation" | "configuration" | "other";
 
-export type SubNeedOrigin = "derived" | "caller";
+export type SubNeedOrigin = "derived" | "caller" | "standing";
 
 export type Task = "airk.request_supported.v1" | "airk.retrieval_route.v1" | "airk.recipe_choice.v1" | "airk.evidence_relevance.v1" | "airk.evidence_role.v1" | "airk.context_next_read.v1" | "airk.context_gap.v1" | "airk.context_action.v1" | "airk.focus_rank.v1" | "airk.context_plan.v1" | "airk.context_coverage.v1" | "airk.context_follow_up.v1" | "airk.context_split.v1";
 

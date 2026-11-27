@@ -23,13 +23,20 @@ pub use admission::AdmissionPlan;
 mod compose;
 mod coverage;
 mod decide;
+mod deliver;
+mod extend;
 mod follow;
 mod gather;
 mod model;
 mod nominate;
 mod plan;
 mod repeats;
+mod report;
 mod retrieve;
+mod rules;
+pub use rules::GatheringRules;
+#[cfg(feature = "test-support")]
+pub use rules::bind_gathering_rules;
 mod shares;
 mod split;
 pub(crate) use split::independent_parts;
@@ -186,13 +193,34 @@ impl crate::Kernel {
         self.answer_run(request, env, None)
     }
 
+    /// Answer /3 under one set of gathering rules instead of the process's.
+    #[cfg(test)]
+    pub(crate) fn answer_with_rules(
+        &self,
+        request: v3::ContextRequestV3,
+        env: AnswerEnv<'_>,
+        rules: GatheringRules,
+    ) -> Result<AnswerOutcome> {
+        self.answer_ruled(request, env, None, rules)
+    }
+
     /// The loop behind `answer_with` and `answer_admitted`; `plan` is the
     /// service's admission plan (`admission`), when there is one.
     fn answer_run(
         &self,
+        request: v3::ContextRequestV3,
+        env: AnswerEnv<'_>,
+        plan: Option<&AdmissionPlan>,
+    ) -> Result<AnswerOutcome> {
+        self.answer_ruled(request, env, plan, rules::gathering_rules())
+    }
+
+    fn answer_ruled(
+        &self,
         mut request: v3::ContextRequestV3,
         env: AnswerEnv<'_>,
         plan: Option<&AdmissionPlan>,
+        wanted: GatheringRules,
     ) -> Result<AnswerOutcome> {
         request.validate()?;
         (env.require_live)()?;
@@ -281,7 +309,14 @@ impl crate::Kernel {
             model_share: vec![],
             batch_split: false,
             admitted,
+            rules: GatheringRules::none(),
+            wanted,
+            report: report::Report::new(vec![]),
+            lookups: BTreeMap::new(),
+            gathered: vec![],
+            extension: 0,
         };
+        run.begin_stage(v3::GatheringStageKind::Retrieve);
         run.split()?;
         run.plan()?;
         run.rounds()?;
@@ -332,6 +367,20 @@ struct Loop<'a> {
     batch_split: bool,
     /// The budget as asked and what the service's admission plan took away.
     admitted: admission::Admitted,
+    /// The gathering rules in force for this request (kernel CONTRACT
+    /// "Gathering rules"): the bound switches when the request carries
+    /// caller inputs that select them, otherwise none.
+    rules: GatheringRules,
+    /// The rules bound for the process (or given by a test).
+    wanted: GatheringRules,
+    report: report::Report,
+    /// Private lookups of the gathering rules, kept in custody beside the
+    /// nominations.
+    lookups: BTreeMap<ReadKey, NominationObservation>,
+    /// Gathering reads and lookups charged to each part (by index).
+    gathered: Vec<usize>,
+    /// The next gathering phase of round one (`extend`).
+    extension: u8,
 }
 
 struct Assessed {
@@ -481,14 +530,51 @@ impl Loop<'_> {
         self.used_calls = vec![0; self.parts.len()];
         self.used_slots = vec![0; self.parts.len()];
         self.used_pairs = vec![0; self.parts.len()];
+        self.gathered = vec![0; self.parts.len()];
         for (part, share) in self.parts.iter_mut().zip(&self.shares.parts) {
             part.share_ms = share.deadline_ms;
         }
         Ok(())
     }
 
+    /// The gathering rules apply to a one-part request whose caller inputs
+    /// select them: caller needs, or a deliverable that brings standing
+    /// sub-needs. Every other request keeps the loop's own gathering.
+    fn choose_rules(&mut self) {
+        let wanted = self.wanted;
+        let caller = !self.request.needs.is_empty();
+        let standing = !rules::standing(self.request.deliverable, caller).is_empty();
+        if self.parts.len() == 1 && (caller || (standing && wanted.standing)) {
+            self.rules = wanted;
+        }
+        self.report.set_rules(self.rules.wire());
+    }
+
+    /// Rule 2: the standing sub-needs of the request's deliverable follow
+    /// the part's own, as overview sub-needs searched in their own words.
+    fn add_standing(&mut self, index: usize) {
+        if !self.rules.standing || self.parts.len() != 1 {
+            return;
+        }
+        let caller = !self.request.needs.is_empty();
+        for which in rules::standing(self.request.deliverable, caller) {
+            let part = &mut self.parts[index];
+            let id = part.needs.len() as u8 + 1;
+            part.needs.push(NeedState::standing(
+                retrieve::Need {
+                    id,
+                    kind: retrieve::NeedKind::Overview,
+                    subject: None,
+                    query: which.text().to_owned(),
+                },
+                *which,
+            ));
+        }
+    }
+
     fn plan(&mut self) -> Result<()> {
         let question = self.request.question.clone();
+        self.choose_rules();
         for index in 0..self.parts.len() {
             if !self.request.needs.is_empty() {
                 // The caller's statements are the sub-needs, in order; the
@@ -507,6 +593,7 @@ impl Loop<'_> {
                         })
                     })
                     .collect();
+                self.add_standing(index);
                 self.progress(index, v3::LoopStage::Plan);
                 continue;
             }
@@ -540,6 +627,7 @@ impl Loop<'_> {
                 .into_iter()
                 .map(NeedState::new)
                 .collect();
+            self.add_standing(index);
             self.progress(index, v3::LoopStage::Plan);
         }
         Ok(())
@@ -547,12 +635,19 @@ impl Loop<'_> {
 
     /// Offer a read, within its sub-need's round-one cap.
     fn offer(&mut self, part: usize, dispatch: gather::Dispatch) -> Result<()> {
+        self.offer_as(part, dispatch, true)
+    }
+
+    /// Offer a read; `capped` holds a round-one read to its sub-need's
+    /// recipe cap. The gathering rules' reads are counted against the part's
+    /// gathering room instead (`extend::gathering_room`).
+    fn offer_as(&mut self, part: usize, dispatch: gather::Dispatch, capped: bool) -> Result<()> {
         let id = self.parts[part].id;
         if let Some(need) = dispatch.need {
             let state = self.parts[part]
                 .need(need)
                 .context("Answer read for an unknown sub-need")?;
-            if dispatch.round == 1 && state.reads >= FIRST_ROUND_READS {
+            if capped && dispatch.round == 1 && state.reads >= FIRST_ROUND_READS {
                 return Ok(());
             }
             state.tried.insert(dispatch.key);
@@ -568,6 +663,7 @@ impl Loop<'_> {
             // Only a new dispatch counts against the round-one cap.
             Offer::Queued => {
                 if let Some(need) = need
+                    && capped
                     && round == 1
                     && let Some(state) = self.parts[part].need(need)
                 {
@@ -726,6 +822,7 @@ impl Loop<'_> {
                     if byte_allowance < 512 || !self.gather.reserve_nomination() {
                         continue;
                     }
+                    self.report.lookup(self.gather.stage);
                     self.parts[part].need(probe.need).expect("known need").reads += 1;
                     self.used_calls[part] += 1;
                     let round = self.parts[part].current();
@@ -744,7 +841,7 @@ impl Loop<'_> {
                     let outcome =
                         self.run_nomination(&probe.read, tool, &arguments, byte_allowance)?;
                     let observed = NominationObservation {
-                        ordinal: self.nominations.len() + 1,
+                        ordinal: self.nominations.len() + self.lookups.len() + 1,
                         tool,
                         arguments,
                         basis: vec![probe.basis],
@@ -874,20 +971,40 @@ impl Loop<'_> {
             let needs: Vec<_> = self.parts[part]
                 .needs
                 .iter()
-                .map(|state| state.need.clone())
+                .map(|state| (state.need.clone(), state.standing))
                 .collect();
-            for need in needs {
+            for (need, standing) in needs {
                 for read in retrieve::initial(&mut self.gather, id, &need)? {
                     self.offer(part, read)?;
+                }
+                // Rule 1: the same search on source code only, and for a
+                // standing sub-need about tests or builds on configuration
+                // only, beside the sub-need's recipe.
+                if self.rules.lanes {
+                    use airk_core::search_filters::EvidenceKind;
+                    let lanes = [
+                        Some(EvidenceKind::Code),
+                        standing
+                            .filter(|which| which.configuration_lane())
+                            .map(|_| EvidenceKind::Configuration),
+                    ];
+                    for kind in lanes.into_iter().flatten() {
+                        let read = retrieve::lane_search(&mut self.gather, id, &need, kind)?;
+                        self.offer_as(part, read, false)?;
+                    }
                 }
             }
         }
         let mut round = 1u8;
         loop {
+            if round > 1 {
+                self.begin_stage(v3::GatheringStageKind::FollowUp);
+            }
             if let Some(stop) = self.gather_round(round)? {
                 self.stop_all(stop, round);
                 break;
             }
+            self.begin_stage(v3::GatheringStageKind::Coverage);
             self.barrier(round)?;
             if !self.parts.iter().any(PartState::active) {
                 break;
@@ -947,6 +1064,11 @@ impl Loop<'_> {
             }
             self.rr += 1;
             if wave.is_empty() {
+                // Round one's searches and recipes have run: the gathering
+                // rules' next phase plans from what they retained.
+                if round == 1 && self.gather.stop.is_none() && self.extend()? {
+                    continue;
+                }
                 return Ok(self.gather.stop);
             }
             wave.sort_by_key(|read| read.seq);
@@ -1146,8 +1268,7 @@ impl Loop<'_> {
             if self.parts[part].needs[index].covered() {
                 continue;
             }
-            let need = self.parts[part].needs[index].need.id;
-            let mut spans = coverage::spans(&self.gather, id, need, round);
+            let mut spans = self.need_spans(part, index, round);
             coverage::rank(&mut spans);
             let assessed = self.assess(id, &self.parts[part].needs[index], spans, round);
             let state = &mut self.parts[part].needs[index];
@@ -1166,6 +1287,82 @@ impl Loop<'_> {
         let last = self.parts[part].current();
         last.covered = covered;
         last.new_evidence = new_evidence;
+    }
+
+    /// A sub-need's spans of this round: its own and, round one, the part's
+    /// (`coverage::spans`), then with rule 5 the cheap first cut of the
+    /// other sub-needs' passages, which Focus scores with the rest.
+    fn need_spans(&self, part: usize, index: usize, round: u8) -> Vec<coverage::Span> {
+        let id = self.parts[part].id;
+        let state = &self.parts[part].needs[index];
+        let mut spans = coverage::spans(&self.gather, id, state.need.id, round);
+        if self.rules.cross {
+            let cross = deliver::cross_spans(
+                &self.gather,
+                id,
+                state.need.id,
+                &state.need.query,
+                round,
+                &spans,
+                deliver::CROSS_PER_NEED,
+            );
+            spans.extend(cross);
+        }
+        spans
+    }
+
+    /// Rule 6: each sub-need's best passages inside one byte budget, half
+    /// the reply frame. A sub-need that receives passages cites their
+    /// records beside its structural ones, so it is at least partly covered.
+    fn deliver(&mut self, limit: usize) {
+        let budget = limit / 2 / self.parts.len().max(1);
+        for part in 0..self.parts.len() {
+            let id = self.parts[part].id;
+            let ranked: Vec<Vec<deliver::Candidate>> = self.parts[part]
+                .needs
+                .iter()
+                .map(|state| {
+                    let scored: Vec<coverage::Span> =
+                        state.history.iter().chain(&state.spans).cloned().collect();
+                    deliver::candidates(
+                        &self.gather,
+                        id,
+                        state.need.id,
+                        &state.need.query,
+                        &scored,
+                        self.rules.cross,
+                    )
+                })
+                .collect();
+            for candidates in &ranked {
+                let spans: Vec<coverage::Span> =
+                    candidates.iter().map(|item| item.span.clone()).collect();
+                self.report.offered(&spans, &self.gather);
+            }
+            let chosen = deliver::deliver(&ranked, budget);
+            for (state, delivered) in self.parts[part].needs.iter_mut().zip(chosen) {
+                if delivered.is_empty() {
+                    continue;
+                }
+                let mut evidence: Vec<usize> = Vec::new();
+                for span in &delivered {
+                    if !evidence.contains(&span.record) {
+                        evidence.push(span.record);
+                    }
+                }
+                for index in &state.evidence {
+                    let structural = coverage::record_hits(&self.gather.records[*index]).is_empty();
+                    if structural && !evidence.contains(index) {
+                        evidence.push(*index);
+                    }
+                }
+                state.evidence = evidence;
+                if state.coverage == v3::Coverage::Missing {
+                    state.coverage = v3::Coverage::Partial;
+                }
+                state.delivered = delivered;
+            }
+        }
     }
 
     fn assess(
@@ -1291,8 +1488,9 @@ impl Loop<'_> {
             self.progress(part, v3::LoopStage::Read);
             for index in 0..self.parts[part].needs.len() {
                 if !self.parts[part].needs[index].covered() {
-                    let need = self.parts[part].needs[index].need.id;
-                    entries.push((part, index, coverage::spans(&self.gather, id, need, round)));
+                    let spans = self.need_spans(part, index, round);
+                    self.report.offered(&spans, &self.gather);
+                    entries.push((part, index, spans));
                 }
             }
         }
@@ -1589,6 +1787,7 @@ impl Loop<'_> {
         let mut nominations: Vec<_> = self
             .nominations
             .iter()
+            .chain(&self.lookups)
             .map(|(id, item)| {
                 json!({"id": id, "ordinal": item.ordinal, "tool": item.tool, "arguments": item.arguments,
                     "revision": self.gather.revision, "basis": item.basis, "outcome": item.outcome})
@@ -1614,13 +1813,36 @@ impl Loop<'_> {
         for part in 0..self.parts.len() {
             self.progress(part, v3::LoopStage::Compose);
         }
+        self.begin_stage(v3::GatheringStageKind::Delivery);
         (self.env.require_live)()?;
         self.kernel
             .require_delivery_fence(self.context.authority.fingerprint, &self.publication)?;
         self.fence()?;
         let reserve = self.context.context_reply_reserve;
         let limit = v3::reply_limit(&self.request.budget).saturating_sub(reserve);
+        if self.rules.delivery {
+            self.deliver(limit);
+        }
+        // Every stage closes before the reply's elapsed time is taken, so no
+        // stage outlasts it.
+        let (now, judgments) = (self.now(), self.judgments());
+        self.report.end(now, judgments);
+        let elapsed_ms = self.elapsed_ms();
+        let delivery = self.rules.delivery;
+        let gathering = self.report.build(&self.gather, &self.parts, |need| {
+            if delivery && !need.delivered.is_empty() {
+                need.delivered.clone()
+            } else {
+                need.history
+                    .iter()
+                    .filter(|span| need.evidence.contains(&span.record))
+                    .cloned()
+                    .collect()
+            }
+        });
         let assembly = union::Assembly {
+            gathering: Some(gathering),
+            delivered_only: delivery,
             question: &self.request.question,
             scope: &self.scope,
             parts: &self.parts,
@@ -1628,7 +1850,7 @@ impl Loop<'_> {
             ledger: &self.ledger,
             degradations: self.degradations(),
             application: self.application.clone(),
-            elapsed_ms: self.elapsed_ms(),
+            elapsed_ms,
             limit,
             unknown_tokens: self.unknown_tokens.clone(),
         };

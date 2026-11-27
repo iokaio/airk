@@ -45,6 +45,18 @@ pub const FIRST_ROUND_READS_PER_SUB_NEED: usize = 6;
 pub const FOLLOW_UP_READS_PER_SUB_NEED_ROUND: usize = 1;
 /// The mandatory search of a part's own text, in its first round.
 pub const PART_SEARCHES: usize = 1;
+/// Sub-needs the kernel adds by the request's `deliverable` beside the
+/// caller's or the derived ones (kernel CONTRACT "Gathering rules"): project
+/// rules, the test command, the build file and, for a code change, the error
+/// path. They hold reply ids after the others, in a one-part reply only.
+pub const MAX_STANDING_NEEDS: usize = 4;
+/// Round-one searches of one sub-need beyond its own recipe: its source-code
+/// lane and, for a standing sub-need, its configuration lane.
+pub const SEARCH_LANES_PER_SUB_NEED: usize = 2;
+/// Round-one reads of one part beyond its sub-needs' own recipes: project
+/// guidance (listings and reads), files the evidence cites, and structure
+/// following (private code-fact and reference lookups and their excerpts).
+pub const GATHERING_READS_PER_PART: usize = 48;
 /// A full loop: round one 4 x (1 + 4 x 6) = 100, later rounds 4 x 2 x 4 = 32.
 pub const DEFAULT_CALLS: usize = 132;
 pub const MAX_CALLS: usize = 160;
@@ -377,7 +389,8 @@ pub struct AnswerCallV3 {
     /// text, numbers with units), at most 200 bytes each.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub anchors: Vec<String>,
-    /// What you will produce. Checked; does not change gathering yet.
+    /// What you will produce. It selects standing needs the reply also
+    /// covers: project rules, how tests run, the build file.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deliverable: Option<Deliverable>,
     /// Up to 32 path ranges you already read. Checked; does not change
@@ -642,6 +655,9 @@ pub enum SubNeedOrigin {
     Derived,
     /// The caller stated it in the request's `needs`.
     Caller,
+    /// The kernel added it by the request's `deliverable`: a need every piece
+    /// of work of that kind has and callers seldom state.
+    Standing,
 }
 impl SubNeedOrigin {
     pub fn is_derived(&self) -> bool {
@@ -926,6 +942,86 @@ fn nullable_profile(generator: &mut schemars::SchemaGenerator) -> schemars::Sche
     generator.subschema_for::<Option<Sha256Digest>>()
 }
 
+/// A gathering rule of the kernel's Answer loop (kernel CONTRACT "Gathering
+/// rules"), named in a reply's `gathering` when it was on for the request.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum GatheringRule {
+    SearchLanes,
+    StandingNeeds,
+    ProjectGuidance,
+    CitedFiles,
+    StructureFollowing,
+    EveryPassageToEveryNeed,
+    DeliveryByNeed,
+}
+
+/// A stage of the kernel's gathering, as `gathering` reports it.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum GatheringStageKind {
+    /// Round one's searches and their recipe reads.
+    Retrieve,
+    /// Project guidance files: folder listings and reads.
+    Guidance,
+    /// Files the evidence names by path.
+    Cited,
+    /// Enclosing definitions, callees, call sites and users of inherited types.
+    Structure,
+    /// Round barriers: Focus, coverage and follow-up choices.
+    Coverage,
+    /// The reads of rounds two and later.
+    FollowUp,
+    /// Choosing each sub-need's passages, Compose and Union.
+    Delivery,
+}
+
+/// Reads of one operation dispatched in a stage.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GatheringReads {
+    pub operation: LoopRead,
+    pub count: usize,
+}
+
+/// What one gathering stage did and how long it took.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GatheringStage {
+    pub stage: GatheringStageKind,
+    /// Evidence reads admitted in this stage, by operation.
+    pub reads: Vec<GatheringReads>,
+    /// Private index lookups charged as calls (code facts, listings,
+    /// references); they choose reads and are never evidence themselves.
+    pub lookups: usize,
+    /// Hits of the records this stage retained.
+    pub passages_fetched: usize,
+    /// (sub-need, passage) pairs this stage put before a sub-need's ranking.
+    pub passages_offered: usize,
+    /// Passages from this stage's records the reply delivers to a sub-need.
+    pub passages_delivered: usize,
+    /// Focus pairs and card decisions taken in this stage.
+    pub model_judgments: usize,
+    /// Wall-clock time spent in this stage.
+    pub elapsed_ms: u64,
+}
+
+/// Per-stage counts and timings of one Answer's gathering. Disclosure only:
+/// no record id, digest or decision binds it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GatheringReport {
+    /// The gathering rules that were on for this request.
+    pub rules: Vec<GatheringRule>,
+    pub stages: Vec<GatheringStage>,
+}
+/// The most stages one report names: one per stage kind.
+pub const MAX_GATHERING_STAGES: usize = 7;
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ContextResponseV3 {
@@ -965,6 +1061,10 @@ pub struct ContextResponseV3 {
     /// reply without status (terse, `include_status` false).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub read_status: Option<serde_json::Map<String, serde_json::Value>>,
+    /// Per-stage counts and timings of the kernel's gathering. Absent on a
+    /// ticket reply.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gathering: Option<GatheringReport>,
 }
 
 fn nullable_partial(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
@@ -1109,6 +1209,7 @@ impl ContextResponseV3 {
         self.validate_partial()?;
         self.validate_applications()?;
         self.validate_work(budget)?;
+        self.validate_gathering(budget)?;
         ensure!(
             self.read_status.as_ref().is_none_or(|status| {
                 !status.is_empty()
@@ -1333,24 +1434,38 @@ impl ContextResponseV3 {
             shares = shares
                 .checked_add(part.deadline_share_ms)
                 .ok_or_else(|| anyhow::anyhow!("Answer deadline share overflow"))?;
-            // A part's sub-needs are all derived or all the caller's. Caller
-            // needs fill the single part of their request, up to MAX_NEEDS;
-            // derived ones keep the budget's limit.
-            let stated = part
-                .sub_needs
-                .iter()
-                .filter(|need| need.origin == SubNeedOrigin::Caller)
-                .count();
+            // A part's own sub-needs are all derived or all the caller's.
+            // Caller needs fill the single part of their request, up to
+            // MAX_NEEDS; derived ones keep the budget's limit. Standing
+            // sub-needs follow them, at most MAX_STANDING_NEEDS, in a
+            // one-part reply only.
+            let count = |origin: SubNeedOrigin| {
+                part.sub_needs
+                    .iter()
+                    .filter(|need| need.origin == origin)
+                    .count()
+            };
+            let stated = count(SubNeedOrigin::Caller);
+            let standing = count(SubNeedOrigin::Standing);
+            let own = part.sub_needs.len() - standing;
             ensure!(
-                stated == 0 || stated == part.sub_needs.len(),
+                stated == 0 || stated == own,
                 "Answer sub-need origins are mixed"
             );
             ensure!(
-                !part.sub_needs.is_empty()
+                standing <= MAX_STANDING_NEEDS
+                    && (standing == 0 || self.parts.len() == 1)
+                    && part.sub_needs[own..]
+                        .iter()
+                        .all(|need| need.origin == SubNeedOrigin::Standing),
+                "Answer standing sub-needs follow the others, in a one-part reply"
+            );
+            ensure!(
+                own > 0
                     && if stated == 0 {
-                        part.sub_needs.len() <= effective.sub_needs
+                        own <= effective.sub_needs
                     } else {
-                        self.parts.len() == 1 && part.sub_needs.len() <= MAX_NEEDS
+                        self.parts.len() == 1 && own <= MAX_NEEDS
                     },
                 "Answer sub-need limit"
             );
@@ -1457,8 +1572,13 @@ impl ContextResponseV3 {
             let reads = if index == 0 {
                 // Round one also holds one exact lookup per caller anchor. A
                 // reply does not carry its request, so the bound is the most
-                // anchors a request may state.
-                PART_SEARCHES + MAX_ANCHORS + needs * FIRST_ROUND_READS_PER_SUB_NEED
+                // anchors a request may state. The gathering rules add each
+                // sub-need's search lanes and the part's guidance, cited-file
+                // and structure reads (kernel CONTRACT "Gathering rules").
+                PART_SEARCHES
+                    + MAX_ANCHORS
+                    + GATHERING_READS_PER_PART
+                    + needs * (FIRST_ROUND_READS_PER_SUB_NEED + SEARCH_LANES_PER_SUB_NEED)
             } else {
                 needs * FOLLOW_UP_READS_PER_SUB_NEED_ROUND
             };
@@ -2010,6 +2130,55 @@ impl ContextResponseV3 {
             self.work.calls,
             self.work.bytes,
             budget.max_bytes
+        );
+        Ok(())
+    }
+
+    /// A gathering report names each rule and stage once, and its reads and
+    /// lookups are exactly the reply's calls. Its stages are disjoint spans
+    /// of the one run, so together they take at most the deadline and its
+    /// tolerance. They are not compared with the reply's `elapsed_ms`, which
+    /// a service sets to the caller's own wait when a call attaches to a job
+    /// that was already running.
+    fn validate_gathering(&self, budget: &BudgetV3) -> Result<()> {
+        let Some(report) = &self.gathering else {
+            return Ok(());
+        };
+        ensure!(
+            self.ticket.is_none(),
+            "a ticket reply carries no gathering report"
+        );
+        ensure!(
+            unique(&report.rules)
+                && report.stages.len() <= MAX_GATHERING_STAGES
+                && unique(report.stages.iter().map(|stage| stage.stage)),
+            "Answer gathering report names a rule or stage twice"
+        );
+        let mut calls = 0usize;
+        let mut elapsed = 0u64;
+        for stage in &report.stages {
+            ensure!(
+                unique(stage.reads.iter().map(|reads| reads.operation))
+                    && stage.reads.iter().all(|reads| reads.count > 0),
+                "Answer gathering stage reads are not one count per operation"
+            );
+            elapsed = elapsed.saturating_add(stage.elapsed_ms);
+            calls = stage
+                .reads
+                .iter()
+                .map(|reads| reads.count)
+                .chain([stage.lookups])
+                .try_fold(calls, usize::checked_add)
+                .ok_or_else(|| anyhow::anyhow!("Answer gathering accounting overflow"))?;
+        }
+        ensure!(
+            elapsed <= budget.deadline_ms.saturating_add(DEADLINE_TOLERANCE_MS),
+            "Answer gathering stages outlast the deadline and its tolerance"
+        );
+        ensure!(
+            calls == self.work.calls,
+            "Answer gathering reads and lookups differ from the reply's calls: {calls} of {}",
+            self.work.calls
         );
         Ok(())
     }

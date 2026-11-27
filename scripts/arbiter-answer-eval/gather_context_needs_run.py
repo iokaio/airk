@@ -33,6 +33,7 @@ from gather_context_capture import _native_call
 SCHEMA = "airk.private.gather-context-needs-run/1"
 ARMS = ("task", "needs")
 MAX_NEEDS, MAX_ANCHORS = 8, 16
+DELIVERABLES = ("code_change", "test", "document", "analysis")
 
 
 def caller_inputs(written: dict, case_id: str) -> dict:
@@ -47,6 +48,11 @@ def caller_inputs(written: dict, case_id: str) -> dict:
     inputs = {"needs": needs}
     if anchors:
         inputs["anchors"] = anchors
+    deliverable = str(row.get("deliverable") or "").strip().lower().replace(" ", "_")
+    if deliverable:
+        if deliverable not in DELIVERABLES:
+            raise ValueError(f"{case_id} names an unknown deliverable")
+        inputs["deliverable"] = deliverable
     return inputs
 
 
@@ -92,6 +98,10 @@ def main(argv: list[str] | None = None) -> int:
                          "sub_needs": sum(len(part.get("sub_needs", [])) for part in parts),
                          "stops": [part.get("stop") for part in parts],
                          "reply_bytes": len(common.envelope_text(outcome.envelope) or ""),
+                         # The kernel's own per-stage counts and timings, when the image reports them.
+                         "gathering": body.get("gathering") if done else None,
+                         "standing_sub_needs": sum(need.get("origin") == "standing" for part in parts
+                                                   for need in part.get("sub_needs", [])),
                          "arguments": dispatch["arguments"],
                          "reply_sha256": common.sha256_bytes(outcome.stdout)})
             print(f"{case_id} {arm} completed={done} reused={rows[-1]['reused']} calls={work.get('calls')} "

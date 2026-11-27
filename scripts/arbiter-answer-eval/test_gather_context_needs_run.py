@@ -16,6 +16,12 @@ class CallerInputsTest(unittest.TestCase):
         self.assertEqual(runner.caller_inputs({"a-C1": {"needs": ["one"], "anchors": []}}, "a-C1"),
                          {"needs": ["one"]})
 
+    def test_a_deliverable_is_sent_in_its_wire_spelling_and_an_unknown_one_is_refused(self):
+        written = {"a-C1": {"needs": ["one"], "deliverable": "code change"}, "a-C2": {"needs": ["one"], "deliverable": "essay"}}
+        self.assertEqual(runner.caller_inputs(written, "a-C1"), {"needs": ["one"], "deliverable": "code_change"})
+        with self.assertRaises(ValueError):
+            runner.caller_inputs(written, "a-C2")
+
     def test_missing_empty_or_oversized_inputs_are_refused(self):
         for written in ({}, {"a-C1": {"needs": []}}, {"a-C1": {"needs": ["ok", "  "]}},
                         {"a-C1": {"needs": [f"need {n}" for n in range(9)]}},

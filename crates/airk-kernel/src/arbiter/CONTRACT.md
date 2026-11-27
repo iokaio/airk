@@ -837,10 +837,10 @@ kernel uses two of them.
   and is never read as a pattern. Unlike the part search, a lookup that
   fails or finds nothing does not refuse the request. On the wire its
   record use is a part search.
-- **Not used yet.** `deliverable` and `known` are validated by Core and do
-  not change gathering. Per-need jobs still share one part's budget shares
-  and one reply paragraph each; the union by need and the returned
-  vocabulary of the plan are not built.
+- **`deliverable`** selects standing sub-needs (rule 2 of "Gathering rules"
+  below). **Not used yet:** `known` is validated by Core and does not change
+  gathering. Per-need jobs still share one part's budget shares and one
+  reply paragraph each; the returned vocabulary of the plan is not built.
 
 Tests: `arbiter::answer::tests::caller` (needs become the ordered sub-needs
 of one part without Split or Plan decisions, a request without needs keeps
@@ -856,3 +856,109 @@ navigation targets leaves the need's prior coverage in place. An exact
 spelling alone establishes a possible join. The canonical read and normal
 coverage checks still determine what the range supports. The current
 public contract funds one follow-up read per need per later round.
+
+
+### Gathering rules (user decision, 26 November 2026)
+
+The user approved building the fetching rules a prototype proved
+(`scripts/arbiter-answer-eval/arbiter_loop_prototype.py`) into the kernel loop on 26 November
+2026 (change-log entry 75). Owner: `answer/rules.rs` (switches and standing
+texts), `answer/extend.rs` (rules 3 and 4), `answer/deliver.rs` (rules 5
+and 6) and `answer/report.rs` (rule 7), driven from `answer.rs`.
+
+**When they apply.** The rules apply to a one-part request whose caller
+inputs select them: caller `needs`, or a `deliverable` that brings standing
+sub-needs (`code_change`, `test`). Every other request, including every
+request without caller inputs, gathers exactly as before: the same reads in
+the same order (test
+`a_request_without_caller_inputs_keeps_its_reads_whatever_the_rules`). Its
+reply gains only the additive `gathering` report, with no rule named.
+
+**Switches.** `GatheringRules` has one switch per rule: `lanes`,
+`standing`, `guidance`, `cited`, `structure`, `cross`, `delivery`. All are on
+in a product build. A test-support build may bind another set for its
+process once (`bind_gathering_rules`, the private evaluation pattern of
+`software::bind_evaluation_layers`); `GatheringRules::parse` takes `all`,
+`none` or a comma list, with `-name` turning one off (`all,-structure`).
+The private evaluation fixture (service `evaluation_fixture_tests`,
+`restart/change_set.rs`) binds it from
+`AIRK_ARBITER_EVALUATION_ANSWER_GATHERING` when that is set and not empty.
+Tests pass the rules directly (`answer_with_rules`, test builds only).
+
+1. **Search lanes** (`lanes`). Each sub-need's round-one search also runs
+   with `evidence_kind: code` (whole chunks, six hits), and a standing
+   sub-need about the test command or the build file also with
+   `evidence_kind: configuration` (four hits). The lanes are beside the
+   sub-need's recipe and outside its six-read cap; Core bounds them with
+   `SEARCH_LANES_PER_SUB_NEED` (2).
+2. **Standing sub-needs** (`standing`). The deliverable adds, after the
+   caller's or the derived sub-needs and with the next ids: project rules,
+   the test command, the build file and, for `code_change` only, the error
+   path (texts in `rules::Standing::text`). `code_change` takes four, `test`
+   three, any other deliverable or none three only beside caller needs. A
+   multi-part request takes none. Each is an overview sub-need searched in
+   its own words, with `origin: standing` on the wire (Core
+   `SubNeedOrigin::Standing`, at most `MAX_STANDING_NEEDS`).
+3. **Project guidance and cited files** (`guidance`, `cited`). When round
+   one's searches and recipes have run, one `list_files` lookup per folder
+   (the root, the top-level folders and the folders of each sub-need's three
+   best passages, at most six) finds `CLAUDE.md`, `AGENTS.md`,
+   `CONTRIBUTING.md` and `README.md` directly in it; each found file (at
+   most eight) is read from line 1 (`context`, 101 lines). Then the
+   repository paths named in those files and in the best passages (a folder,
+   a file name with an extension, safe and relative), most cited first, at
+   most six not already read, are read the same way. A root listing is one
+   page of 200 paths; a guidance file past it is not found.
+4. **Structure following** (`structure`). For each sub-need's two best code
+   passages (at most six files), from the index's code facts with minimal
+   rows: the file's definitions (one lookup) and the innermost definitions
+   under 200 lines the passage overlaps; the calls inside each (a line-range
+   lookup); a called name defined in the same file, else up to three looked
+   up by name; up to two enclosing names' call sites by name; and up to two
+   inherited type names per file, whose users outside the file's folder come
+   from one `references` lookup each. At most 24 lookups. Definition ranges
+   of one file closer than 20 lines are one hash-bound `read_file` (the
+   index's file hash, at most 240 lines and 8,192 bytes); call sites (12
+   lines each side) and users (15) are `context` reads.
+5. **Every passage to every sub-need** (`cross`). At each barrier a
+   sub-need's spans gain up to three passages of this round's reads for the
+   part's other sub-needs, the ones sharing most of its rarer words (weight
+   `1/sqrt(1 + passages holding the word)`). Focus, when enabled, scores
+   them with its own spans within its existing shares.
+6. **Delivery by need** (`delivery`). After the last round each sub-need
+   ranks its own reads' hits (dispatch order), the part-level reads' and,
+   with `cross`, the six other passages sharing most of its rarer words. A
+   passage Focus scored keeps its best relevance; any other scores its
+   share of the sub-need's rarer words, plus `0.25 / (1 + place)` among its
+   own (0.25 for a passage rules 3 or 4 fetched for it). It keeps passages scoring at least half its best (at most eight,
+   and at least its best). The budget is half the reply frame of passage
+   text: a quarter split evenly, the rest by kept counts; passages go out in
+   rounds across sub-needs, first within each share, then within the whole
+   budget. A passage already sent, or four fifths held by sent passages of
+   its file, is cited instead. A sub-need that kept any passage gets its
+   best even past the budget, cites the delivered records (plus its
+   structural ones) and is at least partial. The reply then carries the
+   text of delivered spans only, and each sub-need's paragraph lists them.
+7. **Counts and timings.** Every reply but a ticket carries `gathering`
+   (Core `GatheringReport`): the rules on, and per stage (retrieve,
+   guidance, cited, structure, coverage, follow_up, delivery) the reads by
+   operation, the private lookups charged as calls, passages fetched,
+   offered (per showing to a ranking) and delivered, model judgments (Focus
+   pairs and model-scored card decisions) and elapsed milliseconds. Reads
+   plus lookups equal `work.calls`. The delivery stage ends before the
+   kernel takes the reply's `elapsed_ms`, so Union's packing is not in it.
+   A service job reply re-attached by a later call carries that call's
+   wait as `elapsed_ms`, while the stages keep the run's own times.
+
+**Budgets.** The gathering reads and lookups of a part (rules 3 and 4)
+stop at `GATHERING_READS_PER_PART` (48), within the part's call share and
+the Answer's calls and candidates, after one follow-up read per sub-need for
+each later round, and while a quarter of the retention bytes stays free.
+Lookups are charged as nominations are (a call, a candidate, their bytes)
+and kept in custody beside them; they are never evidence. Every passage
+these rules add is an ordinary canonical read on the Answer's revision.
+
+Tests: `arbiter::answer::rules::tests`, `answer::deliver::tests`,
+`answer::extend::tests` (pure rules, expectations by hand) and
+`answer::tests::gathering` (the real loop on canned reads, no model and with
+synthetic Focus).

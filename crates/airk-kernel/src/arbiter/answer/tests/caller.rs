@@ -42,8 +42,9 @@ fn caller_needs_are_the_sub_needs_of_one_part_in_order() -> Result<()> {
 
     assert_eq!(response.parts.len(), 1, "caller needs make one part");
     let part = &response.parts[0];
-    let stated: Vec<&str> = part
-        .sub_needs
+    // The caller's needs come first, in order; with no deliverable the
+    // gathering rules add three standing sub-needs after them.
+    let stated: Vec<&str> = part.sub_needs[..8]
         .iter()
         .map(|need| need.text.as_str())
         .collect();
@@ -53,10 +54,15 @@ fn caller_needs_are_the_sub_needs_of_one_part_in_order() -> Result<()> {
             .iter()
             .map(|need| need.id)
             .collect::<Vec<_>>(),
-        [1, 2, 3, 4, 5, 6, 7, 8]
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
     );
-    for need in &part.sub_needs {
-        assert_eq!(need.origin, v3::SubNeedOrigin::Caller);
+    for (index, need) in part.sub_needs.iter().enumerate() {
+        let origin = if index < 8 {
+            v3::SubNeedOrigin::Caller
+        } else {
+            v3::SubNeedOrigin::Standing
+        };
+        assert_eq!(need.origin, origin);
         assert_eq!(need.kind, v3::SubNeedKind::Other);
     }
     // No Split and no Plan decision is taken: the caller decided both.

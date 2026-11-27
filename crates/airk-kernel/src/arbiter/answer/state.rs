@@ -4,6 +4,7 @@ use super::coverage::Span;
 use super::follow::Candidate;
 use super::gather::ReadKey;
 use super::retrieve::Need;
+use super::rules::Standing;
 use super::*;
 
 /// One round of one part, as the reply's provenance reports it.
@@ -35,8 +36,14 @@ pub(crate) struct NeedState {
     /// The latest follow-up candidates, for the unrun list.
     pub(crate) candidates: Vec<Candidate>,
     pub(crate) unrun: Vec<v3::UnrunRead>,
-    /// Who stated the sub-need: the caller's request or the kernel's plan.
+    /// Who stated the sub-need: the caller's request, the kernel's plan, or
+    /// the request's deliverable (a standing sub-need).
     pub(crate) origin: v3::SubNeedOrigin,
+    /// Which standing sub-need this is, for a standing one.
+    pub(crate) standing: Option<Standing>,
+    /// The passages delivery by need chose for this sub-need (rule 6); empty
+    /// when that rule is off, and the reply then cites `history`.
+    pub(crate) delivered: Vec<Span>,
 }
 impl NeedState {
     /// A sub-need the caller stated in the request's `needs`.
@@ -46,9 +53,19 @@ impl NeedState {
             ..Self::new(need)
         }
     }
+    /// A standing sub-need the request's deliverable adds.
+    pub(crate) fn standing(need: Need, which: Standing) -> Self {
+        Self {
+            origin: v3::SubNeedOrigin::Standing,
+            standing: Some(which),
+            ..Self::new(need)
+        }
+    }
     pub(crate) fn new(need: Need) -> Self {
         Self {
             origin: v3::SubNeedOrigin::Derived,
+            standing: None,
+            delivered: vec![],
             need,
             coverage: v3::Coverage::Missing,
             coverage_by_model: false,
