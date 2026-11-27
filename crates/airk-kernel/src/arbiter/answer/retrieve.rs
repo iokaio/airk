@@ -143,10 +143,14 @@ pub(crate) fn anchor_search(gather: &mut Gathering, part: u8, anchor: &str) -> R
 /// Hits of a sub-need's configuration lane (rule 1).
 const CONFIGURATION_LANE_HITS: usize = 4;
 
+/// Bytes one lane search may return: bounded snippets, never whole chunks.
+const LANE_BYTES: usize = 4096;
+
 /// One more round-one search of a sub-need in its own words, restricted to
 /// one evidence kind (rule 1, search lanes): source code, so documents
 /// cannot crowd code out of its candidates, or configuration for a standing
-/// sub-need about tests and builds. Its hits come whole and are spans.
+/// sub-need about tests and builds. Its hits are bounded snippets and are
+/// spans; whole text comes from the sub-need's recipe and structure reads.
 pub(crate) fn lane_search(
     gather: &mut Gathering,
     part: u8,
@@ -157,7 +161,8 @@ pub(crate) fn lane_search(
         airk_core::search_filters::EvidenceKind::Configuration => CONFIGURATION_LANE_HITS,
         _ => SHAPE.need_hits,
     };
-    let mut arguments = search_args(&need.query, limit, true);
+    let mut arguments = search_args(&need.query, limit, false);
+    arguments["max_bytes"] = json!(LANE_BYTES);
     arguments["evidence_kind"] = serde_json::to_value(kind)?;
     gather.dispatch(
         ("search", v3::LoopRead::Search),

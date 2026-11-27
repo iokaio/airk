@@ -56,6 +56,10 @@ const USERS: usize = 3;
 const USER_MARGIN: usize = 15;
 /// Retention bytes left for later rounds after the gathering reads.
 const RETENTION_RESERVE_SHARE: usize = 4;
+/// Round one's recipe reads (whole chunks, outlines, excerpts) leave
+/// `max_bytes / ROUND_ONE_KEEPS` free for these rules and the later rounds
+/// (`Gathering::recipe_floor`); its searches are never held back.
+pub(super) const ROUND_ONE_KEEPS: usize = 2;
 
 /// One code fact of a lookup: its name, kind and citable lines.
 #[derive(Clone, Debug, PartialEq, Eq)]

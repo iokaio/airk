@@ -238,7 +238,9 @@ fn each_need_searches_code_and_standing_build_needs_search_configuration() -> Re
             &[&query(&need.text), "\"evidence_kind\":\"code\""],
         );
         assert_eq!(code.len(), 1, "one code lane for {}", need.text);
-        assert!(code[0].contains("\"full_chunks\":true"));
+        // Bounded snippets, not whole chunks (change-log entry 76).
+        assert!(code[0].contains("\"full_chunks\":false"));
+        assert!(code[0].contains("\"max_bytes\":4096"));
         let configuration = reads_of(
             &reads,
             "search",
@@ -604,6 +606,137 @@ fn a_request_without_caller_inputs_keeps_its_reads_whatever_the_rules() -> Resul
             .flat_map(|part| &part.sub_needs)
             .all(|need| need.origin == v3::SubNeedOrigin::Derived)
     );
+    Ok(())
+}
+
+/// Evidence reads whose replies fill their own `max_bytes` bound, the most
+/// a canonical read returns: whole chunks, contexts, excerpts and outlines
+/// at nine tenths of it; a snippet search at 512 bytes a hit at most.
+/// Private lookups (listings, file information, facts, references) keep
+/// their natural size. Each search finds the guard and files of its own
+/// query, so different sub-needs read different whole chunks and outlines.
+fn sized(tool: &str, arguments: &Map<String, Value>, mut body: Value) -> Result<Value> {
+    if tool == "search" {
+        let query = arguments["query"].as_str().unwrap_or("");
+        let limit = arguments["limit"].as_u64().unwrap_or(8) as usize;
+        let tag = framed_digest(b"sized-search", &[query.as_bytes()]).to_string()[..8].to_owned();
+        let mut hits = vec![hit(
+            GUARD,
+            10,
+            40,
+            &format!("pub fn restart_guard() {{}} // {query}"),
+        )];
+        for index in 1..limit {
+            hits.push(hit(
+                &format!("crates/q{tag}/src/m{index}.rs"),
+                1,
+                30,
+                &format!("fn m{index}() {{}} // {query}"),
+            ));
+        }
+        body["hits"] = json!(hits);
+    }
+    if !matches!(
+        tool,
+        "search" | "context" | "read_file" | "outline" | "symbols" | "imports"
+    ) {
+        return Ok(body);
+    }
+    let bound = arguments
+        .get("max_bytes")
+        .and_then(Value::as_u64)
+        .unwrap_or(4096) as usize
+        * 9
+        / 10;
+    let hits = body["hits"].as_array().map_or(0, Vec::len);
+    let bound = if tool == "search" && arguments["full_chunks"] == false {
+        bound.min(hits * 512)
+    } else {
+        bound
+    };
+    let size = serde_json::to_vec(&body)?.len();
+    let pad = bound.saturating_sub(size);
+    if let Some(each) = pad.checked_div(hits) {
+        for item in body["hits"].as_array_mut().context("hits")? {
+            let text = item["text"].as_str().unwrap_or("").to_owned();
+            item["text"] = json!(format!("{text}\n{}", "~".repeat(each)));
+        }
+    } else {
+        body["padding"] = json!("~".repeat(pad));
+    }
+    Ok(body)
+}
+
+/// Bytes retained by each gathering stage, from the custody records and
+/// private lookups in dispatch order: (stage, reads, read bytes, lookup bytes).
+fn retained_by_stage(
+    outcome: &AnswerOutcome,
+) -> Vec<(v3::GatheringStageKind, usize, usize, usize)> {
+    let Some(report) = &outcome.response.gathering else {
+        return vec![];
+    };
+    let mut records = outcome.custody.records.iter();
+    let mut lookups = outcome.custody.nominations.iter();
+    report
+        .stages
+        .iter()
+        .map(|stage| {
+            let reads: usize = stage.reads.iter().map(|reads| reads.count).sum();
+            let bytes = records
+                .by_ref()
+                .take(reads)
+                .map(|record| {
+                    serde_json::to_vec(&super::super::volatile::stable(&record.canonical_result))
+                        .map_or(0, |bytes| bytes.len())
+                })
+                .sum();
+            let charged = lookups
+                .by_ref()
+                .take(stage.lookups)
+                .map(|row| row["outcome"]["charged_bytes"].as_u64().unwrap_or(0) as usize)
+                .sum();
+            (stage.stage, reads, bytes, charged)
+        })
+        .collect()
+}
+
+#[test]
+fn the_default_retention_leaves_round_one_room_for_guidance_cited_and_structure() -> Result<()> {
+    // Six caller needs and the four standing ones of a code change, two
+    // anchors, the default budget: the shape of the first kernel baseline.
+    let mut request = request("Fix the restart guard so it refuses a stale replay");
+    request.needs = (1..=6)
+        .map(|case| format!("Where the restart guard handles replay case {case}"))
+        .collect();
+    request.anchors = vec!["restart_guard".into(), "stale replay".into()];
+    request.deliverable = Some(v3::Deliverable::CodeChange);
+    assert_eq!(request.budget.max_bytes, v3::DEFAULT_RETENTION_BYTES);
+    let (outcome, _) = run_ruled(&fixture()?, request, rules("all"), &sized)?;
+    let response = &outcome.response;
+    for (stage, reads, bytes, lookups) in retained_by_stage(&outcome) {
+        println!("{stage:?}: {reads} reads, {bytes} bytes retained, {lookups} lookup bytes");
+    }
+    println!(
+        "work: calls {}, candidates {}, bytes {}; stop {:?}",
+        response.work.calls, response.work.candidates, response.work.bytes, response.parts[0].stop
+    );
+    assert_ne!(response.parts[0].stop, v3::PartStop::Budget);
+    assert!(response.work.bytes <= v3::DEFAULT_RETENTION_BYTES);
+    let report = response.gathering.as_ref().context("report")?;
+    for kind in [
+        v3::GatheringStageKind::Guidance,
+        v3::GatheringStageKind::Cited,
+        v3::GatheringStageKind::Structure,
+    ] {
+        let reads: usize = report
+            .stages
+            .iter()
+            .filter(|stage| stage.stage == kind)
+            .flat_map(|stage| &stage.reads)
+            .map(|reads| reads.count)
+            .sum();
+        assert!(reads > 0, "{kind:?} made no read: {report:?}");
+    }
     Ok(())
 }
 

@@ -4374,3 +4374,45 @@ tool's description still says `deliverable` does not change gathering; it
 belongs to the public tool surface and was left to that change. The rules
 were run only on canned reads in kernel tests, not on the real indexes, and
 nothing was measured on the four tasks.
+
+### 76. Round one leaves half the retention for the gathering rules
+
+**Measured fault it closes.** First kernel baseline (27 November 2026, real
+indexes, no model, caller needs, anchors and a deliverable, every rule on):
+at the default retention budget (262,144 bytes) every request stopped with
+part stop `budget` at stage `retrieve` in round one, after 40 calls that
+retained 257,684 bytes. Guidance, cited and structure never ran and 1 of 21
+required passages was delivered.
+
+**Cause.** Nothing bounded round one's retention when rules 3 and 4 follow
+it. Each sub-need's overview recipe (a search, whole chunks of its kept hits
+and their outlines) and its code lane (whole chunks, `full_chunks: true`)
+were retained in full; a read that no longer fit stopped the whole Answer
+on `budget` (`Gathering::retain`), and when the budget held, the gathering
+stages' own check (`bytes_fit`, a quarter of the budget free beyond each
+planned read) left them nothing.
+
+**Change.** (1) When rule 3 or 4 is on, round one's recipe reads leave half
+the retention bytes free (`ROUND_ONE_KEEPS` 2, `Gathering::recipe_floor`):
+a recipe read whose `max_bytes` bound, with the bounds of the reads in
+flight and what is already retained, would leave less is not dispatched.
+Its nominations' byte allowance comes from above the same floor. Searches
+are never held back. (2) Lane searches return bounded snippets
+(`full_chunks: false`, `max_bytes` 4,096, was whole chunks at 4,608); whole
+text comes from the recipe's whole chunks and rule 4's definition reads,
+which serves the small-reply goal. The default and maximum budgets are
+unchanged, and a request without caller inputs makes the same reads.
+
+**Arithmetic** (test
+`the_default_retention_leaves_round_one_room_for_guidance_cited_and_structure`:
+six caller needs and four standing ones, two anchors, default budget, every
+evidence read filled to nine tenths of its bound and a snippet search to
+512 bytes a hit). Before: retrieve 47 reads, 188,632 bytes; guidance 0,
+cited 0, structure 0 reads (6 lookups, 3,325 bytes); the stages found under
+a quarter of the budget free and made no read. After: retrieve 33 reads,
+129,357 bytes; guidance 3 reads, 16,593 bytes (2,354 lookup bytes); cited 2
+reads, 11,062 bytes; structure 3 reads, 20,279 bytes (9,147 lookup bytes);
+177,291 bytes in all.
+[Kernel contract](../../crates/airk-kernel/src/arbiter/CONTRACT.md#gathering-rules-user-decision-26-november-2026)
+
+**Not measured.** Canned reads only; the real indexes were not rerun.

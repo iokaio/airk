@@ -271,6 +271,18 @@ pub(crate) struct Gathering {
     pub(crate) stage: v3::GatheringStageKind,
     /// Reads admitted (and not released) per stage and operation.
     pub(crate) taken: BTreeMap<(v3::GatheringStageKind, v3::LoopRead), usize>,
+    /// Retention bytes round one's recipe reads must leave free when the
+    /// gathering rules 3 and 4 follow them (kernel CONTRACT "Gathering
+    /// rules", "Budgets"); `None` for every other request.
+    pub(crate) recipe_floor: Option<usize>,
+}
+
+/// The most a read may retain: its own `max_bytes` bound.
+pub(crate) fn bound(arguments: &Map<String, Value>) -> usize {
+    arguments
+        .get("max_bytes")
+        .and_then(Value::as_u64)
+        .map_or(4096, |bytes| bytes as usize)
 }
 
 impl Gathering {
@@ -295,7 +307,29 @@ impl Gathering {
             stop: None,
             stage: v3::GatheringStageKind::Retrieve,
             taken: BTreeMap::new(),
+            recipe_floor: None,
         })
+    }
+
+    /// Whether a queued read is a round-one recipe read the floor holds back:
+    /// with what is retained and what is in flight, its bound would leave
+    /// less than `recipe_floor` free. Searches are never held back.
+    fn held_back(&self, dispatch: &Dispatch) -> bool {
+        let Some(floor) = self.recipe_floor else {
+            return false;
+        };
+        if dispatch.round != 1
+            || dispatch.cause != Cause::Structural
+            || dispatch.stage != v3::GatheringStageKind::Retrieve
+        {
+            return false;
+        }
+        let in_flight: usize = self
+            .pending
+            .values()
+            .map(|pending| bound(&pending.arguments))
+            .sum();
+        self.remaining_bytes() < in_flight + bound(&dispatch.arguments) + floor
     }
 
     /// Reads the Answer may still admit beyond those already queued: the
@@ -450,6 +484,12 @@ impl Gathering {
             let Some(position) = self.queue.iter().position(|item| item.part == part) else {
                 break;
             };
+            if self.held_back(&self.queue[position]) {
+                // Never dispatched: the read is forgotten, as if not offered.
+                let dispatch = self.queue.remove(position).expect("queued read");
+                self.reads.remove(&dispatch.key);
+                continue;
+            }
             if self.calls >= self.budget.calls
                 || self.admitted_candidates() >= self.budget.candidates
             {

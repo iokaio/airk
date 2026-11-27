@@ -547,6 +547,12 @@ impl Loop<'_> {
         if self.parts.len() == 1 && (caller || (standing && wanted.standing)) {
             self.rules = wanted;
         }
+        // Rules 3 and 4 plan from what round one retained: its recipe reads
+        // leave them, and the later rounds, half the retention bytes.
+        if self.rules.guidance || self.rules.cited || self.rules.structure {
+            self.gather.recipe_floor =
+                Some(self.request.budget.max_bytes / extend::ROUND_ONE_KEEPS);
+        }
         self.report.set_rules(self.rules.wire());
     }
 
@@ -818,7 +824,13 @@ impl Loop<'_> {
                     if self.nominations.len() >= PROBES_PER_ANSWER || room < 2 || part_calls < 2 {
                         continue;
                     }
-                    let byte_allowance = (self.gather.remaining_bytes() / 4).min(24_576);
+                    // Under rules 3 and 4 a nomination, like a recipe read,
+                    // leaves the recipe floor free.
+                    let free = self
+                        .gather
+                        .remaining_bytes()
+                        .saturating_sub(self.gather.recipe_floor.unwrap_or(0));
+                    let byte_allowance = (free / 4).min(24_576);
                     if byte_allowance < 512 || !self.gather.reserve_nomination() {
                         continue;
                     }

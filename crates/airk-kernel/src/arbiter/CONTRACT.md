@@ -886,9 +886,12 @@ The private evaluation fixture (service `evaluation_fixture_tests`,
 Tests pass the rules directly (`answer_with_rules`, test builds only).
 
 1. **Search lanes** (`lanes`). Each sub-need's round-one search also runs
-   with `evidence_kind: code` (whole chunks, six hits), and a standing
-   sub-need about the test command or the build file also with
-   `evidence_kind: configuration` (four hits). The lanes are beside the
+   with `evidence_kind: code` (six hits), and a standing sub-need about the
+   test command or the build file also with `evidence_kind: configuration`
+   (four hits). A lane returns bounded snippets (`full_chunks: false`,
+   `max_bytes` 4,096), not whole chunks: whole text comes from the
+   sub-need's recipe (whole chunks of its kept hits) and from rule 4's
+   definition reads (change-log entry 76). The lanes are beside the
    sub-need's recipe and outside its six-read cap; Core bounds them with
    `SEARCH_LANES_PER_SUB_NEED` (2).
 2. **Standing sub-needs** (`standing`). The deliverable adds, after the
@@ -954,6 +957,18 @@ Tests pass the rules directly (`answer_with_rules`, test builds only).
 stop at `GATHERING_READS_PER_PART` (48), within the part's call share and
 the Answer's calls and candidates, after one follow-up read per sub-need for
 each later round, and while a quarter of the retention bytes stays free.
+When rule 3 or 4 is on, round one's recipe reads (every round-one read
+that is not a search: whole chunks, outlines, excerpts, governing reads)
+leave half the retention bytes free for them and the later rounds
+(`ROUND_ONE_KEEPS`, `Gathering::recipe_floor`): a recipe read whose
+`max_bytes` bound, with the bounds of the reads in flight and what is
+retained, would leave less is not dispatched and is forgotten as if never
+offered. Its nominations' byte allowance is taken from above the same
+floor. Searches (the part search, anchors, sub-need searches and lanes)
+are never held back. Measured fault it closes (first kernel baseline, 27
+November 2026): at the default 262,144 bytes round one retained 257,684
+bytes in 40 calls and the request stopped on `budget` inside `retrieve`;
+guidance, cited and structure never ran (change-log entry 76).
 Lookups are charged as nominations are (a call, a candidate, their bytes)
 and kept in custody beside them; they are never evidence. Every passage
 these rules add is an ordinary canonical read on the Answer's revision.
@@ -961,4 +976,5 @@ these rules add is an ordinary canonical read on the Answer's revision.
 Tests: `arbiter::answer::rules::tests`, `answer::deliver::tests`,
 `answer::extend::tests` (pure rules, expectations by hand) and
 `answer::tests::gathering` (the real loop on canned reads, no model and with
-synthetic Focus).
+synthetic Focus); `the_default_retention_leaves_round_one_room_for_guidance_cited_and_structure`
+fills every evidence read to its bound at the default budget.
