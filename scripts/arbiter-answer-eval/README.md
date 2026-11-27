@@ -1278,3 +1278,36 @@ python -B scripts/arbiter-answer-eval/gather_context_loss_stage.py --scenarios (
 python -B scripts/arbiter-answer-eval/arbiter_loop_misses.py --scenarios (Join-Path $campaign 'scenarios') --traces $out
 python -B -m unittest discover -s scripts/arbiter-answer-eval -p 'test_arbiter_loop_prototype.py'
 ~~~
+
+### Agent cost comparison
+
+`agent_cost_run.py` runs one acting agent on one task and records what the
+session cost. It is the measure of the Gather Context strategy of
+27 November 2026: the result is the percentage lower model cost with the
+tool, guarded by a result that is no less correct.
+[Strategy](../../docs/arbiter/retrieval-strategy-combined.md#strategy-from-27-november-2026) · [Measure](../../docs/arbiter/answer-evaluation/rubrics.md#gather-context-comparison-from-27-november-2026)
+
+- A session is headless Claude Code in a fresh private copy of the
+  repository snapshot, with Read, Grep, Glob, Edit and Write and nothing
+  else. It has no shell.
+- `--arm plain` offers those tools only. `--arm tool` also offers the one
+  Gather Context tool through `gather_context_mcp.py`, with the name,
+  description and input schema the build under test lists, and the server
+  guidance given in `--instructions-file`. No first call is prescribed and
+  no argument is forced.
+- Tool calls reach the evaluation fixture by native name in the service's
+  default response mode.
+- The session folder holds `session.json` (the agent's own reported cost
+  and four token counts, round trips as distinct model requests, times,
+  tool uses by name, and each Gather Context call's seconds and reply
+  bytes), `stream.jsonl`, `answer.md`, `changes.patch` and, in the tool
+  arm, `gather/` with every call's arguments and raw reply. The private
+  copy of the snapshot is removed after the patch is taken.
+- It does not judge. Correctness is judged afterwards against the task's
+  frozen truth.
+
+~~~powershell
+python -B scripts/arbiter-answer-eval/agent_cost_run.py --task $task --snapshot $snapshot --arm plain --model claude-sonnet-5-5 --output $plainOut
+python -B scripts/arbiter-answer-eval/agent_cost_run.py --task $task --snapshot $snapshot --arm tool --model claude-sonnet-5-5 --handle $handle --repo munarium --instructions-file $guidance --output $toolOut
+python -B -m unittest discover -s scripts/arbiter-answer-eval -p 'test_agent_cost_run.py'
+~~~
