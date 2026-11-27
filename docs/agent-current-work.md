@@ -4,6 +4,8 @@ These instructions are mandatory for the active assignment. Standing rules remai
 
 All unlinked filesystem paths below are repository-relative unless absolute or prefixed with `~/`.
 
+**Resume here.** The work stopped on 27 November 2026 for handoff to a new session: [topical-index-handoff.md](arbiter/topical-index-handoff.md) gives the state, the loose end, the next actions and how to run things.
+
 **27 November 2026 — Topical index research (active).** The user authorized a prototype of a topical index of files with real-time reads, after the first real-data results of Gather Context. Plan, measures and gates: [topical-index-research.md](arbiter/topical-index-research.md). It is evaluation tooling in Python and changes no product code until a gate there is decided by the user.
 
 **27 November 2026 — Gather Context strategy (current direction).** The user
