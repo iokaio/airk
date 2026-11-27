@@ -266,6 +266,20 @@ The tasks it must decline are munarium-N-C2 and bookbuilder-N-C4; the
 tasks it must let through are munarium-T1, munarium-N-W1, bookbuilder-N-C3,
 bookbuilder-C3 and munarium-C2.
 
+**Set 3: the allowed assurance** (munarium-T1, five repeats, one price,
+no guidance, the build description of the earlier sets, series
+`t1-oracle-assure-r1`). On 27 November 2026 the user allowed one editorial
+assurance, worded "These passages are exact text taken from the files
+referenced.", and nothing else. Served with perfect passages it gives
+$0.566, 17.9 percent lower (0.43 to 0.66), 9 round trips, 136 KB read by
+the agent itself. Passages with no line gave 20.0 percent (122 KB) and the
+longer line 40.8 percent (85 KB).
+
+Finding: the assurance alone does not change what the agent does; it is
+within noise of no line. The saving of the longer line came from its
+instruction ("Do not read those ranges again and do not search for more"),
+which the no-editorial rule now excludes. Whether to allow that
+instruction is the user's decision.
 ### Resume point (27 November 2026)
 
 Work can be picked up from here by another session.
