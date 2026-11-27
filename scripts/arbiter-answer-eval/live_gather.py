@@ -301,7 +301,7 @@ def gather(repository: Repository, arguments: dict) -> dict:
              "census": shown,
              "needs": [{"need": 1, "text": "everything this task needs", "origin": "caller", "status": "covered",
                         "where": [{"at": item["at"], "why": item["why"]} for item in ranges]}],
-             "passages": passages, "outline": outline,
+             "use": gather_context_dose.PASSAGE_ASSURANCE, "passages": passages, "outline": outline,
              "next": {"paths": ranked[TOP_FILES:TOP_FILES + 12] + guidance[:4]}}
     while len(json.dumps(brief, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > MAX_BRIEF_BYTES:
         if brief["passages"]:
@@ -318,6 +318,8 @@ def gather(repository: Repository, arguments: dict) -> dict:
                     row["in"] = row["in"][:3]
         else:
             break
+    if not brief["passages"]:
+        brief.pop("use", None)
     brief["elapsed_ms"] = round((time.monotonic() - started) * 1000)
     return brief
 
@@ -325,10 +327,8 @@ def gather(repository: Repository, arguments: dict) -> dict:
 FOCUS_FILES = 6
 FOCUS_PASSAGE_BYTES = 14_000
 FOCUS_TERMS = 12
-FOCUS_USE = ("The passages below are the exact current text of the listed line ranges, read from the files just now. Work from "
-             "them and do not read those ranges again. They are the places this search ranked highest, not a promise that "
-             "nothing else matters: read further only for lines not shown here, with offset and limit, and search only for "
-             "what the census does not already count.")
+# The build's one assurance for a reply with passages (27 November 2026).
+FOCUS_USE = gather_context_dose.PASSAGE_ASSURANCE
 
 
 def focus(repository: Repository, brief: dict) -> dict:
@@ -363,9 +363,9 @@ def focus(repository: Repository, brief: dict) -> dict:
             continue
         census.append({"term": row["term"], "occurrences": row["occurrences"], "files": row["files"],
                        "in": [entry.rstrip("…").rpartition(":")[0] for entry in (row.get("in") or [])[:4]]})
-    return {"schema": brief["schema"], "use": FOCUS_USE, "task": brief["task"], "result": brief["result"],
+    return {"schema": brief["schema"], "task": brief["task"], "result": brief["result"],
             "searched": brief["searched"], "census": census,
-            "needs": [{**brief["needs"][0], "where": kept}], "passages": passages,
+            "needs": [{**brief["needs"][0], "where": kept}], **({"use": FOCUS_USE} if passages else {}), "passages": passages,
             **({"omitted": rest[:8]} if rest else {}),
             "elapsed_ms": brief.get("elapsed_ms")}
 

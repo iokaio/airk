@@ -36,10 +36,9 @@ import gather_context_dose
 
 WHY_BYTES = 80
 LAYOUTS = ("passages", "ranges")
-USE = {"passages": "The passages below are the exact current text of the listed line ranges, and together they are what this task "
-                   "needs. Work from them. Do not read those ranges again and do not search for more; read a file only for "
-                   "lines that are not shown here, with offset and limit.",
-       "ranges": "The ranges below are what this task needs. Read each with the Read tool using the offset and limit given, "
+# The ranges layout's instruction, an experiment variable (``--oracle-trust``). A reply with passages
+# carries only the build's assurance, ``gather_context_dose.PASSAGE_ASSURANCE`` (27 November 2026).
+USE = {"ranges": "The ranges below are what this task needs. Read each with the Read tool using the offset and limit given, "
                  "several in one turn. Do not read whole files and do not search for more unless a range turns out to lack "
                  "something."}
 
@@ -81,8 +80,12 @@ def brief(task: dict, snapshot: pathlib.Path, arguments: dict, layout: str = "pa
            "result": "complete", "stop": "covered",
            "needs": [{"need": 1, "text": "everything this task needs", "origin": "caller", "status": "covered", "where": where}],
            "passages": passages}
-    if trust:
-        out = {"schema": out["schema"], "use": USE[layout], **{key: value for key, value in out.items() if key != "schema"}}
+    # As the build does, a reply with passages says they are exact text; the ranges layout's own
+    # instruction is the experiment's ``trust`` switch.
+    note = gather_context_dose.PASSAGE_ASSURANCE if passages else USE[layout] if trust and layout in USE else None
+    if note:
+        rest = {key: value for key, value in out.items() if key != "passages"}
+        out = {**rest, "use": note, "passages": passages}
     if absent:
         out["not_found"] = absent
     if omitted:

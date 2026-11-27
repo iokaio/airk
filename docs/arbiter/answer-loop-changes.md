@@ -4717,3 +4717,20 @@ CLI with the open pipe; `agent_reads_use_the_configured_scope_or_a_workspace_def
 replaces the per-call scope test.
 [What MCP offers](../unified-mcp.md#what-mcp-offers-user-decision-27-november-2026) ·
 [Agent setup](../agent-integration.md)
+
+### 83. One allowed assurance on Gather Context passages
+
+The user allowed one editorial assurance on 27 November 2026, worded exactly
+"These passages are exact text taken from the files referenced." (an earlier
+wording, "These passages are the exact text of the files referenced.", was
+withdrawn the same day as open to misreading). The Gather Context brief
+carries it as `use` when it has passages and no returned source was found to
+differ from the index; nothing else editorial is added. The prototype serves
+the same sentence whenever its oracle or live reply has passages
+(`gather_context_dose.PASSAGE_ASSURANCE`); the oracle's ranges instruction
+remains an explicit experiment switch (`--oracle-trust`).
+
+The round 1 result of 40.8 percent on munarium-T1 used a longer line that
+also told the agent not to read the ranges again or search for more. It does
+not carry over to this sentence and is measured again.
+[MCP response contract](../../crates/airk-mcp/src/response/CONTRACT.md#no-editorial-in-replies-user-decision-27-november-2026)

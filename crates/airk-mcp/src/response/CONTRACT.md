@@ -119,7 +119,7 @@ unchanged; `degradations` by kind; `needs` (number, text, origin, status
 `covered`, `partly covered` or `open`, and `where`: at most
 `WHERE_PER_NEED`, 4, locations `path:start-end` with `why`, the passage's
 first line, the read that fetched it, its cause for this need and its role);
-`passages` (whole delivered texts with `at` and the needs they serve);
+`use` (the passage assurance, when it applies; see below); `passages` (whole delivered texts with `at` and the needs they serve);
 `not_found` (needs with no location, with what the reply records as
 searched); `omitted` (cited locations whose text the brief does not carry,
 at most 48, `omitted_more` counts the rest); `next` (unrun reads, files the
@@ -202,6 +202,13 @@ what it receives.
   citations, hashes, publication tokens, continuation cursors, truncation,
   coverage, readiness, failures, the verification receipt and the ticket.
   Error messages of refusals stay.
+- **One exception (user decision, the same day).** A brief that carries
+  passages also carries `use`, exactly "These passages are exact text taken
+  from the files referenced." (`brief::PASSAGE_ASSURANCE`). It is absent
+  when the brief has no passages, and when the reply's saved-source
+  verification found a returned source that differs from the index
+  (mismatched, missing or changed during the check), since it would then be
+  false. No other assurance or advice is added. Tests: `response::brief::tests`.
 
 The `guidance` key and `read_guidance` are no longer emitted; the brief no
 longer has `full`. Tests:

@@ -36,6 +36,10 @@ const MAX_NEXT: usize = 12;
 const MAX_OMITTED: usize = 48;
 const MAX_SEARCHED: usize = 4;
 const MAX_DIFFERING: usize = 4;
+/// The one assurance a brief may carry (user decision, 27 November 2026,
+/// the single exception to no editorial): present only when the brief
+/// carries passages and no returned source was found to differ.
+pub const PASSAGE_ASSURANCE: &str = "These passages are exact text taken from the files referenced.";
 /// Top-level fields the transport added beside the kernel reply.
 const ADDED: [&str; 12] = [
     "request_id",
@@ -170,6 +174,9 @@ pub struct BriefReply {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub degradations: Vec<String>,
     pub needs: Vec<BriefNeed>,
+    /// [`PASSAGE_ASSURANCE`], when it is true of this brief's passages.
+    #[serde(rename = "use", default, skip_serializing_if = "Option::is_none")]
+    pub assurance: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub passages: Vec<BriefPassage>,
     /// Plain statements for sub-needs with no evidence.
@@ -233,12 +240,17 @@ pub fn brief_of(display: &Value) -> Option<BriefReply> {
         .collect::<Result<Vec<_>, _>>()
         .ok()?;
     let verification = object.get("source_verification").map(verification_line);
+    let sources_differ = object
+        .get("source_verification")
+        .is_some_and(sources_differ);
     let view = View::new(&reply);
     let mut keep = view.selected.len();
     let mut level = 0;
     loop {
         let mut brief = view.compose(keep, level);
         brief.verification = verification.clone();
+        brief.assurance =
+            (!brief.passages.is_empty() && !sources_differ).then(|| PASSAGE_ASSURANCE.into());
         brief.delivery_bindings = bindings.clone();
         brief.read_status = reply
             .read_status
@@ -855,6 +867,7 @@ impl<'a> View<'a> {
             gathering,
             elapsed_ms: reply.elapsed_ms,
             verification: None,
+            assurance: None,
             delivery_bindings: Vec::new(),
             read_status: None,
             carried: Map::new(),
@@ -925,6 +938,20 @@ fn paragraph_locations(reply: &ContextResponseV3, part: u8, need: u8) -> Vec<Str
                 .then(|| at.to_owned())
         })
         .collect()
+}
+
+/// Whether a saved-source verification receipt found a returned source that
+/// differs from the index (mismatched, missing or changed during the check).
+fn sources_differ(receipt: &Value) -> bool {
+    receipt["counts"]["mismatched_sources"]
+        .as_u64()
+        .is_some_and(|count| count > 0)
+        || receipt["sources"].as_array().into_iter().flatten().any(|source| {
+            matches!(
+                source["state"].as_str(),
+                Some("mismatch" | "missing" | "changed_during_check")
+            )
+        })
 }
 
 /// One line for a saved-source verification receipt: its status, sources

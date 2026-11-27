@@ -33,6 +33,9 @@ from __future__ import annotations
 import json
 
 BRIEF_SCHEMA = "airk.gather-context.brief/1"
+# The one assurance the build's brief carries when it has passages (27 November 2026);
+# the Rust owner is airk-mcp::response::brief::PASSAGE_ASSURANCE.
+PASSAGE_ASSURANCE = "These passages are exact text taken from the files referenced."
 FULL_SCHEMA = "airk.arbiter.context/3"
 PASSAGE_BYTES = 16_000
 """The brief's own passage allowance (``BRIEF_PASSAGE_BYTES`` in ``airk-mcp`` ``response::brief``)."""
