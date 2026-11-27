@@ -265,6 +265,7 @@ fn canned(width: usize) -> Canned {
                 passages_delivered: 35,
                 model_judgments: 0,
                 elapsed_ms: 8_100,
+                skipped: None,
             }],
         }),
     };
