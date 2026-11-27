@@ -103,8 +103,18 @@ brought in where an experiment calls for choosing among what is gathered.
   placement check where that applies.
 - *General mechanisms only.* A change is a rule that could help other
   tasks. No value is set from a task's truth.
-- *No regression.* When work moves to a new task, the kept changes are
-  rerun on the tasks already done.
+- *Spot-check regression in every round (user, 27 November 2026).* In
+  each task's round, the condition that is kept is also run on tasks
+  completed in earlier rounds, three repeats each: every earlier task
+  while there are three or fewer, then three chosen to include the one
+  that gained most and the one that gained least. A kept change that
+  makes an earlier task dearer by more than its repeat-to-repeat spread,
+  or less correct, is recorded as a regression and is not kept as a
+  general rule until it is resolved. In the first round, with no earlier
+  task, the spot checks are two tasks not yet worked on: one where the
+  oracle showed room (bookbuilder-N-C3) and one where it showed none
+  (munarium-N-C2), to see early whether a change that helps one task
+  hurts a cheap one.
 - *Correctness is the guard.* The primary agent judges every kept
   condition's sessions against the frozen truth.
 - *No edits under a running series.*
