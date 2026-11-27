@@ -32,16 +32,39 @@ fn project(
             "provenance":[]});
         body
     };
+    let files: &[&str] = &[
+        "AGENTS.md",
+        "CLAUDE.md",
+        "Cargo.toml",
+        GUARD,
+        "crates/README.md",
+        "crates/k/src/CONTRACT.md",
+    ];
     Ok(match tool {
         "list_files" => {
-            let paths: &[&str] = match text("prefix").unwrap_or("") {
-                "" => &["AGENTS.md", "CLAUDE.md", "Cargo.toml", GUARD],
-                "crates/" => &["crates/README.md", GUARD],
-                "crates/k/src/" => &[GUARD, "crates/k/src/CONTRACT.md"],
-                _ => &[],
-            };
+            let prefix = text("prefix").unwrap_or("");
             let mut body = base.clone();
-            body["paths"] = json!(paths);
+            body["paths"] = json!(
+                files
+                    .iter()
+                    .filter(|path| path.starts_with(prefix))
+                    .collect::<Vec<_>>()
+            );
+            body
+        }
+        // The project's guidance files exist, 120 lines each; any other path
+        // is the shared canned answer (none indexed, but one contract).
+        "file_info"
+            if files.contains(&text("path").unwrap_or(""))
+                && super::super::extend::GUIDANCE
+                    .iter()
+                    .any(|name| text("path").is_some_and(|path| path.ends_with(name))) =>
+        {
+            json!({"publication":publication,"path":text("path"),"indexed_lines":120})
+        }
+        "document_facts" => {
+            let mut body = base.clone();
+            body["facts"] = json!([]);
             body
         }
         "code_facts" => match (text("path"), text("name"), text("kind").unwrap_or("")) {
@@ -267,27 +290,27 @@ fn each_need_searches_code_and_standing_build_needs_search_configuration() -> Re
 }
 
 #[test]
-fn guidance_is_listed_per_folder_read_and_the_files_it_names_are_read() -> Result<()> {
+fn guidance_is_probed_per_folder_read_and_the_files_it_names_are_read() -> Result<()> {
     let (outcome, reads) = run_ruled(&fixture()?, asked(None), rules("guidance,cited"), &same)?;
-    // One listing per folder: the root, the top-level folders, then the
-    // passages' own folders.
-    let listings: Vec<&String> = reads_of(&reads, "list_files", &[]);
-    for prefix in [
-        "\"prefix\":\"\"",
-        "\"prefix\":\"crates/\"",
-        "\"prefix\":\"crates/k/src/\"",
-    ] {
-        assert_eq!(
-            listings.iter().filter(|read| read.contains(prefix)).count(),
-            1,
-            "{prefix}: {listings:?}"
-        );
+    // One existence probe per name and folder: the root, the top-level
+    // folders, then the passages' own folders; no listing.
+    assert!(reads_of(&reads, "list_files", &[]).is_empty());
+    for folder in ["", "crates/", "crates/k/src/"] {
+        for name in ["CLAUDE.md", "AGENTS.md", "CONTRIBUTING.md", "README.md"] {
+            assert_eq!(
+                reads_of(
+                    &reads,
+                    "file_info",
+                    &[&format!("\"path\":\"{folder}{name}\"")]
+                )
+                .len(),
+                1,
+                "{folder}{name}"
+            );
+        }
     }
-    assert!(
-        reads_of(&reads, "file_info", &["CLAUDE.md"]).is_empty(),
-        "no existence checks"
-    );
-    // The guidance files the listings show, each read from its first line.
+    // The guidance files found, each without section facts read whole from
+    // its first line.
     for path in ["CLAUDE.md", "AGENTS.md", "crates/README.md"] {
         let head = reads_of(
             &reads,
@@ -312,7 +335,12 @@ fn guidance_is_listed_per_folder_read_and_the_files_it_names_are_read() -> Resul
     let report = outcome.response.gathering.as_ref().context("report")?;
     let stage = |kind| report.stages.iter().find(|stage| stage.stage == kind);
     let guidance = stage(v3::GatheringStageKind::Guidance).context("guidance stage")?;
-    assert_eq!(guidance.lookups, listings.len());
+    // One section-fact lookup per file found; the probes are not charged.
+    assert_eq!(
+        guidance.lookups,
+        reads_of(&reads, "document_facts", &[]).len()
+    );
+    assert_eq!(guidance.lookups, 3);
     assert_eq!(
         guidance.reads,
         [v3::GatheringReads {
@@ -520,6 +548,103 @@ fn a_project_rule_fetched_for_the_rules_need_is_delivered_to_it() -> Result<()> 
         .find(|stage| stage.stage == v3::GatheringStageKind::Guidance)
         .context("guidance stage")?;
     assert!(guidance.passages_delivered >= 1, "{guidance:?}");
+    Ok(())
+}
+
+#[test]
+fn a_root_guidance_file_past_a_listing_page_is_found_and_its_late_rule_delivered() -> Result<()> {
+    // A large repository: its recursive, sorted root listing fills a page of
+    // 200 paths before it reaches `CLAUDE.md`. The file has 420 lines and
+    // states the project rule in its last section, at line 380.
+    let rule = "Project rules: a change of this kind must include required tests, run the test commands, update logs or documents, and pass review before it is done.";
+    let large = |tool: &str, arguments: &Map<String, Value>, mut body: Value| {
+        let path = arguments.get("path").and_then(Value::as_str);
+        match tool {
+            "list_files" => {
+                let paths: Vec<String> = (0..250)
+                    .map(|index| format!(".github/workflows/w{index:03}.yml"))
+                    .collect();
+                body["paths"] = json!(paths);
+                body["truncated"] = json!(true);
+            }
+            "file_info" => {
+                let lines = if path == Some("CLAUDE.md") { 420 } else { 0 };
+                body["indexed_lines"] = json!(lines);
+            }
+            "document_facts" if path == Some("CLAUDE.md") => {
+                let section = |name: &str, start: usize| {
+                    json!({"text":name,"kind":"section","citation":{"path":"CLAUDE.md",
+                        "start_line":start,"end_line":start,"content_hash":"claude-hash"}})
+                };
+                body["facts"] = json!([
+                    section("Working on the project", 1),
+                    section("Execution identity", 40),
+                    section("Source and architecture", 200),
+                    section("Required tests and review", 380),
+                ]);
+            }
+            "context" if path == Some("CLAUDE.md") => {
+                let line = arguments["line"].as_u64().unwrap_or(1) as usize;
+                let text = if line == 380 {
+                    rule.to_owned()
+                } else {
+                    format!("Section of CLAUDE.md at line {line}.")
+                };
+                body["hits"] = json!([hit("CLAUDE.md", line, line + 9, &text)]);
+            }
+            _ => {}
+        }
+        Ok(body)
+    };
+    let (outcome, reads) = run_ruled(
+        &fixture()?,
+        asked(Some(v3::Deliverable::Test)),
+        rules("standing,guidance,delivery"),
+        &large,
+    )?;
+    // The file is found by its existence probe and read at its late
+    // section, not only from line 1.
+    assert_eq!(
+        reads_of(&reads, "file_info", &["\"path\":\"CLAUDE.md\""]).len(),
+        1
+    );
+    let late = reads_of(
+        &reads,
+        "context",
+        &["\"path\":\"CLAUDE.md\"", "\"line\":380", "\"after\":40"],
+    );
+    assert_eq!(late.len(), 1, "{reads:?}");
+    // The rule reaches the standing rules need (sub-need 3).
+    let response = &outcome.response;
+    assert_eq!(
+        response.parts[0].sub_needs[2].origin,
+        v3::SubNeedOrigin::Standing
+    );
+    let paragraph = response
+        .paragraphs
+        .iter()
+        .find(|paragraph| paragraph.text.starts_with("Part 1 sub-need 3 "))
+        .context("rules paragraph")?;
+    assert!(
+        paragraph.text.contains("CLAUDE.md:380-389"),
+        "{}",
+        paragraph.text
+    );
+    // A missing guidance file is no failure and no degradation.
+    let report = response.gathering.as_ref().context("report")?;
+    let guidance = report
+        .stages
+        .iter()
+        .find(|stage| stage.stage == v3::GatheringStageKind::Guidance)
+        .context("guidance stage")?;
+    assert!(guidance.passages_delivered >= 1, "{guidance:?}");
+    assert!(guidance.skipped.is_none());
+    assert!(
+        !response
+            .degradations
+            .iter()
+            .any(|degradation| format!("{degradation:?}").contains("Guidance"))
+    );
     Ok(())
 }
 
@@ -781,6 +906,15 @@ fn many_first_stage_reads_and_guidance_files_leave_each_later_stage_its_share() 
                 body["paths"] = json!(paths);
             }
         }
+        if tool == "file_info" {
+            let path = arguments["path"].as_str().unwrap_or("");
+            let (folder, name) = path.rsplit_once('/').unwrap_or(("", path));
+            if ["", "crates", "crates/k/src"].contains(&folder)
+                && super::super::extend::GUIDANCE.contains(&name)
+            {
+                body["indexed_lines"] = json!(120);
+            }
+        }
         sized(tool, arguments, body)
     };
     let (outcome, _) = run_ruled(&fixture()?, request, rules("all"), &crowded)?;
@@ -814,6 +948,9 @@ fn a_stage_that_reads_nothing_says_why() -> Result<()> {
     let bare = |tool: &str, _: &Map<String, Value>, mut body: Value| {
         if tool == "list_files" {
             body["paths"] = json!([GUARD]);
+        }
+        if tool == "file_info" {
+            body["indexed_lines"] = json!(0);
         }
         Ok(body)
     };

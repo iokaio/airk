@@ -903,15 +903,29 @@ Tests pass the rules directly (`answer_with_rules`, test builds only).
    its own words, with `origin: standing` on the wire (Core
    `SubNeedOrigin::Standing`, at most `MAX_STANDING_NEEDS`).
 3. **Project guidance and cited files** (`guidance`, `cited`). When round
-   one's searches and recipes have run, one `list_files` lookup per folder
-   (the root, the top-level folders and the folders of each sub-need's three
-   best passages, at most six) finds `CLAUDE.md`, `AGENTS.md`,
-   `CONTRIBUTING.md` and `README.md` directly in it; each found file (at
-   most eight) is read from line 1 (`context`, 101 lines). Then the
-   repository paths named in those files and in the best passages (a folder,
-   a file name with an extension, safe and relative), most cited first, at
-   most six not already read, are read the same way. A root listing is one
-   page of 200 paths; a guidance file past it is not found.
+   one's searches and recipes have run, each of `CLAUDE.md`, `AGENTS.md`,
+   `CONTRIBUTING.md` and `README.md` is probed directly in each guidance
+   folder (the root, the top-level folders and the folders of each
+   sub-need's three best passages, at most six; at most 24 probes) with the
+   same uncharged `file_info` read that governing documents take: a file
+   with indexed lines at this publication exists. A missing file is an
+   ordinary empty result, not a failure and not a degradation. Each found
+   file (at most eight) gets one charged `document_facts` lookup of its
+   sections (`kind: section`, 64 rows, 4,096 bytes); a section runs from its
+   heading to the line before the next, the last to the file's end, and
+   lines before the first heading are a section of their own (a file
+   without section facts is one section). Up to three sections of a file
+   are read, at most twelve in the Answer: first those whose heading shares
+   most words (four letters or more) with a sub-need, for that sub-need,
+   then the rest in document order for the folder's owner; each is a
+   `context` read from its heading, at most 100 lines after it and 4,096
+   bytes. So a rule deep in the file can be delivered (change-log entry 78).
+   Then the repository paths named in those files and in the best passages
+   (a folder, a file name with an extension, safe and relative), most cited
+   first, at most six not already read, are read from line 1 (`context`,
+   101 lines). Before 27 November guidance listed each folder with one
+   `list_files` page of 200 paths, which a large repository's recursive,
+   sorted root listing filled before reaching its guidance files.
 4. **Structure following** (`structure`). For each sub-need's two best code
    passages (at most six files), from the index's code facts with minimal
    rows: the file's definitions (one lookup) and the innermost definitions

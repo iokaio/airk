@@ -20,7 +20,19 @@ pub(crate) const GUIDANCE: [&str; 4] = ["CLAUDE.md", "AGENTS.md", "CONTRIBUTING.
 const GUIDANCE_FOLDERS: usize = 6;
 /// Guidance files read in one Answer.
 const GUIDANCE_FILES: usize = 8;
-/// Paths one folder listing returns.
+/// Existence probes (`file_info`) of guidance names in one Answer: each
+/// name in each guidance folder.
+const GUIDANCE_PROBES: usize = GUIDANCE_FOLDERS * GUIDANCE.len();
+/// Sections read of one guidance file, and of all of them in one Answer.
+const SECTIONS_PER_FILE: usize = 3;
+const GUIDANCE_SECTIONS: usize = 12;
+/// Section facts one guidance file's lookup returns, and their bytes.
+const SECTION_ROWS: usize = 64;
+const SECTION_FACT_BYTES: usize = 4096;
+/// One guidance section is read with `context` from its heading, at most
+/// `HEAD_AFTER` lines after it.
+const SECTION_BYTES: usize = 4096;
+/// Paths one code-fact page returns.
 const LISTING_LIMIT: usize = 200;
 const LISTING_BYTES: usize = 16_384;
 /// A guidance or cited file is read from its first line: `context` after 100
@@ -247,6 +259,94 @@ pub(crate) fn guidance_folders(paths: &[&str], limit: usize) -> Vec<String> {
         }
     }
     out.truncate(limit);
+    out
+}
+
+/// Words that say little about which section holds a rule.
+const COMMON: [&str; 16] = [
+    "that", "this", "with", "what", "which", "where", "from", "into", "they", "their", "there",
+    "when", "each", "have", "does", "done",
+];
+
+/// The distinct lower-case words of four or more letters of a text.
+pub(crate) fn words(text: &str) -> BTreeSet<String> {
+    text.split(|ch: char| !ch.is_alphanumeric())
+        .filter(|word| word.chars().count() >= 4)
+        .map(str::to_lowercase)
+        .filter(|word| !COMMON.contains(&word.as_str()))
+        .collect()
+}
+
+/// The sections of a guidance file of `lines` lines, from its section facts:
+/// each runs from its heading to the line before the next (the last to the
+/// file's end), and lines before the first heading are a section without
+/// one. Without facts the file is one section.
+pub(crate) fn section_spans(
+    path: &str,
+    facts: &[Fact],
+    lines: usize,
+) -> Vec<(usize, usize, String)> {
+    let mut headings: Vec<(usize, String)> = facts
+        .iter()
+        .filter(|fact| {
+            fact.path == path
+                && fact.start <= lines
+                && matches!(fact.kind.as_str(), "section" | "heading" | "")
+        })
+        .map(|fact| (fact.start, fact.name.clone()))
+        .collect();
+    headings.sort();
+    headings.dedup_by_key(|(start, _)| *start);
+    if headings.first().is_none_or(|(start, _)| *start > 1) {
+        headings.insert(0, (1, String::new()));
+    }
+    let ends: Vec<usize> = headings
+        .iter()
+        .skip(1)
+        .map(|(start, _)| start - 1)
+        .chain([lines.max(1)])
+        .collect();
+    headings
+        .into_iter()
+        .zip(ends)
+        .map(|((start, name), end)| (start, end.max(start), name))
+        .collect()
+}
+
+/// Up to `SECTIONS_PER_FILE` sections to read, each with the sub-need it
+/// is for: first those whose heading shares most words with a sub-need
+/// (that sub-need), then the rest in document order (`owner`).
+pub(crate) fn choose_sections(
+    spans: &[(usize, usize, String)],
+    needs: &[(u8, BTreeSet<String>)],
+    owner: u8,
+) -> Vec<(usize, usize, u8)> {
+    let mut scored: Vec<(usize, usize, usize, u8)> = spans
+        .iter()
+        .filter_map(|(start, end, name)| {
+            let heading = words(name);
+            needs
+                .iter()
+                .map(|(need, wanted)| (heading.intersection(wanted).count(), *need))
+                .filter(|(score, _)| *score > 0)
+                .max_by(|left, right| left.0.cmp(&right.0).then(right.1.cmp(&left.1)))
+                .map(|(score, need)| (score, *start, *end, need))
+        })
+        .collect();
+    scored.sort_by(|left, right| right.0.cmp(&left.0).then(left.1.cmp(&right.1)));
+    let mut out: Vec<(usize, usize, u8)> = scored
+        .into_iter()
+        .take(SECTIONS_PER_FILE)
+        .map(|(_, start, end, need)| (start, end, need))
+        .collect();
+    for (start, end, _) in spans {
+        if out.len() >= SECTIONS_PER_FILE {
+            break;
+        }
+        if !out.iter().any(|(known, _, _)| known == start) {
+            out.push((*start, *end, owner));
+        }
+    }
     out
 }
 
@@ -529,11 +629,24 @@ impl Loop<'_> {
         }
     }
 
-    /// Rule 3a: one listing per guidance folder, then a head read of each
-    /// guidance file found directly in it.
+    /// The indexed lines of `path` at this publication, by the same
+    /// uncharged `file_info` probe that governing documents take. A missing
+    /// or unindexed file is an ordinary `None`, never a failure.
+    fn indexed_lines(&mut self, path: &str) -> Option<usize> {
+        let arguments = json!({"path":path}).as_object().cloned()?;
+        let info = (self.env.reader)("file_info", &arguments, Some(&self.gather.revision)).ok()?;
+        let lines = info.get("indexed_lines").and_then(Value::as_u64)? as usize;
+        (token(&info) == Some(self.gather.revision.as_str()) && lines > 0).then_some(lines)
+    }
+
+    /// Rule 3a: an existence probe of each guidance name in each guidance
+    /// folder, then up to three sections of each file found, read from their
+    /// headings.
     fn guidance(&mut self) -> Result<bool> {
         let mut queued = false;
         let mut read = 0usize;
+        let mut sections = 0usize;
+        let mut probes = 0usize;
         for part in 0..self.parts.len() {
             if !self.parts[part].active() {
                 continue;
@@ -556,42 +669,69 @@ impl Loop<'_> {
                 .next()
                 .unwrap_or_else(|| Sha256Digest::from_bytes([0; 32]));
             let rules_need = self.rules_need(part);
-            let mut found: Vec<(String, u8)> = Vec::new();
+            let mut found: Vec<(String, u8, usize)> = Vec::new();
             for folder in folders {
                 let prefix = if folder.is_empty() {
                     String::new()
                 } else {
                     format!("{folder}/")
                 };
-                let Some(body) = self.lookup(
-                    part,
-                    basis,
-                    "list_files",
-                    json!({"prefix":prefix,"limit":LISTING_LIMIT,"max_bytes":LISTING_BYTES}),
-                )?
-                else {
-                    continue;
-                };
                 let owner = owners.get(&folder).copied().unwrap_or(rules_need);
                 for name in GUIDANCE {
                     let path = format!("{prefix}{name}");
-                    let listed = body["paths"]
-                        .as_array()
-                        .is_some_and(|paths| paths.iter().any(|item| item.as_str() == Some(&path)));
-                    if listed && !found.iter().any(|(known, _)| *known == path) {
-                        found.push((path, owner));
+                    if probes >= GUIDANCE_PROBES || found.iter().any(|(known, _, _)| *known == path)
+                    {
+                        continue;
+                    }
+                    probes += 1;
+                    if let Some(lines) = self.indexed_lines(&path) {
+                        found.push((path, owner, lines));
                     }
                 }
             }
+            let words: Vec<(u8, BTreeSet<String>)> = self.parts[part]
+                .needs
+                .iter()
+                .map(|state| (state.need.id, words(&state.need.query)))
+                .collect();
+            let id = self.parts[part].id;
             let mut planned = 0usize;
-            for (path, need) in found {
-                if read >= GUIDANCE_FILES || !self.bytes_fit(planned, HEAD_BYTES) {
+            for (path, owner, lines) in found {
+                if read >= GUIDANCE_FILES || sections >= GUIDANCE_SECTIONS {
                     break;
                 }
-                if self.head(part, need, &path)? {
-                    planned += HEAD_BYTES;
-                    read += 1;
-                    queued = true;
+                read += 1;
+                let facts = self
+                    .lookup(
+                        part,
+                        basis,
+                        "document_facts",
+                        json!({"path":path,"kind":"section","compact":false,
+                            "limit":SECTION_ROWS,"max_bytes":SECTION_FACT_BYTES}),
+                    )?
+                    .map(|body| facts(&body))
+                    .unwrap_or_default();
+                let chosen = choose_sections(&section_spans(&path, &facts, lines), &words, owner);
+                for (start, end, need) in chosen {
+                    if sections >= GUIDANCE_SECTIONS || !self.bytes_fit(planned, SECTION_BYTES) {
+                        break;
+                    }
+                    let after = (end - start).min(HEAD_AFTER);
+                    let dispatch = self.gather.dispatch(
+                        ("context", v3::LoopRead::Context),
+                        json!({"path":path,"line":start,"before":0,"after":after,
+                            "max_bytes":SECTION_BYTES}),
+                        (id, Some(need), 1),
+                        Cause::Structural,
+                        FollowUp::Governing,
+                        Step::Leaf,
+                        &path,
+                    )?;
+                    if self.offer_gathered(part, dispatch)? {
+                        planned += SECTION_BYTES;
+                        sections += 1;
+                        queued = true;
+                    }
                 }
             }
         }

@@ -90,3 +90,55 @@ fn nearby_ranges_of_a_file_merge_within_the_line_bound() {
         [(10, 30, 1), (52, 60, 2), (400, 639, 3)]
     );
 }
+
+#[test]
+fn guidance_sections_run_heading_to_heading_and_the_matching_ones_are_read_first() {
+    let section = |name: &str, start| Fact {
+        name: name.into(),
+        kind: "section".into(),
+        path: "CLAUDE.md".into(),
+        start,
+        end: start,
+        hash: None,
+    };
+    let facts = [
+        section("Execution identity", 40),
+        section("Working on the project", 3),
+        section("Required tests and review", 380),
+        Fact {
+            path: "README.md".into(),
+            ..section("Elsewhere", 10)
+        },
+    ];
+    // Lines before the first heading are a section; the last runs to the end.
+    let spans = section_spans("CLAUDE.md", &facts, 420);
+    assert_eq!(
+        spans,
+        [
+            (1, 2, String::new()),
+            (3, 39, "Working on the project".to_owned()),
+            (40, 379, "Execution identity".to_owned()),
+            (380, 420, "Required tests and review".to_owned()),
+        ]
+    );
+    // No facts: the file is one section.
+    assert_eq!(
+        section_spans("CLAUDE.md", &[], 30),
+        [(1, 30, String::new())]
+    );
+    // The late section shares "required", "tests" and "review" with need 3,
+    // the opening section "project"; the rest follow in document order for
+    // the file's owner, need 1.
+    let needs = [
+        (1, words("Where the restart guard decides")),
+        (
+            3,
+            words("Project rules: required tests, test commands to run, review."),
+        ),
+    ];
+    assert_eq!(
+        choose_sections(&spans, &needs, 1),
+        [(380, 420, 3), (3, 39, 3), (1, 2, 1)]
+    );
+    assert!(words("What this does, with each").is_empty());
+}

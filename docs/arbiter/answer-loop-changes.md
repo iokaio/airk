@@ -4473,3 +4473,45 @@ added), `arbiter.ts` and `arbiter.d.ts` (11 lines each: the
 [Core contract](../../crates/airk-core/src/arbiter/CONTRACT.md#gathering-rules-on-the-wire-user-decision-26-november-2026)
 
 **Not measured.** Canned reads only; the real indexes were not rerun.
+
+### 78. Guidance files are probed by name and read by section
+
+**Measured fault it closes.** First kernel baseline (27 November 2026),
+Bookbuilder (8,116 files): the guidance stage made 6 lookups, read nothing
+and fetched 0 passages, although `CLAUDE.md` and `AGENTS.md` sit at the
+repository root.
+
+**Cause.** Guidance listed each folder with one `list_files` page of 200
+paths and looked for the four names in it (`answer/extend.rs`,
+`Loop::guidance`). The listing is recursive and sorted, so in a large
+repository the root page fills with deeper paths before it reaches the
+root's own files. A file that was found was read only from line 1 (101
+lines), so a rule deep in it could not be delivered.
+
+**Change.** Each guidance name is probed directly in each guidance folder
+(the root, the top-level folders and the folders of each sub-need's best
+passages; at most 24 probes) with the uncharged `file_info` read the loop
+already uses for governing documents. A missing file is an ordinary empty
+result, not a failure and not a degradation. Each found file (still at most
+eight) gets one charged `document_facts` lookup of its sections; up to three
+sections a file and twelve an Answer are read with `context` from their
+headings (at most 100 lines and 4,096 bytes each), first those whose
+heading shares most words with a sub-need, then the rest in document
+order. The listing lookup is gone, so a guidance stage spends one lookup a
+file found instead of one a folder.
+[Kernel contract](../../crates/airk-kernel/src/arbiter/CONTRACT.md#gathering-rules-user-decision-26-november-2026)
+
+**Tests.** Kernel
+`a_root_guidance_file_past_a_listing_page_is_found_and_its_late_rule_delivered`
+(a root listing of 250 other paths, `CLAUDE.md` of 420 lines with its rule
+in the section at line 380): before, no probe and no read of `CLAUDE.md`;
+after, the section at line 380 is read (40 lines) and delivered to the
+standing rules need (`CLAUDE.md:380-389` in its paragraph).
+`guidance_is_probed_per_folder_read_and_the_files_it_names_are_read`
+replaces the listing test, and the pure helpers have
+`guidance_sections_run_heading_to_heading_and_the_matching_ones_are_read_first`.
+
+**Not measured.** Canned reads only. The real `document_facts` rows of a
+Markdown file were not inspected; the reader accepts section facts in the
+rich or minimal row form `extend::facts` parses, and a file without them
+is read as one section from line 1.
