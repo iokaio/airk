@@ -209,6 +209,30 @@ percent lower weighted cost from one repeat a task, which is indicative
 only. The four sessions that mixed versions are set aside, not deleted.
 Rule from this: the gather code is not edited while a series runs.
 
+### Third version (27 November 2026)
+
+Aspects 4 to 7, 9 and 10 joined to the map and the reply
+(`live_gather_v3.py`, kept apart from the second version while its cost
+series runs). Map build 27.7 s and 35.7 MB for Bookbuilder, 4.9 s and
+5.0 MB for Munarium.
+
+| Placement, 113 truth items | Kernel reply | First | Second | Third |
+| --- | --- | --- | --- | --- |
+| At the lines | 32 | 68 | 74 | 74 to 75 |
+| File reached | 64 | 93 | 99 | 99 |
+| File never reached | 49 | 20 | 14 | 14 |
+
+Reading: the six added aspects did not raise placement. They did reach
+the items they were built for (the two single rule lines in `CLAUDE.md`,
+the token lifetime constant), and each gain displaced another location,
+because every reply is already at the 24,000-byte limit. Tightening the
+noisiest sections changed nothing. Placement by deterministic rules has
+levelled off at about two thirds of the truth at its lines and seven
+eighths of the files. What remains is choosing among what is gathered,
+which is the reranker's job, or carrying more than 24,000 bytes, which
+costs the agent tokens. The items still missed are mostly in two tracing
+tasks whose chains cross languages.
+
 ## Aspects
 
 Proposed from the 45 truth items the first version missed (in 44 of them
@@ -221,17 +245,18 @@ the winning design is migrated to the Rust kernel afterwards.
 | 1 | Connections between names | From the best files' hits: who uses the enclosing definition, and the rare names it refers to that another file defines | In the gather step (second version) |
 | 2 | Wiring keys | Action names, routes, environment variables and similar strings in the hit ranges, searched everywhere | In the gather step (second version) |
 | 3 | File outline | Each best file's definitions with lines, in the reply | In the reply (second version) |
-| 4 | Test linkage | Which test file exercises which source file, by name | Function built and tested (`topical_aspects.py`); not yet in the map |
-| 5 | Values and units | Named literal values with their quantity in a base unit; the same quantity stated in words in documents | Function built and tested; not yet in the map |
-| 6 | Build and configuration keys | Keys of project, settings and script files; a path named in the request is read directly | Keys built and tested; path mention in the gather step |
-| 7 | Rules by folder and topic | Guidance files by section, and which guidance files govern a folder | Function built and tested; not yet in the map |
-| 9 | Entry points and visibility | Files a trace starts from; public names | Function built and tested; not yet in the map |
-| 10 | Document-to-code links | The code names each document section mentions | Function built and tested; not yet in the map |
+| 4 | Test linkage | Which test file exercises which source file, by name | In the map and the reply (third version) |
+| 5 | Values and units | Named literal values with their quantity in a base unit; the same quantity stated in words in documents | In the map and the reply (third version) |
+| 6 | Build and configuration keys | Keys of project, settings and script files; a path named in the request is read directly | Keys in the map (third version); path mention in the gather step |
+| 7 | Rules by folder and topic | Guidance files by section, and which guidance files govern a folder | In the map and the reply (third version) |
+| 9 | Entry points and visibility | Files a trace starts from; public names | In the map and the reply (third version) |
+| 10 | Document-to-code links | The code names each document section mentions | In the map and the reply (third version) |
 | 8 | Change history | Files that changed together | Not chosen; needs repositories with history |
 | 11 | A summary or vector per file | For questions with no name | Not chosen; no current task can show its value |
 
-Aspects 4 to 7, 9 and 10 are joined to the map and the gather step as the
-third version, after the second version's cost series finishes.
+Aspects 4 to 7, 9 and 10 are joined as the third version in its own
+module. The two modules are merged into one after the second version's
+cost series finishes.
 
 ## Gates
 
