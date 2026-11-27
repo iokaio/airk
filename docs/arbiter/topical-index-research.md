@@ -195,6 +195,44 @@ Readings:
 - This is placement, not cost. It says the reply points at the right
   places far more often. Whether agents then spend less is step D.
 
+### Second version (27 November 2026)
+
+Aspects 1 to 3 below added to the gather step. Same replay: at the lines
+74 of 113 (68 in the first version), file reached 99 (93), file never
+reached 14 (20). Every reply is now at the 24,000-byte limit, so further
+gain must come from ranking what is gathered. Time per call 2 to 17 s.
+Cost series `live2-sonnet-r1` (20 tasks, 3 repeats, Sonnet) measures it.
+
+The first version's cost series was stopped when the prototype was edited
+under it. Its 18 sessions that ran the first version alone show about 10
+percent lower weighted cost from one repeat a task, which is indicative
+only. The four sessions that mixed versions are set aside, not deleted.
+Rule from this: the gather code is not edited while a series runs.
+
+## Aspects
+
+Proposed from the 45 truth items the first version missed (in 44 of them
+the deciding name was never searched for). The user chose aspects 1 to 7,
+9 and 10 on 27 November 2026. Python is accepted for these experiments;
+the winning design is migrated to the Rust kernel afterwards.
+
+| # | Aspect | What is recorded or done | State |
+| --- | --- | --- | --- |
+| 1 | Connections between names | From the best files' hits: who uses the enclosing definition, and the rare names it refers to that another file defines | In the gather step (second version) |
+| 2 | Wiring keys | Action names, routes, environment variables and similar strings in the hit ranges, searched everywhere | In the gather step (second version) |
+| 3 | File outline | Each best file's definitions with lines, in the reply | In the reply (second version) |
+| 4 | Test linkage | Which test file exercises which source file, by name | Function built and tested (`topical_aspects.py`); not yet in the map |
+| 5 | Values and units | Named literal values with their quantity in a base unit; the same quantity stated in words in documents | Function built and tested; not yet in the map |
+| 6 | Build and configuration keys | Keys of project, settings and script files; a path named in the request is read directly | Keys built and tested; path mention in the gather step |
+| 7 | Rules by folder and topic | Guidance files by section, and which guidance files govern a folder | Function built and tested; not yet in the map |
+| 9 | Entry points and visibility | Files a trace starts from; public names | Function built and tested; not yet in the map |
+| 10 | Document-to-code links | The code names each document section mentions | Function built and tested; not yet in the map |
+| 8 | Change history | Files that changed together | Not chosen; needs repositories with history |
+| 11 | A summary or vector per file | For questions with no name | Not chosen; no current task can show its value |
+
+Aspects 4 to 7, 9 and 10 are joined to the map and the gather step as the
+third version, after the second version's cost series finishes.
+
 ## Gates
 
 1. **After A.** If file recall is under 80 percent, the map's dimensions
