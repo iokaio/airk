@@ -305,6 +305,19 @@ completeness claim moves the agent. The one part of the 40.8 percent line
 not yet tested on its own is how to read: "read a file only for lines that
 are not shown here, with offset and limit". Its sessions read 85 KB
 against 122 to 136 KB in every other passage condition.
+**Decline rule, second version (rubric approved by the user, 27 November
+2026).** Decline only when the task text asks for nothing wide, names a
+defined symbol or a path, and the named symbols are defined in three files
+or fewer (a widely defined name is ignored beside a narrow one; a dotted
+name counts by its shape; a language the task names limits the files to
+that language). The needs are not read, and files that only mention a name
+do not count. Refusal, user wording: "This request is specific enough that
+gather_context is unlikely to be a good fit. Read files directly instead."
+Free check on the 20 recorded calls (`gather_decline.py check`): declines
+munarium-N-C2 and bookbuilder-N-C4 as required and lets every required
+task through; it also declines munarium-N-C3 (dearer in both arms) and
+bookbuilder-N-A1 (2 to 5 percent cheaper with the tool). Next: serve the
+decline on the two required tasks and compare with no tool.
 ### Resume point (27 November 2026)
 
 Work can be picked up from here by another session.
