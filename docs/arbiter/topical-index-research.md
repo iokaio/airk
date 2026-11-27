@@ -59,6 +59,81 @@ assumed ratios and is replaced by this.
 4. Placement results (which files and lines a reply names) do not depend
    on prices and stand as written.
 
+## Experiment protocol (user direction, 27 November 2026)
+
+This replaces the step list and gates further down for the work from here
+on. The user set the method; the safeguards are the primary agent's and
+the user agreed to them.
+
+**Method.** One task at a time.
+
+1. The primary agent picks a task by judgment from what is known,
+   favouring tasks where the oracle shows the most room and the prototype
+   falls furthest short of it.
+2. For that task it runs a set of three to five experiments using the
+   topical index and direct file reads. Each tests one hypothesis, is
+   documented with its result, and may be followed by a small adjustment
+   before the next.
+3. At the end of the set it judges whether further improvement on that
+   task is possible. If so it makes the improvement and tests again,
+   recording the result.
+4. It then picks the next task and repeats.
+5. It continues until it can no longer make a real improvement, then
+   reports to the user, and the next phase is planned together.
+
+Later phases, agreed in outline: the kept design is run on all 20 tasks
+with Sonnet and Opus against a pinned baseline; then on freshly chosen
+tasks, measured against the Arbiter as it has evolved; with small general
+changes tested between sets. The Qwen 4B model with 8-bit weights is
+brought in where an experiment calls for choosing among what is gathered.
+
+**Safeguards.**
+
+- *Ceiling first.* Before building a new reply layout or tool shape, its
+  ideal form is run with the oracle. If perfect content cannot save much,
+  the build is skipped.
+- *Enough repeats.* One run of a task varies by about a quarter of its
+  cost. Each condition on a task is run five times, and the unaided
+  baseline for that task is brought to five and rerun as a control when a
+  day has passed or the cache-write price share changes.
+- *One price.* Every comparison uses `agent_cost_batch.py report`, which
+  prices all cache writes alike. Tokens entering the context are reported
+  beside dollars.
+- *Free check before a paid one.* A change first passes the replay
+  placement check where that applies.
+- *General mechanisms only.* A change is a rule that could help other
+  tasks. No value is set from a task's truth.
+- *No regression.* When work moves to a new task, the kept changes are
+  rerun on the tasks already done.
+- *Correctness is the guard.* The primary agent judges every kept
+  condition's sessions against the frozen truth.
+- *No edits under a running series.*
+- *Stop rule.* If a task's best result stays under half of its oracle
+  saving after its set, that is recorded as the finding for that task and
+  work moves on. If that happens on three tasks running, the series stops
+  and is reported.
+
+**Per-task room, at one price** (oracle against the unaided baseline,
+medians of three, Sonnet). Second-version prototype beside it.
+
+| Task | Baseline | Oracle | Prototype v2 |
+| --- | --- | --- | --- |
+| munarium-T1 | $0.726 | 32.1% lower | 5.7% higher |
+| munarium-N-W1 | $0.544 | 27.2% lower | 22.7% lower |
+| bookbuilder-N-C3 | $0.284 | 25.9% lower | 1.3% lower |
+| bookbuilder-C3 | $1.328 | 23.7% lower | 0.5% higher |
+| munarium-C2 | $0.435 | 22.5% lower | 19.7% higher |
+| munarium-A1 | $0.944 | 17.6% lower | 3.3% higher |
+| bookbuilder-N-W1 | $0.762 | 16.3% lower | 1.5% lower |
+| munarium-N-A2 | $1.072 | 11.8% lower | 1.6% lower |
+| the other 12 | | under 10% lower, or higher | |
+
+**First task: munarium-T1** (add the missing offline retry tests of the
+Python client, on both transports). It has the most room, the prototype
+captures none of it, and the repository is small, so calls are quick.
+Next in line: bookbuilder-N-C3, in the other repository and a narrow
+coding task.
+
 ## Why this research
 
 The user's question, 27 November 2026: is indexing every file in full the
