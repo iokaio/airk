@@ -340,7 +340,8 @@ Findings:
    description says the tool "brings the project's rules", so a refusal
    prompts the agent to fetch them itself. The unaided baseline has three
    repeats, so this comparison is noisy.
-4. Recommended: the refusal without a file list, the user's sentence only.
+4. The user dropped the file list the same day; the refusal is the user's
+   sentence only.
 ### Resume point (27 November 2026)
 
 Work can be picked up from here by another session.

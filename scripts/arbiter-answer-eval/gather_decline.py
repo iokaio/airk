@@ -28,8 +28,9 @@ import sys
 import agent_cost_batch
 import live_gather
 
-# The refusal an agent receives (user wording, 27 November 2026). Whether to append the files the
-# rule found is decided before any decline is served (``refusal``).
+# The refusal an agent receives (user wording, 27 November 2026), without a file list: served on
+# bookbuilder-N-C4 the list named the files defining the task's setting flags, not the files it was
+# about, and the user dropped it (``decline-sonnet-r1``).
 DECLINE_TEXT = "This request is specific enough that gather_context is unlikely to be a good fit. Read files directly instead."
 # Rule 1 reads the task text only: agents write such words in their needs on narrow tasks too.
 WIDE = re.compile(r"\b(every|everywhere|all (?:the )?places|each place|wherever|anywhere|across|throughout|trace|flow|"
@@ -93,8 +94,9 @@ def decide(seen: dict) -> tuple[bool, str]:
     return True, f"names its place, defined in {len(seen['files'])} file(s)"
 
 
-def refusal(seen: dict, with_files: bool) -> str:
-    """The refusal text; with ``with_files`` the files the rule found, unless the task named only paths."""
+def refusal(seen: dict, with_files: bool = False) -> str:
+    """The refusal text. ``with_files`` (kept for reproducing ``decline-sonnet-r1``) appends the files
+    the rule found, unless the task named only paths."""
     if with_files and seen["files"] and seen["names_in_task"]:
         return f"{DECLINE_TEXT[:-1]}: {', '.join(seen['files'])}."
     return DECLINE_TEXT

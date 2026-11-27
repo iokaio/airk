@@ -28,7 +28,7 @@ class DeclineRule(unittest.TestCase):
         self.assertTrue(declined)
         self.assertEqual(gather_decline.refusal(seen, with_files=True),
                          f"{REFUSAL}: src/report.py, tests/test_report.py.")
-        self.assertEqual(gather_decline.refusal(seen, with_files=False), f"{REFUSAL}.")
+        self.assertEqual(gather_decline.refusal(seen), f"{REFUSAL}.")
 
     def test_wide_words_in_the_task_keep_the_tool_but_wide_words_in_needs_do_not(self) -> None:
         repo = repository({"parse_window": ["src/report.py"]})
