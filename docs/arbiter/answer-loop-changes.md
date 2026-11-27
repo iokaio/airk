@@ -4374,3 +4374,48 @@ tool's description still says `deliverable` does not change gathering; it
 belongs to the public tool surface and was left to that change. The rules
 were run only on canned reads in kernel tests, not on the real indexes, and
 nothing was measured on the four tasks.
+
+### 76. A small map-first default reply for the public Gather Context tool
+
+The user approved this change on 27 November 2026 under the strategy of that
+date ([Strategy from 27 November 2026](retrieval-strategy-combined.md#strategy-from-27-november-2026),
+"The reply is a map first and little text").
+
+**Measured reason.** In the first measured session an agent called the tool
+once with a task, five needs, two anchors and a deliverable. The terse reply
+was 106,547 bytes, and the session cost $0.38 against $0.10 without the
+tool, with the same nine round trips. `records` took 71,645 bytes (39
+records of about 4.6 KB of raw read results each), `source_verification`
+12,442, `paragraphs` 9,649, `parts` 6,793 and `record_uses` 5,413. The useful
+map was under 10 KB, and everything a reply holds is sent again on every
+later round trip.
+
+**Contract.** In terse mode a successful Answer /3 reply becomes a brief,
+`airk.gather-context.brief/1` (MCP `response::brief::BriefReply`): header
+(task, publication token once, complete or partial and why, stop reason, a
+pointer to `response_mode=full`), each sub-need with its origin, status and
+up to four `path:start-end` locations with a reason taken from the read that
+fetched it, whole delivered passages inside 16,000 bytes (each need's best
+before any need's second), what was not found, the cited locations left out,
+what to ask next, one line per gathering stage and one line for saved-source
+verification. The brief is at most 24,000 bytes. `response_mode=full` is
+unchanged, byte for byte; so are the kernel reply, the request, budgets,
+digests and persisted formats. The Core delivery fence reads a brief's
+`delivery_bindings`. The public tool's description now says to call it again
+with narrower needs and `known` ranges, and what the default reply holds
+(1,037 bytes, was 1,115).
+[MCP response contract](../../crates/airk-mcp/src/response/CONTRACT.md#gather-context-brief-user-decision-27-november-2026) ·
+[Core contract](../../crates/airk-core/src/arbiter/CONTRACT.md#public-answer-reply-in-terse-mode-user-decision-27-november-2026)
+
+**Not in the kernel reply, worked around.** A location's reason can name
+only the read that fetched it (operation, query or name, its cause and
+role): the reply records no per-location relation such as "calls X" or
+"project rule", and a record's gathering stage is not on the wire. Each
+sub-need's delivered locations are read from its paragraph text, since the
+reply has no structured per-need delivery list. A span trimmed of an overlap
+carries no exact line range and is listed as omitted rather than sent.
+
+**Not done.** A combined multi-index Answer keeps its receipt-bound wrapper.
+The VS Code Workbench calls `airk_answer` without `response_mode` and reads
+the full reply shape; it must ask for `response_mode: 'full'` before this
+lands. The Node-built Help outputs were not regenerated.

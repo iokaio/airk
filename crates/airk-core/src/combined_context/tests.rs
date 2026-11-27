@@ -518,6 +518,31 @@ fn focus_delivery_extraction_is_canonical_staged_and_ignores_arbitrary_metadata(
     assert!(context_delivery_bindings(&future)?.is_empty());
     Ok(())
 }
+/// A Gather Context brief binds exactly the delivery bindings it carries,
+/// in the body or in its text content; a duplicate stage is refused.
+#[test]
+fn brief_reply_binds_the_delivery_bindings_it_carries() -> anyhow::Result<()> {
+    use crate::arbiter::{
+        Stage,
+        stage_tests::{digest, scope},
+    };
+    let bare = json!({"schema":GATHER_CONTEXT_BRIEF_SCHEMA,"needs":[]});
+    assert!(context_delivery_bindings(&bare)?.is_empty());
+    let focus = ContextDeliveryBinding {
+        stage: Stage::Focus,
+        scope: scope(),
+        profile: Some(digest(7)),
+    };
+    let mut bound = bare.clone();
+    bound["delivery_bindings"] = json!([focus]);
+    assert_eq!(context_delivery_bindings(&bound)?, vec![focus.clone()]);
+    let text = json!({"content":[{"type":"text","text":bound.to_string()}]});
+    assert_eq!(context_delivery_bindings(&text)?, vec![focus.clone()]);
+    let mut duplicate = bare;
+    duplicate["delivery_bindings"] = json!([focus, focus]);
+    assert!(context_delivery_bindings(&duplicate).is_err());
+    Ok(())
+}
 #[test]
 fn legacy_context_delivery_bytes_omit_default_stage_and_focus_is_explicit() -> anyhow::Result<()> {
     use crate::arbiter::{

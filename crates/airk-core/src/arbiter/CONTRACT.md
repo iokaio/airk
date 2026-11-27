@@ -1461,6 +1461,24 @@ Tests: `a_task_alone_becomes_the_canonical_request_with_the_default_budget`,
 public tool path in MCP
 `public_answer_sdk_preserves_advertised_schema_full_utf8_question_and_budget`.
 
+### Public Answer reply in terse mode (user decision, 27 November 2026)
+
+The public tool's default (terse) reply is a brief, schema
+`airk.gather-context.brief/1` (`combined_context::GATHER_CONTEXT_BRIEF_SCHEMA`),
+owned by MCP `response::brief`: a projection of the `airk.arbiter.context/3`
+reply with each sub-need's locations and status, the best delivered
+passages inside 16,000 bytes, what was not found, what to ask next and one
+line per gathering stage, at most 24,000 bytes. The reason is cost: in the
+first measured session a 106,547-byte terse reply, three quarters of it raw
+read results in `records`, made a session cost $0.38 against $0.10 without
+the tool in the same nine round trips. `response_mode=full` still returns
+`ContextResponseV3` byte for byte as before; this type, the request, the
+budgets, digests and every persisted format are unchanged. A brief carries
+the reply's delivery bindings in `delivery_bindings`, and
+`context_delivery_bindings` reads them, so the delivery fence binds the
+same model work for either shape.
+[MCP response contract](../../../airk-mcp/src/response/CONTRACT.md#gather-context-brief-user-decision-27-november-2026)
+
 ### Reply frame: 128 KiB for Answer (user decision, 22 November 2026)
 
 The user raised the Answer reply limit to 128 KiB (plan section 12.9, which
