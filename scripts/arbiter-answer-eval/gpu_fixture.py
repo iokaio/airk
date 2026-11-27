@@ -417,6 +417,9 @@ def start(args):
         argv += ["--restart-from", args.restart_from]
     if args.reuse_settled:
         argv.append("--reuse-settled")
+    if getattr(args, "rebuild_indexes", False):
+        require(args.reuse_settled, "--rebuild-indexes needs --reuse-settled")
+        argv.append("--rebuild-indexes")
     if args.search is not None:
         argv += ["--search", args.search]
     if census:
@@ -695,6 +698,9 @@ def main():
                          help="capture exact private pair input windows on the settled wide shortlist")
         sub.add_argument("--reuse-settled", action="store_true",
                          help="require unchanged settled indexes on a same-install CUDA restart")
+        sub.add_argument("--rebuild-indexes", action="store_true",
+                         help="with --reuse-settled: rebuild each reused index once in place and record the "
+                              "publication it then serves, so later lifetimes reuse the rebuilt indexes")
         sub.add_argument("--seed-cpu", choices=SEEDS)
         sub.add_argument("--synthetic-root")
         sub.add_argument("--no-dispatch-observer", dest="dispatch_observer", action="store_false")

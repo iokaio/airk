@@ -904,6 +904,21 @@ without a fresh build fallback. The new lifetime retains the original
 control root and records its reuse evidence in reused-indexes.json.
 Sealed gate roots keep their separate lifetime policy.
 
+Add --rebuild-indexes when the extraction itself has changed and the
+reused indexes must be rebuilt once (first used on 27 November 2026, when
+exception-handler facts and generic call names moved the extraction
+profile identity). The lifetime starts exactly as a reuse does, from the
+same authenticated predecessor. It then queues one ordinary index pass per
+repository, waits for the pass and for the vectors that follow it, and
+re-observes each index through native reads. The index identity, source
+binding, denies and served mode must be what they were. Only the
+publication and the embedding pipeline digest are read afresh, and both
+values, before and after, go into rebuilt-indexes.json. At close the
+rebuild's own jobs are expected and no earlier job receipt may be lost. A
+later lifetime reuses the rebuilt indexes with --reuse-settled as usual.
+Copy the fixture root first if the frozen indexes must stay recoverable:
+the rebuild is in place.
+
 ### Step 4 wider Focus diagnostic
 
 Use the Windows x86_64 `cuda_l5a_diagnostics` image built with `gpu-cuda`

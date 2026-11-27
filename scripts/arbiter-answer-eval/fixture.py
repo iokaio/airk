@@ -1436,11 +1436,57 @@ def observe_reused_indexes(commands, prior, repositories, jobs_before):
                 and required_denies(commands, repo, index_id) == record["denies"],
                 f"{repo}: the served mode or source denies changed")
         progress = commands.json(f"reuse-progress-{repo}", "--service-project", record["binding"], "progress")
-        require(not any(job["kind"] in ("index", "vectors") for job in unfinished_jobs(progress)),
+        require(not any(job["kind"] in ("index", "vectors") for job in unfinished_jobs(progress).values()),
                 f"{repo}: an indexing writer is pending or running")
         indexes[repo] = dict(record)
     require_same_source_io_jobs(commands.control, jobs_before)
     return indexes
+
+
+def rebuild_reused_indexes(commands, indexes, repositories, seconds=4 * 3600):
+    """Rebuild each reused index in place and record the publication it then serves.
+
+    A settled-reuse lifetime refuses any new indexing, which is right while indexes are frozen. When the
+    extraction itself changes (26 November 2026: exception-handler facts kept at Agent Lean and generic call
+    names, which move the extraction profile identity), the indexes must be rebuilt once, and a later
+    lifetime must be able to reuse the rebuilt ones. This is that one step, named and recorded: it starts
+    from the same authenticated predecessor as any reuse, queues one ordinary index pass per repository,
+    waits for the pass and for the vectors that follow it, and then re-observes each index through native
+    reads. The index's identity, source binding, denies and served mode must be what they were; only its
+    publication and embedding pipeline digest are read afresh. Returns what changed, per repository."""
+    rebuilt = {}
+    for repo in repositories:
+        record = indexes[repo]
+        job = commands.json(f"rebuild-index-{repo}", "--service-project", record["binding"], "index")["job"]
+        wait_job(commands, job["id"], "index", seconds)
+        # The vectors jobs follow the pass, and the status can read ready for a moment between them. So the
+        # index counts as settled only after three consecutive observations five seconds apart that are
+        # ready with no index or vectors job unfinished.
+        end, calm = min(commands.deadline, time.monotonic() + seconds), 0
+        while calm < 3:
+            require(time.monotonic() < end, f"{repo}: the rebuilt index did not settle")
+            require(commands.stop_file is None or not commands.stop_file.is_file(), "stop file written while waiting")
+            status = wait_semantic(commands, record["index_id"], seconds, binding=record["binding"])
+            progress = commands.json(f"rebuild-progress-{repo}", "--service-project", record["binding"], "progress")
+            busy = any(row["kind"] in ("index", "vectors") for row in unfinished_jobs(progress).values())
+            calm = 0 if busy or status["semantic_readiness"]["state"] != "ready" else calm + 1
+            time.sleep(5.0)
+        status = tool_body(commands.tool(f"rebuild-status-{repo}", "airk_status", record["index_id"],
+                                         {"response_mode": "full"})[0])
+        search = probe_search(commands, repo, record["index_id"])
+        token = status["publication"]["token"]
+        require(token and search["publication"]["token"] == token
+                and all(body["semantic_readiness"]["state"] == "ready" for body in (status, search)),
+                f"{repo}: the rebuilt index has no settled publication")
+        require(search["execution"]["served_mode"] == record["served_mode"]
+                and search["execution"]["incomplete"] is False
+                and required_denies(commands, repo, record["index_id"]) == record["denies"],
+                f"{repo}: the served mode or source denies changed in the rebuild")
+        rebuilt[repo] = {"index_job": job["id"], "publication_before": record["publication_token"],
+                         "publication_after": token, "pipeline_digest_before": record["pipeline_digest"],
+                         "pipeline_digest_after": search["semantic_readiness"]["pipeline_digest"]}
+        record.update(publication_token=token, pipeline_digest=search["semantic_readiness"]["pipeline_digest"])
+    return rebuilt
 
 
 def reuse_restart_lineage(fixtures, previous, control_owner):
@@ -1499,6 +1545,8 @@ def worker(args):
     prior = None
     jobs_before = None
     reuse_settled = getattr(args, "reuse_settled", False)
+    rebuild_indexes = getattr(args, "rebuild_indexes", False)
+    require(not rebuild_indexes or reuse_settled, "an index rebuild starts from a settled reuse")
     if args.restart_from:
         prior, restart = restart_request(Path(args.fixtures), args.restart_from, life,
                                          getattr(args, "accept_unidle_close", None), reuse_settled=reuse_settled)
@@ -1578,6 +1626,16 @@ def worker(args):
                     "preserved_index_and_vector_jobs": len(jobs_before), "new_index_and_vector_jobs": 0,
                 })
                 write_json(handle_path, handle, replace=True)
+                if rebuild_indexes:
+                    handle.update(state="indexing", queryable=False)
+                    write_json(handle_path, handle, replace=True)
+                    rebuilt = rebuild_reused_indexes(commands, handle["indexes"], args.repositories)
+                    now = utc()
+                    handle["rebuilt_indexes"] = write_json(life / "rebuilt-indexes.json", {
+                        "predecessor": prior["lifetime"], "instance": handle["instance"], "control": str(control),
+                        "image": images["service"]["sha256"], "repositories": rebuilt, "at": now})
+                    handle.update(state="ready", queryable=True, ready_utc=now, semantic_ready_utc=now)
+                    write_json(handle_path, handle, replace=True)
             else:
                 states = Path(args.fixtures) / "indexes"
                 states.mkdir(exist_ok=True)
@@ -1709,7 +1767,13 @@ def worker(args):
     require(handle["service_exit_code"] == 0 and handle.get("final_stage_idle") is True,
             "fixture exit or stage settlement failed")
     if reuse_settled:
-        require_same_source_io_jobs(control, jobs_before)
+        if rebuild_indexes:
+            # The rebuild's own jobs are new by design. No earlier receipt may be lost, and the restart
+            # blockers above already refuse an unfinished writer.
+            require(not jobs_before - source_io_jobs(control), "the rebuild lost indexing or vector job receipts")
+            settlement["rebuilt_indexes"] = handle["rebuilt_indexes"]
+        else:
+            require_same_source_io_jobs(control, jobs_before)
         settlement["reused_indexes"] = handle["reused_indexes"]
     handle.update(state="closed", closed_utc=utc(), settlement=settlement)
     write_json(handle_path, handle, replace=True)
