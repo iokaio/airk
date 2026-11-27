@@ -162,6 +162,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--handle", type=Path)
     parser.add_argument("--repo")
     parser.add_argument("--instructions-file", type=Path, help="server guidance the build gives an MCP client")
+    parser.add_argument("--judge", type=Path, help="state file of a running arbiter_judge_service.py (model-dose experiment)")
+    parser.add_argument("--dose", type=int, default=0, help="judgments a call the model spends choosing passages")
     parser.add_argument("--max-round-trips", type=int, default=80)
     parser.add_argument("--timeout", type=float, default=2400.0)
     args = parser.parse_args(argv)
@@ -182,6 +184,8 @@ def main(argv: list[str] | None = None) -> int:
                   "--repo", args.repo, "--tool-file", str(tool_file), "--log-dir", str(args.output / "gather")]
         if args.instructions_file:
             server += ["--instructions-file", str(args.instructions_file.resolve(strict=True))]
+        if args.dose > 0:
+            server += ["--judge", str(args.judge.resolve(strict=True)), "--dose", str(args.dose)]
         servers[SERVER] = {"command": server[0], "args": server[1:]}
     mcp_config = args.output / "mcp-config.json"
     mcp_config.write_text(json.dumps({"mcpServers": servers}, indent=2) + "\n", encoding="utf-8", newline="\n")
@@ -210,6 +214,9 @@ def main(argv: list[str] | None = None) -> int:
                "gather_context": {"calls": len(calls), "seconds": round(sum(row["seconds"] for row in calls), 3),
                                   "reply_bytes": sum(row["reply_bytes"] for row in calls),
                                   "errors": sum(bool(row["is_error"]) for row in calls),
+                                  "dose": args.dose,
+                                  "judgments": sum((row.get("dose") or {}).get("judgments") or 0 for row in calls),
+                                  "dose_applied": sum(bool((row.get("dose") or {}).get("applied")) for row in calls),
                                   "advertised": None if tool is None else {"listed_name": tool["listed_name"],
                                                                            "description_bytes": len(tool["description"])}},
                "changed_files": changed}

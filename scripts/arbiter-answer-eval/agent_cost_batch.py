@@ -67,6 +67,8 @@ def run(args) -> int:
                     command += ["--handle", str(args.handle), "--repo", row["index"]]
                     if args.instructions_file:
                         command += ["--instructions-file", str(args.instructions_file)]
+                    if args.dose > 0:
+                        command += ["--judge", str(args.judge), "--dose", str(args.dose)]
                 jobs.append((out.name, command))
     print(f"{len(jobs)} session(s) to run", flush=True)
 
@@ -155,11 +157,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--handle", type=pathlib.Path)
     parser.add_argument("--instructions-file", type=pathlib.Path)
     parser.add_argument("--tasks", nargs="*")
+    parser.add_argument("--judge", type=pathlib.Path, help="state file of a running arbiter_judge_service.py")
+    parser.add_argument("--dose", type=int, default=0, help="judgments a call the model spends choosing passages")
     args = parser.parse_args(argv)
     if args.command == "report":
         return report(args)
     if not args.model or ("tool" in args.arms and args.handle is None):
         parser.error("run needs --model, and --handle for the tool arm")
+    if args.dose > 0 and args.judge is None:
+        parser.error("--dose needs --judge")
     return run(args)
 
 

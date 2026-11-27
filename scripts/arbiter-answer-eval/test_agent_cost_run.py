@@ -102,6 +102,40 @@ class ServerTest(unittest.TestCase):
         self.assertEqual((len(logged), logged[0]["reply_bytes"], logged[0]["arguments"], raw),
                          (1, 10, {"task": "t"}, b'{"raw": true}'))
 
+    def test_with_a_dose_the_model_chooses_the_passages_and_a_fault_keeps_the_service_reply(self):
+        brief = {"schema": "airk.gather-context.brief/1", "needs": [{"need": 1, "text": "first"}],
+                 "passages": [{"at": "a.rs:1-2", "needs": [1], "text": "one"}]}
+        full = {"schema": "airk.arbiter.context/3", "delivery": {"reused": True},
+                "parts": [{"id": 1, "sub_needs": [{"id": 1}]}],
+                "records": [{"id": "r", "canonical_result": {"spans": [
+                    {"path": "a.rs", "start_line": 1, "end_line": 2, "text": "one"},
+                    {"path": "b.rs", "start_line": 7, "end_line": 9, "text": "two"}]}}],
+                "record_uses": [{"part": 1, "need": 1, "record": "r"}]}
+        modes = []
+
+        def backend(native, repo, arguments):
+            modes.append(arguments.get("response_mode"))
+            body = full if arguments.get("response_mode") == "full" else brief
+            return json.dumps(body), False, b"{}"
+
+        tool = {"name": "gather_context", "description": "d", "inputSchema": {"type": "object"}}
+        call = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "gather_context", "arguments": {"task": "t"}}}
+        with tempfile.TemporaryDirectory() as folder:
+            mcp = server.Server(tool=tool, repo="munarium", log_dir=Path(folder), backend=backend, dose=2,
+                                score=lambda instruction, pairs: [0.9 if text == "two" else 0.2 for _, text in pairs])
+            got = json.loads(mcp.handle_message(call)["result"]["content"][0]["text"])
+            logged = json.loads((Path(folder) / "calls.jsonl").read_text(encoding="utf-8").splitlines()[0])
+
+            def broken(instruction, pairs):
+                raise OSError("judge is down")
+
+            mcp = server.Server(tool=tool, repo="munarium", log_dir=Path(folder) / "second", backend=backend, dose=2, score=broken)
+            kept = json.loads(mcp.handle_message(call)["result"]["content"][0]["text"])
+        self.assertEqual(modes[:2], [None, "full"])
+        self.assertEqual([item["at"] for item in got["passages"]], ["b.rs:7-9", "a.rs:1-2"])
+        self.assertEqual((logged["dose"]["judgments"], logged["dose"]["applied"], logged["dose"]["full_reused"]), (2, True, True))
+        self.assertEqual(kept, brief)
+
 
 if __name__ == "__main__":
     unittest.main()

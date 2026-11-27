@@ -1338,3 +1338,36 @@ python -B scripts/arbiter-answer-eval/narrow_scenarios.py check --tasks $campaig
 python -B scripts/arbiter-answer-eval/agent_cost_batch.py run --campaign $campaign --series baseline-sonnet-r1 --model claude-sonnet-5-5 --arms plain --repeats 3 --workers 3
 python -B scripts/arbiter-answer-eval/agent_cost_batch.py report --campaign $campaign --series baseline-sonnet-r1
 ~~~
+
+`agent_cost_judge.py` lays a series' sessions beside each task's frozen
+truth and stores the reviewer's verdicts in the series'
+`verdicts.json`. It does not judge.
+
+### Model-dose experiment
+
+How much local inference the cost reduction needs is measured before the
+4B model is put in the runtime. The model's choice is applied between the
+service and the acting agent, and the result is the agent's cost. Timing
+in this tooling is not a measure.
+[Plan](../../docs/arbiter/retrieval-strategy-combined.md#strategy-from-27-november-2026)
+
+- `arbiter_judge_service.py` loads Qwen3-Reranker-4B once (FP16;
+  `--bits 8` rounds the weights to 8 bits and expands them to FP16) and
+  scores pairs for every session over 127.0.0.1. Input: the checkpoint
+  folder. Output: a state file with its address; `GET /stats` gives the
+  judgments made, seconds and peak GPU memory.
+- `gather_context_dose.py` replaces the `passages` and `omitted` of a
+  brief reply with the model's choice among the passages the full reply
+  records for each need, spending `dose` judgments a call. Nothing else in
+  the brief changes.
+- `gather_context_mcp.py --judge <state.json> --dose N` applies it to each
+  call; `agent_cost_run.py` and `agent_cost_batch.py` pass both through. A
+  fault in the step leaves the service's own brief in place and is logged.
+  `session.json` records the dose, the judgments made and the calls it
+  was applied to.
+
+~~~powershell
+python -B scripts/arbiter-answer-eval/arbiter_judge_service.py --model $checkpoint --bits 8 --state $judgeState
+python -B scripts/arbiter-answer-eval/agent_cost_batch.py run --campaign $campaign --series dose150-sonnet-r1 --model claude-sonnet-5-5 --arms tool --handle $handle --instructions-file $guidance --judge $judgeState --dose 150
+python -B -m unittest discover -s scripts/arbiter-answer-eval -p 'test_gather_context_dose.py'
+~~~
