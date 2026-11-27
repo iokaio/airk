@@ -74,6 +74,17 @@ STOP = frozenset("""the and for that this with from have has are was were will w
     case cases call calls called give gives given take takes taken work works does exist exists existing currently
     default defaults value values setting settings option options name names""".split())
 ROLE_WEIGHT = {"source": 1.0, "test": 0.8, "mock": 0.8, "configuration": 0.7, "build": 0.6, "document": 0.35, "guidance": 0.9}
+# A language the task names (``in the Python client``): code files in other languages beside it rank lower.
+LANGUAGES = [(re.compile(r"\bpython\b", re.IGNORECASE), (".py",)), (re.compile(r"\brust\b", re.IGNORECASE), (".rs",)),
+             (re.compile(r"\bjava\b", re.IGNORECASE), (".java",)), (re.compile(r"\b(?:Go|golang)\b"), (".go",)),
+             (re.compile(r"\btypescript\b", re.IGNORECASE), (".ts", ".tsx")),
+             (re.compile(r"\bjavascript\b", re.IGNORECASE), (".js", ".mjs", ".cjs", ".jsx")),
+             (re.compile(r"(?:\bc#|\bcsharp\b|\.net\b)", re.IGNORECASE), (".cs",)),
+             (re.compile(r"\bkotlin\b", re.IGNORECASE), (".kt", ".kts")), (re.compile(r"\bswift\b", re.IGNORECASE), (".swift",)),
+             (re.compile(r"\bruby\b", re.IGNORECASE), (".rb",)), (re.compile(r"\bphp\b", re.IGNORECASE), (".php",)),
+             (re.compile(r"(?:\bc\+\+|\bcpp\b)", re.IGNORECASE), (".cpp", ".cc", ".hpp", ".h"))]
+CODE_SUFFIXES = tuple(suffix for _, kinds in LANGUAGES for suffix in kinds)
+OTHER_LANGUAGE = 0.3
 
 
 class Repository:
@@ -146,13 +157,16 @@ def request_terms(arguments: dict, index: dict) -> tuple[list[dict], list[str]]:
     return list(terms.values()), words
 
 
-def gather(repository: Repository, arguments: dict) -> dict:
-    """The brief for one call, from the live files."""
+def gather(repository: Repository, arguments: dict, trace: dict | None = None) -> dict:
+    """The brief for one call, from the live files. ``trace``, when given, receives the final file
+    ranking with scores and each ranked file's matched terms (``rank_check.py``); the brief is the same."""
     started = time.monotonic()
     index = repository.index
     terms, words = request_terms(arguments, index)
     deliverable = str(arguments.get("deliverable") or "")
     wants_test = deliverable == "test" or "test" in str(arguments.get("task") or "").lower()
+    named_suffixes = tuple(suffix for pattern, kinds in LANGUAGES if pattern.search(str(arguments.get("task") or ""))
+                           for suffix in kinds)
     census, score, held = [], {}, {}
     files_total = len(repository.texts)
     searched: set[str] = set()
@@ -198,6 +212,9 @@ def gather(repository: Repository, arguments: dict) -> dict:
             if word in index["files"][path]["path_words"]:
                 score[path] = score.get(path, 0.0) + 0.5 * rarity[word]
 
+    # Only siblings of the named language's files (another client beside it), not the rest of the tree.
+    named_tops = {path.split("/")[0] for path in score if named_suffixes and path.endswith(named_suffixes)}
+
     def fitted(path: str) -> float:
         role = index["files"].get(path, {}).get("role", "source")
         weight = ROLE_WEIGHT.get(role, 1.0)
@@ -205,6 +222,9 @@ def gather(repository: Repository, arguments: dict) -> dict:
             weight = 1.2
         if role == "document" and deliverable == "document":
             weight = 1.0
+        if (named_suffixes and path.endswith(CODE_SUFFIXES) and not path.endswith(named_suffixes)
+                and path.split("/")[0] in named_tops):
+            weight *= OTHER_LANGUAGE
         return score[path] * weight * (1 + 0.25 * len(held.get(path, {})))
 
     # Second hop, from the hits in the best files so far.
@@ -239,6 +259,10 @@ def gather(repository: Repository, arguments: dict) -> dict:
     for term in sorted(hops.values(), key=lambda term: (order[term["source"]], term["term"]))[:HOP_TERMS]:
         count(term)
     ranked = sorted((path for path in score if path in held), key=lambda path: (-fitted(path), path))
+    if trace is not None:
+        trace["ranked"] = [(path, round(fitted(path), 3)) for path in ranked]
+        trace["held"] = {path: sorted(held[path]) for path in ranked}
+        trace["terms"] = [term["term"] for term in terms]
     top = ranked[:TOP_FILES]
     ranges = []
     for path in top:

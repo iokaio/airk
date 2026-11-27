@@ -38,14 +38,7 @@ WIDE = re.compile(r"\b(every|everywhere|all (?:the )?places|each place|wherever|
 NARROW_FILES = 3
 # A language the task names narrows where its symbols count (the same API in several languages is
 # common). "Go" counts only capitalized, since "go" is an ordinary word.
-LANGUAGES = [(re.compile(r"\bpython\b", re.IGNORECASE), (".py",)), (re.compile(r"\brust\b", re.IGNORECASE), (".rs",)),
-             (re.compile(r"\bjava\b", re.IGNORECASE), (".java",)), (re.compile(r"\b(?:Go|golang)\b"), (".go",)),
-             (re.compile(r"\btypescript\b", re.IGNORECASE), (".ts", ".tsx")),
-             (re.compile(r"\bjavascript\b", re.IGNORECASE), (".js", ".mjs", ".cjs", ".jsx")),
-             (re.compile(r"(?:\bc#|\bcsharp\b|\.net\b)", re.IGNORECASE), (".cs",)),
-             (re.compile(r"\bkotlin\b", re.IGNORECASE), (".kt", ".kts")), (re.compile(r"\bswift\b", re.IGNORECASE), (".swift",)),
-             (re.compile(r"\bruby\b", re.IGNORECASE), (".rb",)), (re.compile(r"\bphp\b", re.IGNORECASE), (".php",)),
-             (re.compile(r"(?:\bc\+\+|\bcpp\b)", re.IGNORECASE), (".cpp", ".cc", ".hpp", ".h"))]
+LANGUAGES = live_gather.LANGUAGES
 
 def features(repository: live_gather.Repository, arguments: dict) -> dict:
     """What the tool can see about a request at call time (rubric approved 27 November 2026)."""

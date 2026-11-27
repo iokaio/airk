@@ -342,6 +342,28 @@ Findings:
    repeats, so this comparison is noisy.
 4. The user dropped the file list the same day; the refusal is the user's
    sentence only.
+
+**Ranking, first rule (free checks, no agents).** `rank_check.py` reports
+where each task's truth files fall in the prototype's file ranking (first
+recorded call of each of the 20 tasks, 168 located truth files). Baseline:
+43 in the first six (the focused layout), 23 more in the first sixteen
+(the full layout), 77 later, 25 never reached by a request term. Documents
+almost never rank in the first sixteen (2 of 22). The first rule: when the
+task text names a language ("the Python client", ".NET"), code files in
+other languages rank at 0.3 of their score, but only under a top folder
+that also holds files in the named language. That penalizes sibling
+clients, not the server a client calls; munarium-N-C4, a .NET task whose
+route is in the Rust server, lost two server files to a first, unscoped
+version. Result: 47 in the first six, 25 more in the first sixteen, 71
+later, 25 unreached; no truth file fell to a worse group. Focused replay
+(`replay/live-focus-lang-r1`): 28 of 113 notes at the lines (was 26), 43
+pointed at the file (was 42). The language table moved from
+`gather_decline.py` to `live_gather.py`, which both now use. Next ranking
+targets: the 25 files no request term reaches, and documents.
+
+From 27 November 2026 every agent test series is named after an animal or
+insect, each starting with the next letter of the alphabet. The first is
+Aardvark.
 ### Resume point (27 November 2026)
 
 Work can be picked up from here by another session.
