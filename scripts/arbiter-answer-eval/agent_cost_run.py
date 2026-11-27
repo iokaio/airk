@@ -132,7 +132,7 @@ def changes(snapshot: Path, work: Path) -> tuple[str, list[dict]]:
 
 
 def command(claude: str, model: str, arm: str, mcp_config: Path, max_round_trips: int) -> list[str]:
-    allowed = list(FILE_TOOLS) + ([f"mcp__{SERVER}__{PUBLIC_TOOL}"] if arm == "tool" else [])
+    allowed = list(FILE_TOOLS) + ([f"mcp__{SERVER}__{PUBLIC_TOOL}"] if arm in ("tool", "oracle") else [])
     return [claude, "-p", "--model", model, "--setting-sources", "", "--strict-mcp-config",
             "--mcp-config", str(mcp_config), "--tools", ",".join(allowed), "--allowedTools", ",".join(allowed),
             "--disallowedTools", ",".join(DENIED), "--permission-mode", "dontAsk", "--disable-slash-commands",
@@ -156,7 +156,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--task", required=True, type=Path)
     parser.add_argument("--snapshot", required=True, type=Path)
-    parser.add_argument("--arm", required=True, choices=("tool", "plain"))
+    parser.add_argument("--arm", required=True, choices=("tool", "plain", "oracle"),
+                        help="oracle: the tool is offered and answers with the task's truth (gather_context_oracle.py)")
     parser.add_argument("--model", required=True)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--handle", type=Path)
@@ -174,8 +175,8 @@ def main(argv: list[str] | None = None) -> int:
     shutil.copytree(snapshot, work)
     servers: dict = {}
     tool = None
-    if args.arm == "tool":
-        common.require(args.handle is not None and args.repo, "the tool arm needs --handle and --repo")
+    if args.arm in ("tool", "oracle"):
+        common.require(args.handle is not None and args.repo, "the tool and oracle arms need --handle and --repo")
         handle = common.load_handle(args.handle.resolve(strict=True))
         tool = advertised_tool(handle)
         tool_file = args.output / "tool.json"
@@ -186,6 +187,8 @@ def main(argv: list[str] | None = None) -> int:
             server += ["--instructions-file", str(args.instructions_file.resolve(strict=True))]
         if args.dose > 0:
             server += ["--judge", str(args.judge.resolve(strict=True)), "--dose", str(args.dose)]
+        if args.arm == "oracle":
+            server += ["--oracle-task", str(args.task.resolve()), "--oracle-snapshot", str(snapshot)]
         servers[SERVER] = {"command": server[0], "args": server[1:]}
     mcp_config = args.output / "mcp-config.json"
     mcp_config.write_text(json.dumps({"mcpServers": servers}, indent=2) + "\n", encoding="utf-8", newline="\n")

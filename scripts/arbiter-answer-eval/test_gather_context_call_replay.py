@@ -16,14 +16,16 @@ class ReplayTest(unittest.TestCase):
     def test_each_located_essential_note_is_placed_at_the_nearest_stage_that_holds_it(self) -> None:
         task = {"notes": [note("N1", "a.rs", 10, 20), note("N2", "b.rs", 5, 9), note("N3", "c.rs", 1, 8),
                           note("N4", "d.rs", 1, 8), {"id": "N5", "mark": "essential", "absence": True},
-                          {**note("N6", "a.rs", 10, 20), "mark": "helpful"}]}
+                          {**note("N6", "a.rs", 10, 20), "mark": "helpful"}, note("N7", "a.rs", 21, 60),
+                          note("N8", "b.rs", 400, 420), note("N9", "e.rs", 3, 4)]}
         brief = {"passages": [{"at": "a.rs:8-22", "needs": [1], "text": "body"}],
                  "needs": [{"need": 1, "where": [{"at": "a.rs:8-22", "why": "w"}, {"at": "b.rs:1-30", "why": "w"}]}],
-                 "omitted": ["zzz"]}
+                 "omitted": ["zzz"], "next": {"paths": ["e.rs"]}}
         full = {"records": [{"canonical_result": {"projection": "airk.arbiter.loop-evidence/1", "spans": [
             {"path": "c.rs", "start_line": 1, "end_line": 12, "text": "gathered text"}]}}]}
         self.assertEqual(replay.classify(task, brief, full),
-                         {"N1": "passage", "N2": "where", "N3": "gathered", "N4": "missed"})
+                         {"N1": "passage", "N2": "where", "N3": "gathered", "N4": "missed", "N7": "near", "N8": "file",
+                          "N9": "file"})
 
     def test_a_location_is_parsed_from_its_last_colon(self) -> None:
         span = replay.span_of("C:/x/y.rs:3-7")

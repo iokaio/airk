@@ -1343,6 +1343,35 @@ python -B scripts/arbiter-answer-eval/agent_cost_batch.py report --campaign $cam
 truth and stores the reviewer's verdicts in the series'
 `verdicts.json`. It does not judge.
 
+### Cheap checks between kernel changes
+
+A cost series is the measure and is dear. Three scripts answer narrower
+questions for little or nothing.
+
+- `gather_context_call_replay.py` replays the Gather Context calls that
+  acting agents wrote, with no agent. `collect` takes each task's first
+  call from a series; `run` sends them to a lifetime in the default and
+  the full mode and places every located essential truth item: carried as
+  a passage, named, named nearby, file named, gathered only, or missed.
+  Output: both replies per task and `replay.json`.
+- `index_recall_probe.py` looks each truth item up by its own name through
+  the index's definition lookup, exact lexical search and semantic
+  search. It separates "the index cannot find the place" from "the kernel
+  never asks for it".
+- `gather_context_oracle.py` builds the brief a perfect retrieval would
+  return, from a task's truth and the snapshot: locations, source text and
+  searched absences, never the truth's own analysis. `agent_cost_run.py
+  --arm oracle` serves it to the agent in place of the service, which
+  measures the most any reply could save.
+
+~~~powershell
+python -B scripts/arbiter-answer-eval/gather_context_call_replay.py collect --campaign $campaign --series tool-firstcall-r1 --output $calls
+python -B scripts/arbiter-answer-eval/gather_context_call_replay.py run --campaign $campaign --calls $calls --handle $handle --output $replayOut
+python -B scripts/arbiter-answer-eval/index_recall_probe.py --campaign $campaign --handle $handle --output $recallOut
+python -B scripts/arbiter-answer-eval/agent_cost_batch.py run --campaign $campaign --series oracle-sonnet-r1 --model claude-sonnet-5-5 --arms oracle --handle $handle --instructions-file $guidance
+python -B scripts/arbiter-answer-eval/agent_cost_batch.py report --campaign $campaign --series oracle-sonnet-r1 --baseline baseline-sonnet-r1
+~~~
+
 ### Model-dose experiment
 
 How much local inference the cost reduction needs is measured before the

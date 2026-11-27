@@ -9,13 +9,14 @@ the 14 narrow tasks; ``--tasks`` narrows it.
 
 ``report`` reads the finished sessions and prints, per task and arm, the
 median cost and round trips over the repeats, and, where both arms exist,
-the percentage lower cost with the tool. The combined figure counts a narrow
+the percentage lower cost of each other arm (``tool``, ``oracle``) against
+the plain arm. The combined figure counts a narrow
 task four times a broad one. It reports and does not judge: correctness is
 recorded separately against each task's frozen truth.
 
     python -B agent_cost_batch.py run --campaign <dir> --series <name> --model claude-sonnet-5-5 \
         --arms plain [--handle <handle.json> --instructions-file <text>] [--repeats 3] [--workers 3]
-    python -B agent_cost_batch.py report --campaign <dir> --series <name>
+    python -B agent_cost_batch.py report --campaign <dir> --series <name> [--baseline <series with the plain arm>]
 """
 
 from __future__ import annotations
@@ -65,7 +66,7 @@ def run(args) -> int:
                            "--snapshot", str(row["snapshot"]), "--arm", arm, "--model", args.model, "--output", str(out)]
                 if args.max_round_trips:
                     command += ["--max-round-trips", str(args.max_round_trips)]
-                if arm == "tool":
+                if arm in ("tool", "oracle"):
                     command += ["--handle", str(args.handle), "--repo", row["index"]]
                     if args.instructions_file:
                         command += ["--instructions-file", str(args.instructions_file)]
@@ -108,42 +109,54 @@ def medians(rows: list[dict]) -> dict:
 
 
 def report(args) -> int:
+    """Medians per task and arm, and each other arm against the plain arm (of ``--baseline`` when given)."""
     series = args.campaign / "agent-cost" / args.series
     found = sessions(series)
+    if args.baseline:
+        for key, rows in sessions(args.campaign / "agent-cost" / args.baseline).items():
+            if key[1] == "plain":
+                found.setdefault(key, rows)
     weights = {row["id"]: (NARROW_WEIGHT if row["set"] == "narrow" else 1) for row in working_set(args.campaign)}
-    table, saved = [], []
+    arms = ["plain"] + sorted({key[1] for key in found} - {"plain"})
+    table, saved = [], {arm: [] for arm in arms[1:]}
     for task_id in sorted({key[0] for key in found}):
         row = {"task": task_id, "weight": weights.get(task_id, 1)}
-        for arm in ("plain", "tool"):
-            if (task_id, arm) in found:
-                row[arm] = medians(found[(task_id, arm)])
-        plain, tool = row.get("plain", {}), row.get("tool", {})
-        if plain.get("cost_usd") and tool.get("cost_usd") is not None:
-            row["cost_lower_pct"] = round(100 * (1 - tool["cost_usd"] / plain["cost_usd"]), 1)
-            row["round_trips_lower_pct"] = round(100 * (1 - tool["round_trips"] / plain["round_trips"]), 1)
-            saved.append((row["weight"], row["cost_lower_pct"], row["round_trips_lower_pct"]))
-        table.append(row)
         text = f"{task_id:<22} w={row['weight']}"
-        for arm in ("plain", "tool"):
-            if arm in row and row[arm].get("completed"):
-                m = row[arm]
-                text += (f" | {arm}: ${m['cost_usd']:.4f} trips={m['round_trips']} {m['elapsed_s']}s "
-                         f"({m['completed']}/{m['runs']})" + (f" calls={m['gather_calls']} bytes={m['gather_bytes']}" if arm == "tool" else ""))
-            elif arm in row:
-                text += f" | {arm}: 0/{row[arm]['runs']} completed"
-        if "cost_lower_pct" in row:
-            text += f" | cost lower {row['cost_lower_pct']}% trips lower {row['round_trips_lower_pct']}%"
+        for arm in arms:
+            if (task_id, arm) not in found:
+                continue
+            m = row[arm] = medians(found[(task_id, arm)])
+            if not m.get("completed"):
+                text += f" | {arm}: 0/{m['runs']} completed"
+                continue
+            text += (f" | {arm}: ${m['cost_usd']:.4f} trips={m['round_trips']} ({m['completed']}/{m['runs']})"
+                     + (f" calls={m['gather_calls']} bytes={m['gather_bytes']}" if arm != "plain" else ""))
+        plain = row.get("plain", {})
+        for arm in arms[1:]:
+            other = row.get(arm, {})
+            if plain.get("cost_usd") and other.get("cost_usd") is not None:
+                cost = round(100 * (1 - other["cost_usd"] / plain["cost_usd"]), 1)
+                trips = round(100 * (1 - other["round_trips"] / plain["round_trips"]), 1)
+                row[f"{arm}_cost_lower_pct"], row[f"{arm}_round_trips_lower_pct"] = cost, trips
+                saved[arm].append((row["weight"], cost, trips, plain["cost_usd"], other["cost_usd"]))
+                text += f" | {arm} cost lower {cost}% trips lower {trips}%"
+        table.append(row)
         print(text)
     summary = {}
-    if saved:
-        total = sum(weight for weight, _, _ in saved)
-        summary = {"tasks_compared": len(saved),
-                   "weighted_cost_lower_pct": round(sum(weight * cost for weight, cost, _ in saved) / total, 1),
-                   "weighted_round_trips_lower_pct": round(sum(weight * trips for weight, _, trips in saved) / total, 1)}
+    for arm, rows in saved.items():
+        if not rows:
+            continue
+        total = sum(weight for weight, *_ in rows)
+        summary[arm] = {"tasks_compared": len(rows),
+                        "weighted_cost_lower_pct": round(sum(weight * cost for weight, cost, *_ in rows) / total, 1),
+                        "weighted_round_trips_lower_pct": round(sum(weight * trips for weight, _, trips, *_ in rows) / total, 1),
+                        "weighted_plain_cost_usd": round(sum(weight * plain for weight, _, _, plain, _ in rows) / total, 4),
+                        "weighted_arm_cost_usd": round(sum(weight * other for weight, _, _, _, other in rows) / total, 4)}
+    if summary:
         print(json.dumps(summary))
     (series / "report.json").write_text(json.dumps({"schema": "airk.private.agent-cost-report/1", "series": args.series,
-                                                     "tasks": table, "summary": summary}, indent=2, sort_keys=True) + "\n",
-                                        encoding="utf-8", newline="\n")
+                                                     "baseline": args.baseline, "tasks": table, "summary": summary},
+                                                    indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
     return 0
 
 
@@ -159,6 +172,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--handle", type=pathlib.Path)
     parser.add_argument("--instructions-file", type=pathlib.Path)
     parser.add_argument("--tasks", nargs="*")
+    parser.add_argument("--baseline", help="report: take the plain arm from this series when this one has none")
     parser.add_argument("--max-round-trips", type=int, default=0,
                         help="stop each session after this many round trips (to collect first calls cheaply)")
     parser.add_argument("--judge", type=pathlib.Path, help="state file of a running arbiter_judge_service.py")
@@ -166,7 +180,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "report":
         return report(args)
-    if not args.model or ("tool" in args.arms and args.handle is None):
+    if not args.model or (set(args.arms) & {"tool", "oracle"} and args.handle is None):
         parser.error("run needs --model, and --handle for the tool arm")
     if args.dose > 0 and args.judge is None:
         parser.error("--dose needs --judge")
