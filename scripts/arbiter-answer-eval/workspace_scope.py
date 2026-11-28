@@ -16,7 +16,7 @@ class InventoryCache:
         self.paths = frozenset()
 
 
-def published_paths(client, index, metrics=None, cache=None):
+def published_paths(client, index, metrics=None, cache=None, observation=None):
     started = monotonic()
     args = {"prefix": "", "limit": 100, "max_bytes": 65536, "include_status": True, "verification": "off"}
     seen, paths = set(), set()
@@ -39,6 +39,12 @@ def published_paths(client, index, metrics=None, cache=None):
             raise ValueError("Native workspace path inventory lacks a ready, identified publication")
         if identity and (token, fingerprint) != identity:
             raise ValueError("Native workspace path inventory changed between pages")
+        if observation is not None:
+            raw = body["scope_observation"]
+            if page == 1:
+                observation.update(raw)
+            elif observation != raw:
+                raise ValueError("Native workspace authorization changed between pages")
         identity = (token, fingerprint)
         rows = body.get("paths")
         if not isinstance(rows, list) or any(not isinstance(path, str) or not path for path in rows):
@@ -84,14 +90,14 @@ def check_denies(paths, rules):
             raise ValueError("Native workspace listing contradicts a recorded deny")
 
 
-def eligible_paths(handle, repo, metrics=None, cache=None):
+def eligible_paths(handle, repo, metrics=None, cache=None, observation=None):
     with closing(product_skill_http.ScopedClient(handle, repo)) as client:
         init = client.exchange({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
             "protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "workspace-scope", "version": "1"}}})
         if "result" not in init:
             raise ValueError("Native workspace path session failed to initialize")
         client.exchange({"jsonrpc": "2.0", "method": "notifications/initialized"})
-        paths = published_paths(client, client.index, metrics, cache)
+        paths = published_paths(client, client.index, metrics, cache, observation)
         records = common.read_json(handle.path)["indexes"]
         policies = [record.get("denies") for record in records.values() if record["index_id"] == client.index]
         if len(policies) != 1:

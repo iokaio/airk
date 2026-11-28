@@ -1615,3 +1615,43 @@ up to 48 KiB with explicit truncation. Inspect `verification/<n>/output.log`,
 output hashes, duration and process status. The transcript includes each tool
 call in the agent's ordinary token, cost and round-trip totals. Private grading
 and correctness checks remain outside the verifier.
+
+
+## Comparing the six-task end-to-end panel
+
+After all 18 sessions finish, generate a private performance and correctness
+report from the frozen design, agent transcripts, local verification receipts
+and independently scored answers:
+
+```text
+python -B panel_performance.py --design <frozen-design> --series <private-series> --output <new-report.json>
+```
+
+Run from this directory. Use `--without-grades` for a performance-only report
+while final grades are pending. The report verifies the six tasks and three
+arms, task bytes, agent-visible tool and skill configuration, verifier profile
+and observed model usage. Each task has separate dollars and round trips for
+ordinary tools, native AIRK and candidate AIRK. Paired comparisons include
+candidate versus native, both weighted mean per-task savings and the ratio of
+weighted costs, and grades gained or lost on the same task. Broad and narrow
+means have weights 1 and 4. Actor wall time includes any in-session verifier
+execution. Model API time and local verifier time are reported separately;
+parallel sessions overlap. Setup, indexing and independent grading lie outside
+the reported actor cost and runtime.
+
+For the four frozen final-text E2E-r1 research tasks, add
+`--research-frozen-index <E2E-r1/native-state/frozen-eligible-r3.json>` to
+the checked prepared-work native HTTP command. Use the repository key from the
+freeze (e.g. `bookbuilder-v2`). Preserve the common verification profile and
+natural product skill in both arms. The native registration remains bound to
+the qualified archive. The candidate builds its map from the separate work
+copy. Before and after the actor, the runner opens a new scoped native read,
+checks every eligible path and source file digest against the receipt in the
+registered source, baseline and work copy, and compares the entire sanitized
+baseline and work tree. All pages of one inventory must carry the same grant
+fingerprint. Across fresh sessions, compare the publication and every public
+scope field except the grant-specific fingerprint, retaining both originals.
+A changed scope, write tool call, workspace change or
+empty answer invalidates the research result. See `session.json` under
+`research_frozen_index` for both observations and the validity flag. Coding
+tasks continue to require a native registration bound to their own work copy.

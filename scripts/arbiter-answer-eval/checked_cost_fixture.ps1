@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Same-human fixture admission and Edit/Write ownership checks for a Windows cost session.
 param([ValidateSet('Prepare','Audit','BeforeTool','AfterTool','StageSkill','CopySnapshot','PrepareVerification','BeforeVerification','AfterVerification')][string]$Mode,
-      [Parameter(Mandatory)][string]$Session, [string]$Snapshot, [int]$Call)
+      [Parameter(Mandatory)][string]$Session, [string]$Snapshot, [int]$Call, [string[]]$ExcludeExact = @())
 $ErrorActionPreference = 'Stop'
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 . (Join-Path $root 'scripts/dev/assert-human-execution.ps1')
@@ -78,10 +78,19 @@ if ($Mode -eq 'Audit') {
     exit 0
 }
 $source = [IO.Path]::GetFullPath($Snapshot)
+if ($ExcludeExact.Count -and $Mode -ne 'CopySnapshot') { throw 'Exact exclusions only apply to baseline creation' }
+$excluded = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+foreach ($rel in $ExcludeExact) {
+    $path = [IO.Path]::GetFullPath($rel, $source)
+    $null = Get-AirkCheckedPath $path $source
+    if (-not [IO.File]::Exists($path)) { throw "Missing exact exclusion: $rel" }
+    $null = $excluded.Add($path)
+}
 function CopyChecked($from,$to) {
     Assert-AirkCurrentToken $identity
     Assert-AirkDirectoryPolicy (Get-Acl -LiteralPath $to) $identity
     foreach ($item in Get-ChildItem -LiteralPath $from -Force) {
+        if ($excluded.Contains($item.FullName)) { continue }
         if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Snapshot link $($item.Name)" }
         $dest = [IO.Path]::GetFullPath((Join-Path $to $item.Name))
         if ([IO.Path]::GetDirectoryName($dest) -ne $to -or (Test-Path -LiteralPath $dest)) {throw "Unexpected fixture output $dest"}

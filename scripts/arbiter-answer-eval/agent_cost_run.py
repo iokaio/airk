@@ -203,7 +203,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--product-http", action="store_true", help="use the fixture MCP endpoint for both discovery and native calls")
     parser.add_argument("--verification", type=Path, help="public checked test profile, identical across comparison arms")
     parser.add_argument("--prepared-work", action="store_true", help="adopt a fresh checked session/work, retaining it for index teardown")
+    parser.add_argument("--research-frozen-index", type=Path, help="eligible-source receipt for four frozen final-text tasks")
     args = parser.parse_args(argv)
+    if args.research_frozen_index and not (args.checked_windows and args.prepared_work and args.product_http and
+                                           args.product_tools and args.skill_mode == "natural" and
+                                           args.arm in ("tool", "live")):
+        parser.error("frozen research needs checked prepared work, native HTTP, seven tools, natural skill and a text-only arm")
     if (args.prepared_work or args.verification) and not args.checked_windows:
         parser.error("prepared work and session verification need --checked-windows")
     if args.prepared_work and args.arm == "live" and args.live_map:
@@ -232,7 +237,13 @@ def main(argv: list[str] | None = None) -> int:
             import workspace_scope
             common.require(len(selected) == 1, "prepared native registration must be unambiguous")
             workspace_scope.check_denies(set(), selected[0].get("denies"))
-        common.require(roots == {work if args.prepared_work else snapshot}, "native fixture index and working checkout differ")
+        if args.research_frozen_index:
+            import research_frozen_index as frozen
+            frozen_task = frozen.admit(args.task, task, args.repo, args.research_frozen_index)
+            common.require(frozen_task["index_id"] == index, "selected index differs from the frozen research design")
+            before = frozen.observe(handle, args.repo, args.research_frozen_index, snapshot, work)
+        else:
+            common.require(roots == {work if args.prepared_work else snapshot}, "native fixture index and working checkout differ")
         common.require(args.tool_file is None and args.description_file is None and args.instructions_file is None, "product tools use the fixture catalog")
         if args.product_http:
             import product_skill_http
@@ -352,7 +363,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.checked_windows:
         subprocess.run(["pwsh", "-NoProfile", "-File", str(guard), "-Mode", "Audit", "-Session", str(args.output)], check=True)
     summary = summarize(common.read_jsonl(args.output / "stream.jsonl"))
-    (args.output / "answer.md").write_text(summary.pop("final_message"), encoding="utf-8", newline="\n")
+    answer = summary.pop("final_message")
+    (args.output / "answer.md").write_text(answer, encoding="utf-8", newline="\n")
     patch, changed = changes(snapshot, work)
     (args.output / "changes.patch").write_text(patch, encoding="utf-8", newline="\n")
     if not args.prepared_work:
@@ -398,6 +410,15 @@ def main(argv: list[str] | None = None) -> int:
         init = next((e for e in events if e.get("subtype") == "init"), {})
         session["product_surface_valid"] = (expected_mcp == offered_mcp and set(init.get("skills") or []) ==
                                             ({product_skill.QUALIFIED_NAME} if args.skill_mode else set()))
+    if args.research_frozen_index:
+        proof = {"valid": False, "before": before, "design_sha256": frozen.FREEZE, "task": frozen_task["id"]}
+        session["research_frozen_index"] = proof
+        try:
+            frozen.admit(args.task, task, args.repo, args.research_frozen_index)
+            proof["after"] = frozen.observe(handle, args.repo, args.research_frozen_index, snapshot, work)
+            proof["valid"] = frozen.finish(before, proof["after"], session["tool_uses"], changed, answer)
+        except (OSError, ValueError, RuntimeError, KeyError) as error:
+            proof["error"] = str(error)
     with (args.output / "session.json").open("x", encoding="utf-8", newline="\n") as file:
         file.write(json.dumps(session, indent=2, sort_keys=True) + "\n")
     print(f"{task.get('repository')}-{task.get('slot')} {args.arm} {args.model} completed={session['completed']} "
@@ -405,6 +426,8 @@ def main(argv: list[str] | None = None) -> int:
           f"changed={len(changed)} wall={wall}s", flush=True)
     if args.product_tools or test_profile or args.prepared_work:
         valid = offered_mcp == expected_mcp and session.get("product_surface_valid", True)
+        if args.research_frozen_index:
+            valid = valid and session["research_frozen_index"]["valid"]
         return int(not (valid and session["completed"] and session["exit_code"] == 0))
     return 0
 
