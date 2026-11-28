@@ -43,6 +43,7 @@ if str(HERE) not in sys.path:
 import common  # noqa: E402
 import tool_names  # noqa: E402
 import product_skill  # noqa: E402
+import session_verify  # noqa: E402
 
 SCHEMA = "airk.private.agent-cost-session/1"
 SERVER = "airk"
@@ -132,13 +133,17 @@ def changes(snapshot: Path, work: Path) -> tuple[str, list[dict]]:
     return "".join(line if line.endswith("\n") else line + "\n" for line in patch), rows
 
 
+def mcp_names(arm: str, product: bool, verification: bool) -> list[str]:
+    names = tool_names.mcp_tools() if product else ([PUBLIC_TOOL] if arm in ("tool", "oracle", "live") else [])
+    return [f"mcp__{SERVER}__{name}" for name in names] + ([session_verify.NAME] if verification else [])
+
+
 def command(claude: str, model: str, arm: str, mcp_config: Path, max_round_trips: int, skill: bool = False,
-            product: bool = False) -> list[str]:
-    allowed = list(FILE_TOOLS) + ([f"mcp__{SERVER}__{PUBLIC_TOOL}"] if arm in ("tool", "oracle", "live") else [])
+            product: bool = False, verification: bool = False) -> list[str]:
+    allowed = list(FILE_TOOLS) + mcp_names(arm, product, verification)
     skill_name = "airk-eval:gather-evidence"
     plugin = HERE / "airk-eval"
     if product:
-        allowed = list(FILE_TOOLS) + [f"mcp__{SERVER}__{name}" for name in tool_names.mcp_tools()]
         skill_name, plugin = product_skill.QUALIFIED_NAME, mcp_config.parent / "airkctl"
     permissions = allowed + ([f"Skill({skill_name})"] if skill else [])
     offered = allowed + (["Skill"] if skill else [])
@@ -146,10 +151,13 @@ def command(claude: str, model: str, arm: str, mcp_config: Path, max_round_trips
     if skill:
         denied.extend(["Skill(doctor)", "Skill(plugin-authoring)"])
     discovery = ["--plugin-dir", str(plugin)] if skill else ["--disable-slash-commands"]
+    system_prompt = SYSTEM_PROMPT if not verification else SYSTEM_PROMPT.replace(
+        "Do not run builds, tests or any command; you have no shell.",
+        "Use run_tests on your current changes when verification helps. You can inspect failures, edit and run tests again.")
     return [claude, "-p", "--model", model, "--setting-sources", "", "--strict-mcp-config",
             "--mcp-config", str(mcp_config), "--tools", ",".join(offered), "--allowedTools", ",".join(permissions),
             "--disallowedTools", ",".join(denied), "--permission-mode", "dontAsk", *discovery,
-            "--no-session-persistence", "--system-prompt", SYSTEM_PROMPT, "--max-turns", str(max_round_trips),
+            "--no-session-persistence", "--system-prompt", system_prompt, "--max-turns", str(max_round_trips),
             "--output-format", "stream-json", "--verbose"]
 
 
@@ -193,21 +201,38 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--skill-mode", choices=("explicit", "natural"))
     parser.add_argument("--product-tools", action="store_true", help="offer the native seven-tool catalog and use the shipping skill source")
     parser.add_argument("--product-http", action="store_true", help="use the fixture MCP endpoint for both discovery and native calls")
+    parser.add_argument("--verification", type=Path, help="public checked test profile, identical across comparison arms")
+    parser.add_argument("--prepared-work", action="store_true", help="adopt a fresh checked session/work, retaining it for index teardown")
     args = parser.parse_args(argv)
-    if args.product_http and (not args.product_tools or args.arm not in ("live", "oracle")):
-        parser.error("--product-http needs --product-tools and a live or oracle Gather arm")
+    if (args.prepared_work or args.verification) and not args.checked_windows:
+        parser.error("prepared work and session verification need --checked-windows")
+    if args.prepared_work and args.arm == "live" and args.live_map:
+        parser.error("prepared work builds its candidate map from the current checkout")
+    if args.product_http and (not args.product_tools or args.arm not in ("tool", "live", "oracle")):
+        parser.error("--product-http needs --product-tools and a tool, live or oracle Gather arm")
     if args.product_tools and (args.arm not in ("tool", "oracle", "live") or not args.handle or args.skill_mode == "explicit"):
         parser.error("--product-tools requires a scoped fixture and a tool arm, with natural discovery or no skill")
     if (args.dose > 0 or (args.arm == "live" and args.live_layout == "qwen-focus")) and args.judge is None:
         parser.error("model scoring needs --judge")
     task = json.loads(args.task.read_text(encoding="utf-8"))
     snapshot = args.snapshot.resolve(strict=True)
+    args.output = args.output.resolve()
+    work = args.output / "work"
+    if args.prepared_work:
+        common.require(work.is_dir() and not snapshot.is_relative_to(work) and not work.is_relative_to(snapshot),
+                       "prepared working checkout must be separate from the immutable diff base")
+    test_profile = session_verify.profile(args.verification.resolve(strict=True)) if args.verification else None
     if args.product_tools:
         handle = common.load_handle(args.handle.resolve(strict=True))
         index = handle.index_id(args.repo)
         records = common.read_json(handle.path)["indexes"]
-        roots = {Path(row["root"]).resolve(strict=True) for row in records.values() if row["index_id"] == index}
-        common.require(roots == {snapshot}, "native fixture index and working snapshot differ")
+        selected = [row for row in records.values() if row["index_id"] == index]
+        roots = {Path(row["root"]).resolve(strict=True) for row in selected}
+        if args.prepared_work:
+            import workspace_scope
+            common.require(len(selected) == 1, "prepared native registration must be unambiguous")
+            workspace_scope.check_denies(set(), selected[0].get("denies"))
+        common.require(roots == {work if args.prepared_work else snapshot}, "native fixture index and working checkout differ")
         common.require(args.tool_file is None and args.description_file is None and args.instructions_file is None, "product tools use the fixture catalog")
         if args.product_http:
             import product_skill_http
@@ -216,9 +241,13 @@ def main(argv: list[str] | None = None) -> int:
         else:
             product_catalog = product_skill.catalog(handle)
             product_instructions = product_skill.guidance()
-    work = args.output / "work"
     guard = HERE / "checked_cost_fixture.ps1"
-    if args.checked_windows:
+    if args.prepared_work:
+        common.require(not any((args.output / name).exists() for name in ("stream.jsonl", "mcp-config.json", "session.json")),
+                       "prepared session already contains a model run")
+        subprocess.run(["pwsh", "-NoProfile", "-File", str(guard), "-Mode", "Audit", "-Session", str(args.output)], check=True)
+        common.require(not changes(snapshot, work)[1], "prepared checkout differs from immutable snapshot before the session")
+    elif args.checked_windows:
         subprocess.run(["pwsh", "-NoProfile", "-File", str(guard), "-Mode", "Prepare",
                         "-Session", str(args.output), "-Snapshot", str(snapshot)], check=True)
     else:
@@ -270,7 +299,8 @@ def main(argv: list[str] | None = None) -> int:
                        "--oracle-layout", args.oracle_layout] + (["--oracle-trust"] if args.oracle_trust else [])
             server += ["--oracle-complete"] if args.oracle_complete else []
         if args.arm == "live":
-            server += ["--live-source", str(snapshot), "--live-map", str(args.live_map.resolve(strict=True)),
+            map_args = ["--workspace-map"] if args.prepared_work else ["--live-map", str(args.live_map.resolve(strict=True))]
+            server += ["--live-source", str(work if args.prepared_work else snapshot), *map_args,
                        "--live-layout", args.live_layout] + (["--live-decline"] if args.live_decline else [])
         if args.product_http:
             surface_file = args.output / "native-surface.json"
@@ -279,9 +309,15 @@ def main(argv: list[str] | None = None) -> int:
         elif args.product_tools:
             server.append("--product-tools")
         servers[SERVER] = {"command": server[0], "args": server[1:]}
+    if test_profile:
+        session_verify.guard("PrepareVerification", args.output)
+        frozen_profile = args.output / "verification-profile.json"
+        frozen_profile.write_text(json.dumps(test_profile, indent=2), encoding="utf-8")
+        servers["verification"] = {"command": sys.executable, "args": ["-B", str(HERE / "session_verify.py"),
+                                   "--session", str(args.output), "--profile", str(frozen_profile)]}
     mcp_config = args.output / "mcp-config.json"
     mcp_config.write_text(json.dumps({"mcpServers": servers}, indent=2) + "\n", encoding="utf-8", newline="\n")
-    argv_out = command(common.find_claude(), args.model, args.arm, mcp_config, args.max_round_trips, bool(args.skill_mode), args.product_tools)
+    argv_out = command(common.find_claude(), args.model, args.arm, mcp_config, args.max_round_trips, bool(args.skill_mode), args.product_tools, bool(test_profile))
     env = common.clean_child_env()
     settings = {}
     if args.skill_mode:
@@ -319,7 +355,8 @@ def main(argv: list[str] | None = None) -> int:
     (args.output / "answer.md").write_text(summary.pop("final_message"), encoding="utf-8", newline="\n")
     patch, changed = changes(snapshot, work)
     (args.output / "changes.patch").write_text(patch, encoding="utf-8", newline="\n")
-    shutil.rmtree(work)  # the copy is disposable; the patch is what the session did to it
+    if not args.prepared_work:
+        shutil.rmtree(work)  # externally indexed work is retired by its owner first
     calls = common.read_jsonl(args.output / "gather" / "calls.jsonl") if (args.output / "gather" / "calls.jsonl").is_file() else []
     session = {"schema": SCHEMA, "at": common.now_iso(), "task": {"path": str(args.task), "sha256": common.sha256_file(args.task),
                                                                  "repository": task.get("repository"), "slot": task.get("slot")},
@@ -344,19 +381,32 @@ def main(argv: list[str] | None = None) -> int:
     if args.product_http:
         session["native_mcp"] = {"surface_sha256": common.sha256_file(surface_file), "index": index,
                                  "fixture": str(handle.path), "handle_sha256": handle.sha256}
+    expected_mcp = set(mcp_names(args.arm, args.product_tools, bool(test_profile)))
+    offered_mcp = {name for name in session["tools_offered"] or [] if name.startswith("mcp__")}
+    if args.prepared_work:
+        session["prepared_workspace"] = {"work": str(work), "baseline": str(snapshot),
+                                         "mcp_catalog_valid": offered_mcp == expected_mcp}
+    if test_profile:
+        receipts = sorted((args.output / "verification").glob("*/result.json"), key=lambda p: int(p.parent.name))
+        session["verification"] = {"profile_sha256": common.sha256_file(frozen_profile),
+                                   "surface_valid": offered_mcp == expected_mcp,
+                                   "runs": [common.read_json(path) for path in receipts],
+                                   "incomplete_calls": [p.name for p in (args.output / "verification").iterdir()
+                                                        if p.is_dir() and not (p / "result.json").is_file()]}
     if args.product_tools:
-        expected = {f"mcp__{SERVER}__{name}" for name in tool_names.mcp_tools()}
-        offered = {name for name in session["tools_offered"] or [] if name.startswith("mcp__")}
         events = common.read_jsonl(args.output / "stream.jsonl")
         init = next((e for e in events if e.get("subtype") == "init"), {})
-        session["product_surface_valid"] = (expected == offered and set(init.get("skills") or []) ==
+        session["product_surface_valid"] = (expected_mcp == offered_mcp and set(init.get("skills") or []) ==
                                             ({product_skill.QUALIFIED_NAME} if args.skill_mode else set()))
     with (args.output / "session.json").open("x", encoding="utf-8", newline="\n") as file:
         file.write(json.dumps(session, indent=2, sort_keys=True) + "\n")
     print(f"{task.get('repository')}-{task.get('slot')} {args.arm} {args.model} completed={session['completed']} "
           f"round_trips={session['round_trips']} cost=${session['cost_usd']} gather_calls={len(calls)} "
           f"changed={len(changed)} wall={wall}s", flush=True)
-    return 1 if args.product_tools and not (session["product_surface_valid"] and session["completed"] and session["exit_code"] == 0) else 0
+    if args.product_tools or test_profile or args.prepared_work:
+        valid = offered_mcp == expected_mcp and session.get("product_surface_valid", True)
+        return int(not (valid and session["completed"] and session["exit_code"] == 0))
+    return 0
 
 
 if __name__ == "__main__":

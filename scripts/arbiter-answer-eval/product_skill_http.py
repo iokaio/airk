@@ -4,6 +4,7 @@
 from contextlib import closing
 from pathlib import Path
 import sys
+import time
 
 import common
 import mcp_wrapper
@@ -45,7 +46,8 @@ def read_surface(handle, repo):
 
 
 class Bridge:
-    def __init__(self, client, gather, surface):
+    def __init__(self, client, gather, surface, record_native=None):
+        self.record_native = record_native
         self.client, self.gather, self.surface = client, gather, surface
         self.schemas = {t["name"]: t["inputSchema"] for t in surface["tools"]}
 
@@ -64,21 +66,26 @@ class Bridge:
                 return mcp_wrapper._error(msg_id, -32602, "Expected object arguments")
             if set(args).difference(self.schemas[name].get("properties", {})):
                 return mcp_wrapper._error(msg_id, -32602, "Unknown tool argument")
-            if name == "gather_context":
+            if name == "gather_context" and self.gather is not None:
                 return self.gather.handle_message(message)
         elif method == "initialize":
             # Scope comes from the configured connection. The bridge has no client-root callback.
             message = {**message, "params": {**params, "capabilities": {}}}
         elif method not in ("notifications/initialized", "ping", "tools/list"):
             return None if msg_id is None else mcp_wrapper._error(msg_id, -32601, "Unknown method")
+        started = time.monotonic()
         try:
             reply = self.client.exchange(message)
         except http_fixture.HttpResponseError as error:
             if isinstance(error.body, dict) and error.body.get("id") == msg_id and "error" in error.body:
-                return error.body
-            reply = mcp_wrapper._error(msg_id, -32603, str(error))
-            reply["error"]["data"] = {"status": error.status, "body": error.body, "submission": error.submission}
-            return reply
+                reply = error.body
+            else:
+                reply = mcp_wrapper._error(msg_id, -32603, str(error))
+                reply["error"]["data"] = {"status": error.status, "body": error.body, "submission": error.submission}
+            if method != "tools/call":
+                return reply
+        if method == "tools/call" and name == "gather_context" and self.record_native:
+            self.record_native(args, reply, round(time.monotonic() - started, 3))
         if method == "initialize":
             common.require(reply["result"].get("instructions") == self.surface["instructions"],
                            "native initialization guidance changed after preflight")

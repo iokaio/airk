@@ -34,6 +34,7 @@ placement as ``gather_context_call_replay.py``.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import pathlib
@@ -88,7 +89,7 @@ OTHER_LANGUAGE = 0.3
 
 
 class Repository:
-    """The live files of one snapshot, read once a process, and its topical map."""
+    """The files of a frozen replay and its topical map."""
 
     def __init__(self, source: pathlib.Path, index: dict):
         self.source, self.index = source, index
@@ -110,6 +111,47 @@ class Repository:
             if hits:
                 found[path] = hits
         return found
+
+
+class WorkspaceRepository(Repository):
+    """A per-session cache refreshed against the native published path set before each Gather."""
+
+    def __init__(self, source: pathlib.Path):
+        self.source = source
+        self.digests: dict[str, bytes] = {}
+        self.texts: dict[str, list[str]] = {}
+        self.index = {}
+        self.capture = {}
+
+    def refresh(self, eligible_paths: set[str] | frozenset[str]) -> WorkspaceRepository:
+        if not isinstance(eligible_paths, (set, frozenset)) or not all(isinstance(p, str) for p in eligible_paths):
+            raise ValueError("Workspace Gather requires a complete native published path set")
+        started = time.monotonic()
+        files, texts, digests = {}, {}, {}
+        scanned_bytes = reparsed = 0
+        for path, entry in topical_index.text_files(self.source):
+            if path not in eligible_paths:
+                continue
+            data = entry.read_bytes()
+            scanned_bytes += len(data)
+            if len(data) > topical_index.MAX_FILE_BYTES or b"\0" in data[:4096]:
+                continue
+            digest = hashlib.sha256(data).digest()
+            if self.digests.get(path) == digest:
+                files[path], texts[path] = self.index["files"][path], self.texts[path]
+            else:
+                text = data.decode("utf-8", errors="replace")
+                files[path] = topical_index.file_record(path, text, len(data))
+                texts[path] = text.splitlines()
+                reparsed += 1
+            digests[path] = digest
+        if not self.index or self.digests != digests:
+            self.index = topical_index.assemble(self.source, files, started)
+        self.texts, self.digests = texts, digests
+        self.capture = {"eligible_paths": len(eligible_paths), "text_files": len(texts),
+                        "bytes_read": scanned_bytes, "files_reparsed": reparsed,
+                        "scan_seconds": round(time.monotonic() - started, 4)}
+        return self
 
 
 def is_name(token: str) -> bool:

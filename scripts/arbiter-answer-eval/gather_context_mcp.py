@@ -78,7 +78,9 @@ class Server:
         seconds = round(time.monotonic() - started, 3)
         common.append_jsonl(self.log_dir / "calls.jsonl", {
             "call": self.calls, "at": common.now_iso(), "arguments": arguments, "seconds": seconds,
-            "reply_bytes": len(text.encode("utf-8")), "is_error": is_error, **({"dose": spent} if spent else {})})
+            "reply_bytes": len(text.encode("utf-8")), "is_error": is_error,
+            **({"workspace_capture": self.backend.capture} if hasattr(self.backend, "capture") else {}),
+            **({"dose": spent} if spent else {})})
         return {"content": [{"type": "text", "text": text}], "isError": is_error}
 
     def choose(self, name: str, arguments: dict, text: str) -> tuple[str, dict]:
@@ -141,8 +143,8 @@ def oracle_backend(task: dict, snapshot: Path, layout: str = "passages", trust: 
     return call
 
 
-def live_backend(source: Path, map_file: Path, layout: str = "full", decline: bool = False, file_score=None):
-    """Answer every call from the live files and the topical map (``live_gather.py``); no service is called.
+def live_backend(source: Path, map_file: Path | None, layout: str = "full", decline: bool = False, file_score=None, handle=None):
+    """Answer from saved files and a topical map, or refresh current files from the native scope.
 
     With ``decline`` the approved decline rule (``gather_decline.py``) is applied first, and a declined
     call is answered with the refusal, as a tool error.
@@ -150,12 +152,28 @@ def live_backend(source: Path, map_file: Path, layout: str = "full", decline: bo
     import gather_decline
     import live_gather
     import live_gather_v3
-    index = json.loads(map_file.read_text(encoding="utf-8"))
-    repository = live_gather.Repository(source, index)
+    index = json.loads(map_file.read_text(encoding="utf-8")) if map_file else {}
+    cached_repository = live_gather.Repository(source, index) if map_file else None
+    workspace = None if map_file else live_gather.WorkspaceRepository(source)
+    if workspace is not None:
+        import workspace_scope
+        scope_cache = workspace_scope.InventoryCache()
     # The map says which version built it; the third version's map is answered by the third version's gather step.
     gather = live_gather_v3.gather if index.get("schema") == live_gather_v3.SCHEMA else live_gather.gather
 
     def call(native: str, repo: str, arguments: dict) -> tuple[str, bool, bytes]:
+        if workspace is None:
+            repository = cached_repository
+        else:
+            metrics = {}
+            call.capture = metrics
+            try:
+                eligible = workspace_scope.eligible_paths(handle, repo, metrics, scope_cache)
+                repository = workspace.refresh(eligible)
+            except (OSError, ValueError, common.HarnessError) as error:
+                text = json.dumps({"error": {"code": "workspace_evidence_unavailable", "message": str(error)}})
+                return text, True, text.encode("utf-8")
+            metrics.update(repository.capture)
         if decline:
             seen = gather_decline.features(repository, arguments)
             declined, _ = gather_decline.decide(seen)
@@ -193,6 +211,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--oracle-complete", action="store_true")
     parser.add_argument("--live-source", type=Path, help="answer from these live files and --live-map instead of the service")
     parser.add_argument("--live-map", type=Path)
+    parser.add_argument("--workspace-map", action="store_true", help="read the current checkout and rebuild its map for every Gather")
     parser.add_argument("--live-layout", choices=("full", "focus", "qwen-focus"), default="full")
     parser.add_argument("--live-decline", action="store_true")
     parser.add_argument("--judge", type=Path, help="state file of a running arbiter_judge_service.py")
@@ -200,6 +219,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--product-tools", action="store_true")
     parser.add_argument("--native-surface", type=Path, help="exact HTTP initialization guidance and tools/list preflight")
     args = parser.parse_args(argv)
+    if args.live_source and bool(args.live_map) == args.workspace_map:
+        parser.error("choose --live-map or --workspace-map when using --live-source")
     score = None
     if args.dose > 0 or args.live_layout.startswith("qwen-"):
         common.require(args.judge is not None, "model scoring needs --judge")
@@ -213,16 +234,27 @@ def main(argv: list[str] | None = None) -> int:
     server = Server(tool=tool, repo=args.repo, log_dir=args.log_dir, instructions=instructions,
                     backend=(oracle_backend(json.loads(args.oracle_task.read_text(encoding="utf-8")), args.oracle_snapshot,
                                             args.oracle_layout, args.oracle_trust, args.oracle_complete)
-                             if args.oracle_task else live_backend(args.live_source, args.live_map, args.live_layout, args.live_decline, score) if args.live_source
+                             if args.oracle_task else live_backend(args.live_source, args.live_map, args.live_layout, args.live_decline, score, handle) if args.live_source
                              else fixture_backend(handle, args.call_timeout)), max_calls=args.max_calls,
                     score=score, dose=args.dose)
     if args.native_surface:
         from contextlib import closing
         import product_skill_http
-        common.require(handle is not None and (args.oracle_task or args.live_source), "native bridge needs a scoped fixture and experimental Gather")
+        common.require(handle is not None, "native bridge needs a scoped fixture")
         surface = common.read_json(args.native_surface)
         with closing(product_skill_http.ScopedClient(handle, args.repo)) as client:
-            mcp_wrapper.serve(product_skill_http.Bridge(client, server, surface), sys.stdin.buffer, sys.stdout.buffer)
+            experimental = server if args.oracle_task or args.live_source else None
+            def record_native(arguments, reply, seconds):
+                server.calls += 1
+                raw = json.dumps(reply, ensure_ascii=False).encode("utf-8")
+                (args.log_dir / f"call-{server.calls:03}.reply.json").write_bytes(raw)
+                result = reply.get("result", {})
+                common.append_jsonl(args.log_dir / "calls.jsonl", {
+                    "call": server.calls, "at": common.now_iso(), "arguments": arguments, "seconds": seconds,
+                    "reply_bytes": len(common.envelope_text(result).encode("utf-8")),
+                    "is_error": "error" in reply or bool(result.get("isError"))})
+            bridge = product_skill_http.Bridge(client, experimental, surface, record_native)
+            mcp_wrapper.serve(bridge, sys.stdin.buffer, sys.stdout.buffer)
         return 0
     if args.product_tools:
         import product_skill

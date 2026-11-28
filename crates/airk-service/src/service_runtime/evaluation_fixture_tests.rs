@@ -1785,7 +1785,7 @@ async fn emit_private_arbiter_configuration() -> Result<()> {
             &ready.control_root,
             ControlMethod::ToolsCall {
                 read_attempt: None,
-                tool: "status".into(),
+                tool: airk_core::tool_names::public_name("status").into(),
                 arguments: serde_json::Map::new(),
                 selection: airk_core::service::ToolSelection::Open {
                     index_ids: vec![binding.index_id.to_string()],

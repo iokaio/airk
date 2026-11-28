@@ -21,6 +21,7 @@ import argparse
 import json
 import pathlib
 import re
+import stat
 import sys
 import time
 
@@ -84,12 +85,15 @@ def text_files(source: pathlib.Path):
     while stack:
         folder = stack.pop()
         for entry in sorted(folder.iterdir()):
-            if entry.is_dir():
+            info = entry.lstat()
+            if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+                continue
+            if stat.S_ISDIR(info.st_mode):
                 if entry.name not in SKIP_FOLDERS:
                     stack.append(entry)
                 continue
             extension = entry.name.rsplit(".", 1)[-1].lower() if "." in entry.name else ""
-            if extension in BINARY or entry.stat().st_size > MAX_FILE_BYTES:
+            if not stat.S_ISREG(info.st_mode) or extension in BINARY or info.st_size > MAX_FILE_BYTES:
                 continue
             yield entry.relative_to(source).as_posix(), entry
 
@@ -130,27 +134,36 @@ def defines_of(text: str, document: bool) -> dict[str, list[int]]:
     return found
 
 
-def build(source: pathlib.Path) -> dict:
-    started = time.monotonic()
-    files, word_names, word_files = {}, {}, {}
-    for path, entry in text_files(source):
-        text = read_text(entry)
-        if text is None:
-            continue
-        role = role_of(path)
-        defines = defines_of(text, role in ("document", "guidance"))
-        area = set(words_of(path))
-        for name in defines:
+def file_record(path: str, text: str, size: int) -> dict:
+    role = role_of(path)
+    return {"lines": text.count("\n") + 1, "bytes": size, "role": role,
+            "defines": defines_of(text, role in ("document", "guidance")),
+            "path_words": sorted(set(words_of(path)))}
+
+
+def assemble(source: pathlib.Path, files: dict, started: float) -> dict:
+    word_names, word_files = {}, {}
+    for path, record in files.items():
+        area = set(record["path_words"])
+        for name in record["defines"]:
             for word in words_of(name):
                 area.add(word)
                 word_names.setdefault(word, set()).add(name)
         for word in area:
             word_files.setdefault(word, set()).add(path)
-        files[path] = {"lines": text.count("\n") + 1, "bytes": entry.stat().st_size, "role": role,
-                       "defines": defines, "path_words": sorted(set(words_of(path)))}
     return {"schema": SCHEMA, "source": str(source), "seconds": round(time.monotonic() - started, 2), "files": files,
             "word_names": {word: sorted(names) for word, names in sorted(word_names.items())},
             "word_files": {word: sorted(paths) for word, paths in sorted(word_files.items())}}
+
+
+def build(source: pathlib.Path) -> dict:
+    started = time.monotonic()
+    files = {}
+    for path, entry in text_files(source):
+        text = read_text(entry)
+        if text is not None:
+            files[path] = file_record(path, text, entry.stat().st_size)
+    return assemble(source, files, started)
 
 
 def main(argv: list[str] | None = None) -> int:

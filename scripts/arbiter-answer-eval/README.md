@@ -1565,3 +1565,53 @@ repair correct. An empty repair delta leaves the first-pass patch in place.
 After final verification, `prepare_repair_case.ps1 -Mode Cleanup` removes the
 case's disposable source copy and retains the design, digests, prompts and
 results.
+
+## End-to-end workspace verification
+
+Prepare a fresh checked session with `checked_cost_fixture.ps1 -Mode Prepare`.
+For a source-editing comparison, give all arms copies of the same immutable
+baseline with the same source exclusions. Register each AIRK session's actual
+`work` directory as its own watched index. Keep the index data and the session
+handle outside `work`. The handle records that checkout, the index ID, native
+service identity and its source-deny rules. Use `agent_cost_run.py
+--prepared-work --checked-windows` with the immutable baseline as `--snapshot`.
+The runner checks its contents against the fresh work directory and leaves
+externally prepared work in place for the owner to retire the index and clean up.
+
+Use `--arm tool --product-tools --product-http` to forward all seven tools to
+the scoped native HTTP endpoint. Use `--arm live --product-tools --product-http
+--live-layout qwen-focus --judge <state>` for the candidate. Give both AIRK arms
+`--skill-mode natural` when testing the shipping skill. The candidate handles
+Gather Context and forwards the six other calls. Before each Gather call it
+checks the native index's eligible paths at a ready publication. Reuse of the
+complete path inventory requires a matching fresh first page. It hashes the
+current eligible text files, reparses changed bytes, and omits deleted files.
+A new file enters the inventory when its native publication includes it. File
+reads across concurrent edits do not form an atomic multi-file snapshot. The
+private Gather receipts include inventory and capture measurements. Use
+`--arm plain` for the comparison with ordinary file tools.
+
+For coding tasks pass the same private `--verification <profile.json>` to
+each arm. This adds `mcp__verification__run_tests` and lets the acting agent
+select tests, inspect their output, edit and verify again. A `pytest` profile
+contains the existing Python `runtime` and an array of public client test
+`modules`. Agents can select an entire configured module or exact pytest
+node IDs. The reviewed options run offline client tests with the session's
+edited source and the installed pytest-asyncio plugin. A `node-cases` profile
+contains the installed Node `runtime`, one dependency-free TypeScript
+`module`, its named `export` and public `cases` with `name`, `args` and
+`expected`. These checks execute the public examples using native TypeScript
+stripping. A module's complete Vitest suite and independent grading require
+separate evidence. Omitting selectors runs every configured public check.
+
+The test worker uses fixed executable arguments and a session-local temporary
+directory. Its Python audit hook controls ordinary offline file access,
+network calls and process creation. It is designed for trusted benchmark code
+and does not provide OS isolation for hostile native extensions. The Node
+worker uses filesystem permissions and a dependency-free VM context. Each
+call has a 120-second deadline and a 2 MiB raw output ceiling. The agent sees
+up to 48 KiB with explicit truncation. Inspect `verification/<n>/output.log`,
+`result.json` and the session's `verification` summary for selectors, raw
+output hashes, duration and process status. The transcript includes each tool
+call in the agent's ordinary token, cost and round-trip totals. Private grading
+and correctness checks remain outside the verifier.

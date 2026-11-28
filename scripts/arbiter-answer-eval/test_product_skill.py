@@ -77,6 +77,16 @@ class ProductHttpTest(unittest.TestCase):
                 self.assertIn("error", self.send("tools/call", {"name": name, "arguments": {field: "other"}}))
         self.http.exchange.assert_called_once()
 
+    def test_native_gather_passes_through_and_records_exact_result(self):
+        record = Mock()
+        bridge = product_skill_http.Bridge(self.http, None, self.surface, record)
+        msg = {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+               "params": {"name": "gather_context", "arguments": {"task": "locate rule"}}}
+        self.http.exchange.return_value = {"jsonrpc": "2.0", "id": 3, "result": {"content": [], "isError": False}}
+        self.assertIs(bridge.handle_message(msg), self.http.exchange.return_value)
+        self.http.exchange.assert_called_once_with(msg)
+        self.assertEqual(record.call_args.args[:2], (msg["params"]["arguments"], self.http.exchange.return_value))
+
     def test_http_refusal_retains_native_body(self):
         body = {"error": {"code": "query_admission_busy", "retry_after_ms": 900}}
         self.http.exchange.side_effect = product_skill_http.http_fixture.HttpResponseError(429, body)

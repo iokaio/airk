@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Same-human fixture admission and Edit/Write ownership checks for a Windows cost session.
-param([ValidateSet('Prepare','Audit','BeforeTool','AfterTool','StageSkill','CopySnapshot')][string]$Mode,
-      [Parameter(Mandatory)][string]$Session, [string]$Snapshot)
+param([ValidateSet('Prepare','Audit','BeforeTool','AfterTool','StageSkill','CopySnapshot','PrepareVerification','BeforeVerification','AfterVerification')][string]$Mode,
+      [Parameter(Mandatory)][string]$Session, [string]$Snapshot, [int]$Call)
 $ErrorActionPreference = 'Stop'
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 . (Join-Path $root 'scripts/dev/assert-human-execution.ps1')
@@ -16,6 +16,30 @@ function Owned($p) {
     if ((Get-Acl -LiteralPath $p).GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $sid) { throw "Foreign output $p" }
 }
 function NewDirectory($p) { Parent $p; $null = New-Item -ItemType Directory -Path $p; Owned $p }
+if ($Mode -in 'PrepareVerification','BeforeVerification','AfterVerification') {
+    $logRoot = Join-Path $sessionPath 'verification'
+    if ($Mode -eq 'PrepareVerification') {
+        NewDirectory $logRoot
+        Parent (Join-Path $sessionPath 'verification-profile.json')
+        exit 0
+    }
+    if ($Call -lt 1) { throw 'Invalid verification call number' }
+    $callDir = Join-Path $logRoot ([string]$Call)
+    if ($Mode -eq 'BeforeVerification') {
+        Parent $work
+        Owned $work
+        NewDirectory $callDir
+        $temp = Join-Path $callDir 'tmp'
+        NewDirectory $temp
+        Parent (Join-Path $temp 'pytest.ini')
+        Parent (Join-Path $callDir 'output.log')
+        Parent (Join-Path $callDir 'result.json')
+    } else {
+        Owned $callDir
+        foreach ($item in Get-ChildItem -LiteralPath $callDir -Recurse -Force) { Owned $item.FullName }
+    }
+    exit 0
+}
 if ($Mode -eq 'StageSkill') {
     $dir = $sessionPath
     foreach ($part in 'airkctl','skills','airk-tools') {
