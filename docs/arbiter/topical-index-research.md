@@ -421,6 +421,22 @@ The first six files supplied 14 of 42 recoverable fully qualifying notes (33.3 p
 
 Munarium-T1 is an exception to the aggregate result. The retained reply fully covers two of five notes. Both pools top out at three fully qualifying notes (N1, N4, N6), or four counting partial overlap (adds N2). Expanding the pool to 40 added no attainable coverage on this task. The study measures the first recorded replies and provides no new agent cost or correctness evidence.
 
+**Local Qwen3-Reranker-4B, first 40 files, 27 November 2026.** The 20 original calls reproduced the retained all-spread controls on all 113 essential notes and 168 task/file pairs. Qwen scored 800 file cards and reordered the existing first 40. Both arms used the same six-file, four-range and 14,000-byte passage limits. Each card contained the file path and the first 480 characters from each of up to four original candidate ranges. The query contained the recorded task, needs and anchors.
+
+| Measure | Deterministic | Qwen |
+| --- | ---: | ---: |
+| First-six reference files / 168 | 47 | 64 |
+| First-sixteen reference files / 168 | 72 | 86 |
+| Fully qualifying passages, by essential note / 113 | 28 | 40 |
+| Notes at least partially reached at their lines / 113 | 30 | 43 |
+| Notes pointed to at least at file level / 113 | 53 | 68 |
+
+Seventeen notes gained qualifying passages and five lost them. On the full-passage measure 11 tasks improved, six tied and three regressed. Among the 15 previously excluded notes whose primary files were eligible at ranks 17–40, Qwen promoted 13 into the first sixteen and nine into the first six. Seven became qualifying passages. The earlier 60-note ceiling includes ideal packing as well as ideal file choice.
+
+Munarium-T1 stayed at two fully qualifying notes out of five. Its N5 file fell from sixth to thirteenth and lost its pointer. The largest regression was munarium-N-W1, from three qualifying notes to zero. Two notes in reports_api.rs became file pointers as it moved from first to fifth. The API-types lib.rs fell from fifth to twenty-fifth and its note disappeared. Bookbuilder-N-C2 lost a passage when its file moved from second to eighth. Munarium-N-A1 lost a passage as its file moved from first to second. A file making the shortlist does not guarantee that its essential range fits the reply.
+
+The A6000 loaded and block-rounded the local weights in 15.16 s. Warm scoring of 40 pairs took a median 3.31 s per task (2.27–4.26 s), 66.04 s total across the 20 calls. Three of 800 pairs hit the 1,024-token limit. The timing covers tokenization and scoring. The replay shared deterministic scans between arms and provides no independent end-to-end candidate latency. Keep this as the stronger replay candidate. The regression cases and paired agent cost and correctness remain open before a port decision.
+
 From 27 November 2026 every agent test series is named after an animal or
 insect, each starting with the next letter of the alphabet. The first is
 Aardvark.
