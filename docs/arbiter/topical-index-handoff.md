@@ -16,6 +16,8 @@ The ten [Caribou matched pairs and HTTPX failure reproduction](topical-index-res
 
 The [Dragonfly repair comparison](topical-index-research.md#dragonfly-matched-repair-results) is complete. The user retained the shipping skill and authorized one three-arm checkpoint on six prospective tasks across Munarium and Bookbuilder. Keep the skill naturally available in both AIRK conditions. Review verified outcomes and cost with the user after all 18 sessions, before any further repetitions or kernel port decision.
 
+The [six-task checkpoint disposition](topical-index-research.md#six-task-end-to-end-checkpoint-disposition) supersedes the planned 18-session comparison above. Fourteen sessions ran before the historical native fixture was disqualified. Preserve their classifications and receipts. No current-Arbiter efficacy claim or Rust port decision follows from this panel.
+
 ## Authorization at the original handoff
 
 **Run free checks only.** A cost series (`series.ps1`, `agent_cost_run.py`,

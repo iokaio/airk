@@ -1449,6 +1449,14 @@ The solver optimizes distinct fully qualifying notes and, separately, distinct n
 
 ### Local Qwen file reranking
 
+The candidate uses Qwen3-Reranker-4B to score each of up to 40 files. Its fixed instruction is:
+
+> Given a coding agent's task, determine whether this repository file contains evidence needed to complete it.
+
+The exact [chat template and pair format](arbiter_pair_probe.py) wrap this instruction with a system request for a yes/no judgment. [The file scorer](qwen_file_trial.py) supplies the entire task, each need, and each anchor on separate lines as the query. The document starts with the repository-relative path and adds a labeled block per candidate range with up to 480 characters from that range. A file without a selected range contributes its path alone. The [scoring implementation](arbiter_loop_prototype.py) compares the next-token logits for lowercase yes and no and sorts files by the resulting yes score. No answer generation is required. The agent-facing AIRK skill guides the calling agent and is separate from this input.
+
+The loopback service collects aggregate judgment and clipping counts. Its ordinary request handler does not persist every rendered per-file prompt. A source-based reconstruction should identify the exact call arguments, source bytes and scorer revision, and be labeled as a reconstruction.
+
 Run `python -B qwen_file_trial.py <campaign> <local-checkpoint>` with the provisioned CUDA Python environment, offline model settings and an owner-checked private JSONL destination. The first record identifies the GPU, load time and quantization. Each task record includes the pre-rerank file pool with model scores, paired reference ranks and note classifications, exact passage bytes, model scoring seconds, control gather seconds and token-clipped pair count.
 
 The model sees the recorded task, needs and anchors. Its file input contains the path and the first 480 characters from each of the existing four strongest ranges, with source locations. Qwen3-Reranker-4B scores one pair per file with a 1,024-token limit, batches of eight, and 8-bit block-rounded linear weights expanded to FP16 on CUDA. Score ties preserve original file order. Files below the candidate pool retain their order. Both arms use the all-spread selector and original byte limit. Per-task control results must match the frozen all-spread receipt. Scoring time includes tokenization and GPU inference. The replay shares deterministic scans between arms, so control and model times are recorded separately.
@@ -1619,6 +1627,8 @@ and correctness checks remain outside the verifier.
 
 ## Comparing the six-task end-to-end panel
 
+The historical panel stopped after 14 of the 18 planned actor sessions. Use `--historical-spend` with the same design, series and a fresh output path to audit incurred costs and observed tool exposure. Four engineering product cells are missing. The historical service baselines prevent a three-arm product comparison.
+
 After all 18 sessions finish, generate a private performance and correctness
 report from the frozen design, agent transcripts, local verification receipts
 and independently scored answers:
@@ -1655,3 +1665,11 @@ A changed scope, write tool call, workspace change or
 empty answer invalidates the research result. See `session.json` under
 `research_frozen_index` for both observations and the validity flag. Coding
 tasks continue to require a native registration bound to their own work copy.
+
+### Qualifying a writable Windows workspace
+
+Stage each editable case from the authenticated diff base with the checked Windows fixture procedure. Use `checked_cost_fixture.ps1 -Mode CopySnapshot -ExcludeExact <paths>` when the archived repository has exact source-policy exclusions. This filters each excluded name before copying its bytes. Register the resulting case worktree as a separate native index, apply the corpus source policy, complete semantic indexing, and enable its native watcher. The solver and native source must resolve to the same directory.
+
+Run `native_workspace_handle.py --handle <live-parent-handle> --setup <case-setup.jsonl> --work <session/work> --frozen <eligible-manifest.json> --repo <repo-alias> --output <new-case-handle.json>` in the checked environment. It reads the actual native registration, watch, source policy and semantic discovery state. It hashes every eligible working file through a complete scoped path inventory and requires its manifest to match the immutable benchmark. A hybrid or vector probe must use that same publication. The output contains only the case registration and records the qualification observations. Keep this handle and its source trees in private campaign artifacts.
+
+For a CUDA lifetime that also hosts registered writable worktrees, pass `--reuse-settled --mutable-workspaces <roster.json> --mutable-workspaces-sha256 <digest>`. Each roster entry pins the setup receipt for its distinct editable checkout. The native catalog must identify that checkout and its separate data directory. The fixture records the startup job identities and permits subsequent indexing only for those registrations. Native retirement must be acknowledged before earlier job receipts for an owned workspace may disappear. A frozen-only lifetime continues to require an unchanged source-job history.

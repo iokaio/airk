@@ -353,11 +353,16 @@ def start(args):
     problem = gate_root_problem(fixtures, args.lifetime, args.restart_from,
                                 reuse_settled=args.reuse_settled)
     require(problem is None, str(problem))
+    roster = getattr(args, "mutable_workspaces", None)
+    roster_sha = getattr(args, "mutable_workspaces_sha256", None)
+    require(bool(roster) == bool(roster_sha) and (not roster or args.reuse_settled),
+            "a mutable workspace run requires --reuse-settled and a pinned roster")
     if args.reuse_settled:
         require(args.model == PAIR and not args.change_set_inputs,
                 "settled reuse requires the same-install CUDA pair")
         prior = read_json(FX.lifetime_dir(args.restart_from, fixtures) / "handle.json")
-        FX.reuse_predecessor(prior, args.repositories, fixtures)
+        writable = FX.workspace_admission(args, prior, fixtures)
+        FX.reuse_predecessor(prior, args.repositories, fixtures, writable)
     require(0 < args.seconds <= FX.MAX_SECONDS, f"the lifetime is at most {FX.MAX_SECONDS} s")
     require(bool(args.restart_from) != bool(args.seed_cpu), "a fresh lifetime names --seed-cpu; a restart never seeds")
     for repo in args.repositories:
@@ -417,6 +422,8 @@ def start(args):
         argv += ["--restart-from", args.restart_from]
     if args.reuse_settled:
         argv.append("--reuse-settled")
+    if roster:
+        argv += ["--mutable-workspaces", str(Path(roster).resolve()), "--mutable-workspaces-sha256", roster_sha]
     if getattr(args, "rebuild_indexes", False):
         require(args.reuse_settled, "--rebuild-indexes needs --reuse-settled")
         argv.append("--rebuild-indexes")
@@ -698,6 +705,9 @@ def main():
                          help="capture exact private pair input windows on the settled wide shortlist")
         sub.add_argument("--reuse-settled", action="store_true",
                          help="require unchanged settled indexes on a same-install CUDA restart")
+        sub.add_argument("--mutable-workspaces", type=Path,
+                         help="pinned roster of disposable native registrations permitted to index during this lifetime")
+        sub.add_argument("--mutable-workspaces-sha256", help="SHA-256 of the exact mutable workspace roster")
         sub.add_argument("--rebuild-indexes", action="store_true",
                          help="with --reuse-settled: rebuild each reused index once in place and record the "
                               "publication it then serves, so later lifetimes reuse the rebuilt indexes")

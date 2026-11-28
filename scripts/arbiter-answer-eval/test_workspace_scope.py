@@ -6,6 +6,7 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import Mock, patch
 
+import common
 import gather_context_mcp
 import live_gather
 import qwen_file_trial
@@ -75,6 +76,12 @@ class WorkspaceRefreshTest(unittest.TestCase):
                 self.assertFalse(failed)
                 self.assertIn("six tiles", text)
                 self.assertEqual(call.capture["files_reparsed"], 1)
+                example = call.capture["observed_scorer_pair"]
+                instruction, pairs = score.call_args.args
+                self.assertEqual((example["instruction"], example["query"], example["card"]), (instruction, *pairs[0]))
+                self.assertEqual(example["score"], 1.0)
+                self.assertIn(example["card"], example["before_token_cap"])
+                self.assertNotIn("before_token_cap", text)
                 text, failed, _ = call("airk_answer", "synthetic", args)
                 self.assertTrue(failed)
                 self.assertIn("workspace_evidence_unavailable", text)
@@ -115,6 +122,15 @@ class WorkspaceRefreshTest(unittest.TestCase):
                 self.assertTrue(any("count = 18" in pair[1] for pair in pairs))
                 self.assertTrue(any("count = 18" in p["text"] for p in reply["passages"]))
                 self.assertTrue(all("SecretCarton" not in pair[1] for pair in pairs))
+                original_pairs = list(pairs)
+                pairs.clear()
+                observed = {}
+                measured = qwen_file_trial.live_reply(repo, {"task": "Find LumenCarton in src/packing.py",
+                                                             "anchors": ["LumenCarton"]}, score, observed)
+                self.assertEqual(original_pairs, pairs)
+                self.assertEqual(observed["before_token_cap_sha256"], common.sha256_bytes(observed["before_token_cap"].encode()))
+                self.assertEqual({k: v for k, v in reply.items() if k != "elapsed_ms"},
+                                 {k: v for k, v in measured.items() if k != "elapsed_ms"})
                 repo.refresh({"src/packing.py", "new.py"})
                 self.assertEqual(repo.capture["files_reparsed"], 1)
                 self.assertEqual(repo.index["word_names"]["carton"], ["FreshCarton", "LumenCarton"])

@@ -518,6 +518,21 @@ Raw feedback reduced the incremental repair cost by 70.3%. In the remaining case
 
 All 50 original and final grade records were checked against 300 artifact digests. No original test function disappeared or gained a skip. Twenty-two repairs changed assertions or decorators and were flagged for semantic review. On two representative passing repairs, disabling read retries caused 18 failures per repair, allowing gateway command repeats caused six, and allowing plain write retries caused twelve. The checks establish sensitivity for those two repairs. The frozen private summary is agent-cost/Dragonfly/verified-repairs.json (SHA-256 ed08146b02b9c5415a0df9dc45f1374dadf616994ed8ecdccd045a4594f38bdf).
 
+### Six-task end-to-end checkpoint disposition
+
+The user confirmed the single-stage Arbiter design during the checkpoint. The historical native fixture had enrolled two superseded models. This invalidates the intended comparison with current Arbiter. Paid launches stopped after 14 of 18 sessions. None of the four candidate research sessions invoked Gather, so no paid observation in this panel measures Qwen3-Reranker-4B file scoring. The correct [working model decision](retrieval-strategy-combined.md#strategy-from-27-november-2026) specifies Qwen3-Reranker-4B with 8-bit weights and FP16 computation. The prototype approximates storage quantization by rounding in blocks and expanding at load.
+
+| Actual condition | Sessions | Full passes | Reported actor spend |
+|---|---:|---:|---:|
+| Ordinary file tools and public verification | 6 | 4 | $0.3705207 |
+| Historical native fixture, research tasks only | 4 | 4 | $0.3256852 |
+| Candidate offered, two research tasks with one ancillary search each | 2 | 2 | $0.2093055 |
+| Candidate offered, two research tasks using ordinary reads alone | 2 | 1 | $0.1020217 |
+
+Total spend was $1.0075331. On research alone the ordinary-tools arm passed 2/4. Both ordinary-tools code patches passed independent behavior checks and their regression tests failed against stock. The historical native broad Bookbuilder Gather returned direct_observation_unavailable. Both candidate ancillary searches returned the same typed failure, with unknown submission and zero evidence delivered to Sonnet. The other two candidate research sessions made no AIRK call. The initial Bookbuilder N2 candidate post-run inventory failed, and a separately authenticated later observation matched its prior eligible bytes, full checkout, publication and public authority. No additional paid attempt was made. The private partial grade manifest SHA-256 is 7f40e9ef68cb71b6031dd437c4040005dc7a3bcebadb2dcf6283433ce8f905be. Preserve all six ordinary-tool outcomes for reuse on exactly matched inputs.
+
+For future model-bearing comparisons, bind the actual serving model identity, precision and enabled auxiliary routes to the single-stage decision before any paid actor launch. Trace actual inference separately from availability. The local 4B preflight made 40 judgments. Its separately reconstructed example for the REST transport file used 586 tokens without clipping. The scorer documentation identifies the exact instruction, training-template boundaries, query assembly and excerpt limit. The user's approved skill remains enabled and unchanged. Review the disposition before funding any replacement sessions or deciding on a Rust port.
+
 ### Measuring normal AIRK coding work
 
 The user expects coding agents using AIRK to have test access in nearly all

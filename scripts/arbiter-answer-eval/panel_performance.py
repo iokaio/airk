@@ -102,14 +102,46 @@ def session_metrics(design, series, task, arm):
         if task["kind"] == "research":
             import research_frozen_index
             proof = receipt["research_frozen_index"]
-            before, after = proof["before"], proof["after"]
-            require(proof["valid"] and proof["task"] == tid and proof["design_sha256"] == digest(design / "freeze.json")
+            before = proof["before"]
+            if proof["valid"]:
+                after = proof["after"]
+                scope["postcheck"] = "at_session_close"
+            else:
+                path = base / "research-post-observation.json"
+                later = common.read_json(path)
+                require(proof.get("after") is None and proof.get("error") == "Native workspace path inventory failed"
+                        and later["original_session_sha256"].lower() == digest(base / "session.json")
+                        and later["original_valid"] is False and later["original_error"] == proof["error"]
+                        and later["task"] == tid and later["before"] == before and later["matches_original_before"]
+                        and later["proof_sha256_by_file"] == {name: digest(base / name) for name in
+                                                             ("session.json", "stream.jsonl", "answer.md", "changes.patch")},
+                        f"Unresolved original research postcheck: {base}")
+                after = later["later"]
+                scope.update(postcheck="later_observation", original_error=proof["error"],
+                             sidecar_sha256=digest(path), observed_from=later["observed_from"], observed_to=later["observed_to"])
+            require(proof["task"] == tid and proof["design_sha256"] == digest(design / "freeze.json")
                     and before["index"] == native["index"] == task["index_id"]
                     and before["handle_sha256"] == native["handle_sha256"]
                     and Path(before["work"]).resolve() == (base / "work").resolve()
                     and research_frozen_index.finish(before, after, actual["tool_uses"], receipt["changed_files"], actual["final_message"]),
                     f"Frozen research binding changed: {base}")
             scope.update({k: before[k] for k in ("publication", "scope_fingerprint", "eligible_digest", "tree_digest")})
+        else:
+            handle = checked(Path(native["fixture"]), native["handle_sha256"])
+            qualification = handle["qualification"]
+            parent = checked(Path(qualification["parent_handle"]), qualification["parent_sha256"])
+            repo = task["repository"]
+            source = parent["indexes"][repo]
+            registration = handle["indexes"][repo]
+            require(source["index_id"] == task["index_id"] and registration["index_id"] == native["index"]
+                    and Path(registration["root"]).resolve() == (base / "work").resolve()
+                    and source["source_commit"] == registration["source_commit"] == task["source_commit"]
+                    and registration["served_mode"] in ("hybrid", "vector")
+                    and registration["publication_token"] == qualification["inventory"]["publication"],
+                    f"Engineering index provenance differs: {base}")
+            scope.update(eligible_digest=qualification["eligible_digest"], publication=registration["publication_token"],
+                         parent_handle_sha256=qualification["parent_sha256"], served_mode=registration["served_mode"],
+                         pipeline_digest=registration["pipeline_digest"])
         cli = config["airk"]["args"]
         if arm == "candidate":
             require(flag(cli, "--live-layout") == "qwen-focus" and "--workspace-map" in cli
@@ -162,10 +194,13 @@ def attach_grade(row, series, task):
                first_pass_basis=grade["first_pass_basis"], marks=grade["marks"])
 
 
-def summarize_rows(rows):
+def summarize_rows(rows, sensitivity=False):
     """Frozen design weights the stratum means, independent of task count."""
     strata = {k: [r for r in rows if r["stratum"] == k] for k in ("broad", "narrow")}
-    require([len(strata[k]) for k in ("broad", "narrow")] == [2, 4], "Incomplete task strata")
+    if sensitivity:
+        require(all(strata.values()), "Cannot estimate a missing stratum")
+    else:
+        require([len(strata[k]) for k in ("broad", "narrow")] == [2, 4], "Incomplete task strata")
     fields = [m for m in METRICS if all(m in r for r in rows)]
     if "final_pass" in rows[0]:
         fields.append("final_pass")
@@ -191,7 +226,7 @@ def paired_savings(rows, arm, reference="plain"):
     pairs = {(r["task"], r["arm"]): r for r in rows}
     fields = [m for m in ("cost_usd", "cost_one_price", "round_trips", "actor_wall_seconds") if all(m in r for r in rows)]
     by_task = {}
-    for tid in TASKS:
+    for tid in (t for t in TASKS if (t, arm) in pairs):
         control, treatment = pairs[tid, reference], pairs[tid, arm]
         by_task[tid] = {f: 100 * (1 - treatment[f] / control[f]) for f in fields}
     strata = {s: [by_task[r["task"]] for r in rows if r["arm"] == arm and r["stratum"] == s]
@@ -204,7 +239,7 @@ def paired_savings(rows, arm, reference="plain"):
 def paired_differences(rows, arms, reference, treatment, graded):
     by_id = {(r["task"], r["arm"]): r for r in rows}
     pairs = []
-    for tid in TASKS:
+    for tid in (t for t in TASKS if (t, treatment) in by_id):
         before, after = by_id[tid, reference], by_id[tid, treatment]
         pair = {"task": tid, "stratum": before["stratum"], "reference_usd": before["cost_usd"],
                 "treatment_usd": after["cost_usd"], "dollars_saved": before["cost_usd"] - after["cost_usd"],
@@ -261,7 +296,18 @@ def report(design, series, graded=True):
         for row in rows:
             row.pop("cost_one_price", None)
     arms = {a: summarize_rows([r for r in rows if r["arm"] == a]) for a in ARMS}
+    later = [r for r in rows if (r["scope"] or {}).get("postcheck") == "later_observation"]
+    excluded = sorted({r["task"] for r in later})
+    strict = [r for r in rows if r["task"] not in excluded]
+    variation = {}
+    if excluded:
+        strict_arms = {a: summarize_rows([r for r in strict if r["arm"] == a], sensitivity=True) for a in ARMS}
+        variation = {"excluded_tasks_from_all_arms": excluded, "arms": strict_arms, "comparisons": {
+            f"{t}_vs_{b}": paired_differences(strict, strict_arms, b, t, graded)
+            for b, t in (("plain", "native"), ("plain", "candidate"), ("native", "candidate"))}}
     return {
+        "original_postcheck_incomplete": [{"task": r["task"], "arm": r["arm"], "scope": r["scope"]} for r in later],
+        "strict_matched_sensitivity": variation,
         "schema": "airk.private.e2e-panel-performance/1", "freeze_sha256": digest(design / "freeze.json"),
         "cost_basis": "Actor-reported Claude costs including every turn in each submitted session. Common-cache-price figures are fitted separately.",
         "timing_basis": "Actor wall is subprocess elapsed time per session. API time is model-reported. Local verifier time is included in actor wall. Summed durations across concurrent sessions are not campaign wall time. Setup, indexing and independent grading are outside actor wall and agent spend.",
@@ -272,14 +318,51 @@ def report(design, series, graded=True):
     }
 
 
+def historical_spend(design, series):
+    """Audit incurred actor spend at the historical panel stop, independent of product claims."""
+    assert_ids = {f"{t}.{a}" for t in TASKS for a in ARMS if a == "plain" or
+                  t not in ("munarium-E2E-B1", "bookbuilder-E2E-N1")}
+    found = {p.parent.name for p in (series / "runs").glob("*/session.json")}
+    require(found == assert_ids, "Unexpected stopped-panel receipts")
+    rows = []
+    for task in common.read_json(design / "freeze.json")["tasks"]:
+        for arm in ARMS:
+            if f"{task['id']}.{arm}" not in found:
+                continue
+            row = session_metrics(design, series, task, arm)
+            attach_grade(row, series, task)
+            group = {"plain": "plain", "native": "historical_native"}.get(arm)
+            if arm == "candidate":
+                if row["airk_calls"]:
+                    require(row["tool_calls"].get("mcp__airk__search_passages") == row["airk_calls"],
+                            "Unexpected candidate tool exposure")
+                    group = "candidate_legacy_backed_ancillary_search"
+                else:
+                    require(row["tool_calls"] == {"Read": 1}, "Unexpected candidate local-file exposure")
+                    group = "candidate_read_only"
+            rows.append({k: row[k] for k in ("task", "arm", "session_sha256", "answer_sha256", "grade_sha256",
+                                             "cost_usd", "tool_calls", "scope")} | {"spend_group": group})
+    groups = {}
+    for group in sorted({r["spend_group"] for r in rows}):
+        amounts = [r["cost_usd"] for r in rows if r["spend_group"] == group]
+        groups[group] = {"sessions": len(amounts), "actor_reported_usd": round(sum(amounts), 7)}
+    return {"schema": "airk.private.historical-panel-spend/1", "session_count": len(rows),
+            "scope": "Incurred actor spend for the stopped historical experiment. Four coding product sessions were never run. No product comparison or Qwen effectiveness estimate.",
+            "actor_reported_usd": round(sum(r["cost_usd"] for r in rows), 7), "groups": groups, "sessions": rows}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--design", type=Path, required=True)
     parser.add_argument("--series", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--without-grades", action="store_true", help="measure completed sessions before independent grades are ready")
+    parser.add_argument("--historical-spend", action="store_true", help="audit only the 14 incurred historical sessions")
     args = parser.parse_args()
-    data = report(args.design.resolve(), args.series.resolve(), not args.without_grades)
+    if args.historical_spend:
+        data = historical_spend(args.design.resolve(), args.series.resolve())
+    else:
+        data = report(args.design.resolve(), args.series.resolve(), not args.without_grades)
     with args.output.open("x", encoding="utf-8") as stream:
         json.dump(data, stream, indent=2)
         stream.write("\n")

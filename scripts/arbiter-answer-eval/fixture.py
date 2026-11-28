@@ -1371,9 +1371,22 @@ def attach_verification(handle, life):
                                                "passed": result.get("passed"), "problems": result.get("problems")}
 
 
-def reuse_predecessor(prior, repositories, fixtures):
+def workspace_admission(args, prior, fixtures):
+    roster = getattr(args, "mutable_workspaces", None)
+    digest = getattr(args, "mutable_workspaces_sha256", None)
+    require(bool(roster) == bool(digest), "mutable workspaces require a pinned roster")
+    if not roster:
+        return None
+    require(args.reuse_settled and not getattr(args, "rebuild_indexes", False),
+            "mutable workspaces require a same-install reuse without a frozen index rebuild")
+    checks = runpy.run_path(str(HERE / "workspace_fixture_lifecycle.py"))
+    return checks["admission"](fixtures, prior, roster, digest)
+
+
+def reuse_predecessor(prior, repositories, fixtures, writable=None):
     """Authenticate the settled repository set from an idle owned lifetime."""
-    require(prior_settled(prior) and prior["state"] == "closed"
+    recovered = (writable or {}).get("recovered_predecessor") or {}
+    require(prior_settled(prior) and (prior["state"] == "closed" or recovered.get("lifetime") == prior["lifetime"])
             and prior.get("final_stage_idle") is True and prior.get("service_exit_code") == 0
             and prior.get("semantic_ready_utc"), "settled reuse needs a clean, indexed predecessor")
     status_path = Path(prior["final_status"]["path"])
@@ -1543,6 +1556,7 @@ def worker(args):
     deadline = time.monotonic() + seconds
     extra = census_extras(args.dispatch_observer, getattr(args, "dispatch_census", None))
     prior = None
+    writable = None
     jobs_before = None
     reuse_settled = getattr(args, "reuse_settled", False)
     rebuild_indexes = getattr(args, "rebuild_indexes", False)
@@ -1551,7 +1565,8 @@ def worker(args):
         prior, restart = restart_request(Path(args.fixtures), args.restart_from, life,
                                          getattr(args, "accept_unidle_close", None), reuse_settled=reuse_settled)
         if reuse_settled:
-            reuse_predecessor(prior, args.repositories, Path(args.fixtures))
+            writable = workspace_admission(args, prior, Path(args.fixtures))
+            reuse_predecessor(prior, args.repositories, Path(args.fixtures), writable)
             jobs_before = source_io_jobs(prior["control"])
         control = Path(prior["control"])
         extra.update(AIRK_ARBITER_EVALUATION_RESTART=restart["path"], AIRK_ARBITER_EVALUATION_RESTART_SHA256=restart["sha256"])
@@ -1581,6 +1596,8 @@ def worker(args):
               "helpers": {"fixture.py": sha256(Path(__file__)), "run_compact_answer.py": sha256(NATIVE),
                           "provision-static-onnx-runtime.py": sha256(OWNER)},
               "indexes": {}, "stages": {}}
+    if writable:
+        handle["mutable_workspaces"] = write_json(life / "workspace-admission.json", writable)
     if (life / "restart-exception.json").is_file():
         handle["restart_exception"] = read_json(life / "restart-exception.json")
         handle["restart_exception"]["receipt"] = {"path": str(life / "restart-exception.json"),
@@ -1772,6 +1789,10 @@ def worker(args):
             # blockers above already refuse an unfinished writer.
             require(not jobs_before - source_io_jobs(control), "the rebuild lost indexing or vector job receipts")
             settlement["rebuilt_indexes"] = handle["rebuilt_indexes"]
+        elif writable:
+            checks = runpy.run_path(str(HERE / "workspace_fixture_lifecycle.py"))
+            proof = checks["settlement"](control, jobs_before, source_io_jobs(control), writable["members"])
+            settlement["mutable_workspaces"] = write_json(life / "workspace-settlement.json", proof)
         else:
             require_same_source_io_jobs(control, jobs_before)
         settlement["reused_indexes"] = handle["reused_indexes"]

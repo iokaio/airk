@@ -154,6 +154,7 @@ def live_backend(source: Path, map_file: Path | None, layout: str = "full", decl
     import live_gather_v3
     index = json.loads(map_file.read_text(encoding="utf-8")) if map_file else {}
     cached_repository = live_gather.Repository(source, index) if map_file else None
+    example_recorded = False
     workspace = None if map_file else live_gather.WorkspaceRepository(source)
     if workspace is not None:
         import workspace_scope
@@ -162,6 +163,7 @@ def live_backend(source: Path, map_file: Path | None, layout: str = "full", decl
     gather = live_gather_v3.gather if index.get("schema") == live_gather_v3.SCHEMA else live_gather.gather
 
     def call(native: str, repo: str, arguments: dict) -> tuple[str, bool, bytes]:
+        nonlocal example_recorded
         if workspace is None:
             repository = cached_repository
         else:
@@ -185,7 +187,11 @@ def live_backend(source: Path, map_file: Path | None, layout: str = "full", decl
         if layout == "qwen-focus":
             import qwen_file_trial
             common.require(file_score is not None and gather is live_gather.gather, "Qwen file ranking requires the original topical map and a scorer")
-            brief = qwen_file_trial.live_reply(repository, arguments, file_score)
+            example = {} if workspace is not None and not example_recorded else None
+            brief = qwen_file_trial.live_reply(repository, arguments, file_score, example)
+            if example:
+                call.capture["observed_scorer_pair"] = example
+                example_recorded = True
         else:
             brief = gather(repository, arguments)
         if layout == "focus":

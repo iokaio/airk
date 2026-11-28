@@ -11,6 +11,8 @@ from time import perf_counter
 from unittest.mock import patch
 
 import agent_cost_batch
+import common
+from arbiter_pair_probe import PREFIX, SUFFIX, pair_text
 from arbiter_loop_prototype import Judge
 import live_gather as gather
 import rank_check
@@ -41,7 +43,7 @@ def focused(repo, brief, trace):
     return gather.focus(repo, brief, spread=True)
 
 
-def live_reply(repo, args, score):
+def live_reply(repo, args, score, example=None):
     """Return the live all-spread reply using Qwen file scores and the frozen focus budget."""
     with patch.object(repo, "search", cache(repo.search)):
         wide = {}
@@ -53,7 +55,15 @@ def live_reply(repo, args, score):
             locations[row["at"].rpartition(":")[0]].append(row["at"])
         query = "\n".join([args.get("task", ""), *args.get("needs", []), *args.get("anchors", [])])
         pairs = [(query, document(repo, p, locations[p])) for p in paths]
-        prefix = reorder(paths, score(INSTRUCTION, pairs)) if pairs else []
+        scores = score(INSTRUCTION, pairs) if pairs else []
+        prefix = reorder(paths, scores) if pairs else []
+        if pairs and example is not None:
+            query, card = pairs[0]
+            rendered = PREFIX + pair_text(INSTRUCTION, query, card) + SUFFIX
+            example.update(file=paths[0], source_sha256=repo.digests[paths[0]].hex(),
+                           input_position=1, pool_size=len(paths), score=scores[0], instruction=INSTRUCTION,
+                           query=query, card=card, card_sha256=common.sha256_bytes(card.encode("utf-8")),
+                           before_token_cap=rendered, before_token_cap_sha256=common.sha256_bytes(rendered.encode("utf-8")))
 
         def rank_rule(ranked, held, index, needs):
             if ranked[:WIDTH] != paths:
