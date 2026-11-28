@@ -502,6 +502,68 @@ Each reproduced async case passed alone. Running both modes in either order fail
 
 **Campaign decision.** Keep the retrieval budget and weights fixed for the next comparison. The acting prompt explicitly forbids running tests and gives the agent no shell. A useful next comparison gives a solver the full changed-module pytest result and one repair turn, then independently regrades the module and coverage. This could test whether executable feedback improves completion. The current results establish the fixture repair and do not measure the benefit of a different prompt or specialized model weights.
 
+### Dragonfly matched repair results
+
+Of 40 attempts at one Munarium coding task, 15 passed on the first attempt. Each of the 25 failing patches received two independent Sonnet repairs, starting from the same archived patch. One agent saw the full-module pytest failure and the other received the task and patch without that diagnostic. Both repaired the same 24 patches. Keeping the 15 initial passes, verified completion rose from 15/40 to 39/40 in each condition, a gain of 60 percentage points.
+
+| Incremental repair metric | Without pytest output | With pytest output |
+|---|---:|---:|
+| Fully passing repairs | 24/25 | 24/25 |
+| Total model cost | $4.357053 | $1.294704 |
+| Total round trips | 207 | 88 |
+| Median round trips | 8 | 3 |
+| Median elapsed seconds | 83.2 | 30.9 |
+
+Raw feedback reduced the incremental repair cost by 70.3%. In the remaining case, both repairs fixed collection, after which pytest exposed three async failures. Each session had one repair opportunity. This series measures repeated patches for one task. It does not estimate a cross-repository success rate.
+
+All 50 original and final grade records were checked against 300 artifact digests. No original test function disappeared or gained a skip. Twenty-two repairs changed assertions or decorators and were flagged for semantic review. On two representative passing repairs, disabling read retries caused 18 failures per repair, allowing gateway command repeats caused six, and allowing plain write retries caused twelve. The checks establish sensitivity for those two repairs. The frozen private summary is agent-cost/Dragonfly/verified-repairs.json (SHA-256 ed08146b02b9c5415a0df9dc45f1374dadf616994ed8ecdccd045a4594f38bdf).
+
+### Measuring normal AIRK coding work
+
+The user expects coding agents using AIRK to have test access in nearly all
+ordinary coding sessions. For future end-to-end coding comparisons, give
+both arms the same ability to run relevant tests, inspect diagnostics, edit
+and rerun tests within the same session. Keep task, model, starting source,
+test permissions, stopping rule and independent final grader matched. Change
+the AIRK retrieval condition being studied. Use verified task completion
+and total model cost through verification as primary outcomes. Record first
+patch correctness, repair attempts, test commands and round trips to explain
+differences. The historical shell-free runs measure first-pass work; a
+separate fresh-session feedback experiment measures one repair opportunity.
+
+#### Proposed comparison before selecting the kernel implementation
+
+Use the existing broad/narrow task mix and its agreed weights. Select held-out
+changes and questions from multiple repositories. Keep the repeated Munarium
+retry task as a diagnostic case outside the held-out headline. Include work
+where the task already gives a sufficient local path, a change crossing
+multiple files, and a citation question with incomplete evidence. Freeze
+instructions, source revisions, independent checks and scoring before seeing
+candidate results.
+
+For the kernel decision, compare current native Gather Context against the
+candidate on the same seven-tool surface. Keep the skill, client, shell,
+test permissions, model revision and stopping rule identical. A separate
+ordinary-tools control measures the end-to-end benefit of enabling AIRK.
+Keep hand-selected packets as a diagnostic upper bound for retrieval quality.
+Test genuine natural discovery in the client configuration the product will
+use. Exercise an indexed follow-up after an edit, including publication or
+freshness behavior. Verify observable defaults, budgets, errors and
+continuations on the real MCP connection.
+
+For coding, count verified final correctness and total agent spend from
+task receipt through the last verification, including unsuccessful attempts
+and repair cycles. For research questions, check cited evidence against
+the frozen source. Keep independent acceptance checks out of the solver
+prompt. Where the risk warrants it, test a representative patch against
+deliberately broken behavior in an isolated copy. Report voluntary use and
+bypass, per-task gains and regressions, round trips, and uncertainty across
+distinct tasks. Interleave conditions and record cache state. Report local
+reranker runtime and resource use separately from agent billing. Repeat on
+a second supported client before generalizing a discovery or skill result
+across clients. This is a proposed next campaign, not part of Dragonfly's
+50 paid repair sessions.
+
 ### Historical resume point before Aardvark (27 November 2026)
 
 Work can be picked up from here by another session.

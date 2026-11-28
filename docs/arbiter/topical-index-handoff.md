@@ -14,6 +14,8 @@ The [Badger skill comparison](topical-index-research.md#badger-skill-results) is
 
 The ten [Caribou matched pairs and HTTPX failure reproduction](topical-index-research.md#caribou-paired-evidence-results) are complete. The proposed next comparison is one repair turn with full-module test feedback. The native fixture and local scorer are closed.
 
+The [Dragonfly repair comparison](topical-index-research.md#dragonfly-matched-repair-results) is complete. The user retained the shipping skill and authorized one three-arm checkpoint on six prospective tasks across Munarium and Bookbuilder. Keep the skill naturally available in both AIRK conditions. Review verified outcomes and cost with the user after all 18 sessions, before any further repetitions or kernel port decision.
+
 ## Authorization at the original handoff
 
 **Run free checks only.** A cost series (`series.ps1`, `agent_cost_run.py`,
