@@ -41,6 +41,29 @@ def focused(repo, brief, trace):
     return gather.focus(repo, brief, spread=True)
 
 
+def live_reply(repo, args, score):
+    """Return the live all-spread reply using Qwen file scores and the frozen focus budget."""
+    with patch.object(repo, "search", cache(repo.search)):
+        wide = {}
+        with patch.object(gather, "TOP_FILES", WIDTH):
+            gather.gather(repo, args, wide)
+        paths = [p for p, _ in wide["ranked"][:WIDTH]]
+        locations = defaultdict(list)
+        for row in wide["all_locations"]:
+            locations[row["at"].rpartition(":")[0]].append(row["at"])
+        query = "\n".join([args.get("task", ""), *args.get("needs", []), *args.get("anchors", [])])
+        pairs = [(query, document(repo, p, locations[p])) for p in paths]
+        prefix = reorder(paths, score(INSTRUCTION, pairs)) if pairs else []
+
+        def rank_rule(ranked, held, index, needs):
+            if ranked[:WIDTH] != paths:
+                raise ValueError("Live file pool changed")
+            return prefix + ranked[WIDTH:]
+
+        trace = {}
+        return focused(repo, gather.gather(repo, args, trace, rank_rule=rank_rule), trace)
+
+
 def evaluate(repo, args, judge):
     with patch.object(repo, "search", cache(repo.search)):
         start = perf_counter()

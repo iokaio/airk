@@ -160,7 +160,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="oracle: the tool answers with the task's truth (gather_context_oracle.py); "
                              "live: it answers from the live files and --live-map (live_gather.py)")
     parser.add_argument("--live-map", type=Path, help="topical map of the snapshot, for the live arm")
-    parser.add_argument("--live-layout", default="full", help="live arm: full or focus")
+    parser.add_argument("--live-layout", choices=("full", "focus", "qwen-focus"), default="full")
     parser.add_argument("--live-decline", action="store_true", help="live arm: apply the decline rule first")
     parser.add_argument("--oracle-layout", default="passages", help="oracle arm: passages or ranges")
     parser.add_argument("--oracle-trust", action="store_true", help="oracle arm: add the line saying what need not be read again")
@@ -176,12 +176,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dose", type=int, default=0, help="judgments a call the model spends choosing passages")
     parser.add_argument("--max-round-trips", type=int, default=80)
     parser.add_argument("--timeout", type=float, default=2400.0)
+    parser.add_argument("--checked-windows", action="store_true", help="preflight and audit Windows session outputs")
     args = parser.parse_args(argv)
+    if (args.dose > 0 or (args.arm == "live" and args.live_layout == "qwen-focus")) and args.judge is None:
+        parser.error("model scoring needs --judge")
     task = json.loads(args.task.read_text(encoding="utf-8"))
     snapshot = args.snapshot.resolve(strict=True)
-    args.output.mkdir(parents=True)
     work = args.output / "work"
-    shutil.copytree(snapshot, work)
+    guard = HERE / "checked_cost_fixture.ps1"
+    if args.checked_windows:
+        subprocess.run(["pwsh", "-NoProfile", "-File", str(guard), "-Mode", "Prepare",
+                        "-Session", str(args.output), "-Snapshot", str(snapshot)], check=True)
+    else:
+        args.output.mkdir(parents=True)
+        shutil.copytree(snapshot, work)
     servers: dict = {}
     tool = None
     if args.arm in ("tool", "oracle", "live"):
@@ -206,7 +214,7 @@ def main(argv: list[str] | None = None) -> int:
             server += ["--handle", str(args.handle.resolve())]
         if args.instructions_file:
             server += ["--instructions-file", str(args.instructions_file.resolve(strict=True))]
-        if args.dose > 0:
+        if args.dose > 0 or (args.arm == "live" and args.live_layout.startswith("qwen-")):
             server += ["--judge", str(args.judge.resolve(strict=True)), "--dose", str(args.dose)]
         if args.arm == "oracle":
             server += ["--oracle-task", str(args.task.resolve()), "--oracle-snapshot", str(snapshot),
@@ -219,10 +227,18 @@ def main(argv: list[str] | None = None) -> int:
     mcp_config = args.output / "mcp-config.json"
     mcp_config.write_text(json.dumps({"mcpServers": servers}, indent=2) + "\n", encoding="utf-8", newline="\n")
     argv_out = command(common.find_claude(), args.model, args.arm, mcp_config, args.max_round_trips)
+    env = common.clean_child_env()
+    if args.checked_windows:
+        hooks = {}
+        for event, mode in (("PreToolUse", "BeforeTool"), ("PostToolUse", "AfterTool")):
+            cmd = subprocess.list2cmdline(["pwsh", "-NoProfile", "-File", guard.as_posix(), "-Mode", mode, "-Session", args.output.resolve().as_posix()])
+            hooks[event] = [{"matcher": "Edit|Write", "hooks": [{"type": "command", "command": cmd}]}]
+        argv_out.extend(["--settings", json.dumps({"hooks": hooks})])
+        env.update({name: str(args.output / "tmp") for name in ("TEMP", "TMP", "TMPDIR", "CLAUDE_CODE_TMPDIR")})
     started, timed_out = time.monotonic(), False
     with (args.output / "stream.jsonl").open("wb") as stream, (args.output / "stderr.log").open("wb") as errors:
         process = subprocess.Popen(argv_out, cwd=work, stdin=subprocess.PIPE, stdout=stream, stderr=errors,
-                                   env=common.clean_child_env(), creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                                   env=env, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         try:
             process.communicate(task["instruction"].encode("utf-8"), timeout=args.timeout)
         except subprocess.TimeoutExpired:
@@ -230,6 +246,8 @@ def main(argv: list[str] | None = None) -> int:
             common.kill_tree(process.pid)
             process.wait()
     wall = round(time.monotonic() - started, 3)
+    if args.checked_windows:
+        subprocess.run(["pwsh", "-NoProfile", "-File", str(guard), "-Mode", "Audit", "-Session", str(args.output)], check=True)
     summary = summarize(common.read_jsonl(args.output / "stream.jsonl"))
     (args.output / "answer.md").write_text(summary.pop("final_message"), encoding="utf-8", newline="\n")
     patch, changed = changes(snapshot, work)

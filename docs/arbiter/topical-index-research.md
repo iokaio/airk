@@ -439,6 +439,12 @@ The A6000 loaded and block-rounded the local weights in 15.16 s. Warm scoring of
 
 **Qwen passage budget, 27 November 2026.** Replayed all 20 saved top-40 orders at passage caps of 14,000 and 20,000 bytes. The 14,000-byte controls reproduced every note and byte count. Fully covered notes rose from 40 to 46 of 113 across five tasks, with no note regressing. Three additional missed notes gained a file pointer. Actual passage bytes rose from 254,878 to 330,032 across the calls (29.5 percent). Bookbuilder-T1, Munarium-A1, C2 and N-W1 gained one qualifying passage each, and Munarium-N-A1 gained two. Munarium-T1 stayed at two fully covered notes while passage bytes rose from 13,984 to 19,965. Retain the 14,000-byte default for Aardvark. The larger cap is a candidate for measuring actual model spending and correctness on a task where it changes coverage.
 
+**Protected leader and Aardvark live parity.** Using the original deterministic leader first and Qwen for the remaining order produced 41 fully covered notes against plain Qwen at 40. Five tasks changed. Bookbuilder-N-A2, Munarium-N-C4 and Munarium-N-W1 each gained one fully covered note. Bookbuilder-N-W1 and Munarium-N-C2 each lost one. The rule recovered Munarium-N-W1 N4 but failed the no-new-task-regression criterion. Keep plain Qwen and the 14,000-byte limit.
+
+Of the five passages lost to plain Qwen, Bookbuilder-N-C2 N2 fell outside the six focused files and Munarium-N-W1 N6 fell outside the sixteen-file range pool. Relaxing only the byte cap restored the other three (Munarium-N-A1 N11 and Munarium-N-W1 N4 and N5). The leader rule restored N4 fully and N5 only partially. The 20,000-byte experiment above remains separate.
+
+A real loopback Qwen scorer and stdio MCP tool reproduced the 40-file order, exact source text, ranges, and full reply except elapsed time on Munarium-T1 (7 passages, 13,984 bytes), Bookbuilder-N-C3 (11, 9,739) and Munarium-N-C2 (18, 12,050). The first paid Aardvark launch was rejected by automatic approval review before a session started because it requires explicit authorization for the private task and source evidence sent to Anthropic. No Sonnet usage or agent correctness result exists for Aardvark.
+
 From 27 November 2026 every agent test series is named after an animal or
 insect, each starting with the next letter of the alphabet. The first is
 Aardvark.

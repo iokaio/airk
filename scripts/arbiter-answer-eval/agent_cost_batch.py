@@ -66,6 +66,8 @@ def run(args) -> int:
                     continue
                 command = [sys.executable, "-B", str(HERE / "agent_cost_run.py"), "--task", str(row["task"]),
                            "--snapshot", str(row["snapshot"]), "--arm", arm, "--model", args.model, "--output", str(out)]
+                if getattr(args, "checked_windows", False):
+                    command.append("--checked-windows")
                 if args.max_round_trips:
                     command += ["--max-round-trips", str(args.max_round_trips)]
                 if arm in ("tool", "oracle", "live"):
@@ -81,7 +83,7 @@ def run(args) -> int:
                         command += ["--instructions-file", str(args.instructions_file)]
                     if args.description_file:
                         command += ["--description-file", str(args.description_file)]
-                    if args.dose > 0:
+                    if args.dose > 0 or (arm == "live" and args.live_layout.startswith("qwen-")):
                         command += ["--judge", str(args.judge), "--dose", str(args.dose)]
                 if arm == "oracle":
                     command += ["--oracle-layout", args.oracle_layout] + (["--oracle-trust"] if args.oracle_trust else [])
@@ -257,7 +259,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="a saved tool listing (name, description, inputSchema), so the oracle and live arms need no fixture")
     parser.add_argument("--tasks", nargs="*")
     parser.add_argument("--maps", type=pathlib.Path, help="folder of <snapshot>.map.json topical maps, for the live arm")
-    parser.add_argument("--live-layout", default="full", help="live arm: full or focus")
+    parser.add_argument("--live-layout", choices=("full", "focus", "qwen-focus"), default="full")
     parser.add_argument("--live-decline", action="store_true", help="live arm: apply the decline rule first")
     parser.add_argument("--oracle-layout", default="passages", help="oracle arm: passages or ranges")
     parser.add_argument("--oracle-trust", action="store_true", help="oracle arm: add the line saying what need not be read again")
@@ -267,14 +269,15 @@ def main(argv: list[str] | None = None) -> int:
                         help="stop each session after this many round trips (to collect first calls cheaply)")
     parser.add_argument("--judge", type=pathlib.Path, help="state file of a running arbiter_judge_service.py")
     parser.add_argument("--dose", type=int, default=0, help="judgments a call the model spends choosing passages")
+    parser.add_argument("--checked-windows", action="store_true")
     args = parser.parse_args(argv)
     if args.command == "report":
         return report(args)
     if not args.model or ("tool" in args.arms and args.handle is None) or (
             set(args.arms) & {"oracle", "live"} and args.handle is None and args.tool_file is None):
         parser.error("run needs --model, and --handle for the tool arm")
-    if args.dose > 0 and args.judge is None:
-        parser.error("--dose needs --judge")
+    if (args.dose > 0 or ("live" in args.arms and args.live_layout == "qwen-focus")) and args.judge is None:
+        parser.error("model scoring needs --judge")
     return run(args)
 
 

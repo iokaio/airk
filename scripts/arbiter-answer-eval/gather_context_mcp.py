@@ -141,7 +141,7 @@ def oracle_backend(task: dict, snapshot: Path, layout: str = "passages", trust: 
     return call
 
 
-def live_backend(source: Path, map_file: Path, layout: str = "full", decline: bool = False):
+def live_backend(source: Path, map_file: Path, layout: str = "full", decline: bool = False, file_score=None):
     """Answer every call from the live files and the topical map (``live_gather.py``); no service is called.
 
     With ``decline`` the approved decline rule (``gather_decline.py``) is applied first, and a declined
@@ -164,7 +164,12 @@ def live_backend(source: Path, map_file: Path, layout: str = "full", decline: bo
                                              "message": gather_decline.refusal(seen)}},
                                   ensure_ascii=False, separators=(",", ":"))
                 return text, True, text.encode("utf-8")
-        brief = gather(repository, arguments)
+        if layout == "qwen-focus":
+            import qwen_file_trial
+            common.require(file_score is not None and gather is live_gather.gather, "Qwen file ranking requires the original topical map and a scorer")
+            brief = qwen_file_trial.live_reply(repository, arguments, file_score)
+        else:
+            brief = gather(repository, arguments)
         if layout == "focus":
             brief = live_gather.focus(repository, brief)
         text = json.dumps(brief, ensure_ascii=False, separators=(",", ":"))
@@ -188,14 +193,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--oracle-complete", action="store_true")
     parser.add_argument("--live-source", type=Path, help="answer from these live files and --live-map instead of the service")
     parser.add_argument("--live-map", type=Path)
-    parser.add_argument("--live-layout", choices=("full", "focus"), default="full")
+    parser.add_argument("--live-layout", choices=("full", "focus", "qwen-focus"), default="full")
     parser.add_argument("--live-decline", action="store_true")
     parser.add_argument("--judge", type=Path, help="state file of a running arbiter_judge_service.py")
     parser.add_argument("--dose", type=int, default=0, help="judgments a call the model spends choosing passages")
     args = parser.parse_args(argv)
     score = None
-    if args.dose > 0:
-        common.require(args.judge is not None, "--dose needs --judge")
+    if args.dose > 0 or args.live_layout.startswith("qwen-"):
+        common.require(args.judge is not None, "model scoring needs --judge")
         address = json.loads(args.judge.read_text(encoding="utf-8"))["address"]
         score = lambda instruction, pairs: arbiter_judge_service.score(address, instruction, pairs)  # noqa: E731
     common.require(args.handle is not None or args.oracle_task is not None or args.live_source is not None,
@@ -206,7 +211,7 @@ def main(argv: list[str] | None = None) -> int:
     server = Server(tool=tool, repo=args.repo, log_dir=args.log_dir, instructions=instructions,
                     backend=(oracle_backend(json.loads(args.oracle_task.read_text(encoding="utf-8")), args.oracle_snapshot,
                                             args.oracle_layout, args.oracle_trust, args.oracle_complete)
-                             if args.oracle_task else live_backend(args.live_source, args.live_map, args.live_layout, args.live_decline) if args.live_source
+                             if args.oracle_task else live_backend(args.live_source, args.live_map, args.live_layout, args.live_decline, score) if args.live_source
                              else fixture_backend(handle, args.call_timeout)), max_calls=args.max_calls,
                     score=score, dose=args.dose)
     mcp_wrapper.serve(server, sys.stdin.buffer, sys.stdout.buffer)
