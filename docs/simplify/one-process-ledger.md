@@ -21970,3 +21970,7 @@ TYAI\tdotn, verified Windows SID and default owner S-1-5-21-3678370870-385864241
 The frozen call, map and control identities are recorded in the preceding trial receipts and source. The baseline all-spread receipt hash was `d70cd9a02318df5be03c84e5961fbfd5d3ac3d1b95b8c4e5c8ecefe92a93f544`. New private receipt `replay/qwen-file-top40-r1.jsonl`, SHA-256 `97ef8c44a00e7c23c54fea7e7d7113ce0d757cd80a4d6fb528b35837a31f7e9d`, contains scores for 800 pairs, clipping, timing, all note stages and reference ranks. The [round 1 results](../arbiter/topical-index-research.md#round-1-munarium-t1) record coverage and regressions. All 20 controls reproduced. Nine focused regressions passed. Keep Qwen for further evaluation. Agent cost, judged task correctness and native behavior remain unmeasured.
 
 Changed-document links, instruction equality and whitespace passed. The repository-wide check stopped on the previously verified historical guidance.rs link.
+
+### 27 November 2026 — Qwen passage budget comparison
+
+Windows, same verified TYAI\tdotn account and owner as the Qwen trial, base bd863199. Ran python -B qwen_budget_replay.py <campaign> 20000 with the frozen Qwen scores. Private receipt replay/qwen-budget-20000-r1.jsonl SHA-256 20c735d2a3acadd0bcc0df6a6ee7748f5df6d83d09347c9199383bdb6a37d9a2. The 20 controls matched all note stages and byte counts. The larger cap gained six qualifying passages for 75,154 extra passage bytes. No inference ran. Seven focused regressions passed. The proposed Aardvark cap remains 14,000 bytes.

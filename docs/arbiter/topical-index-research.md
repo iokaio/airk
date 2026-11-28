@@ -437,6 +437,8 @@ Munarium-T1 stayed at two fully qualifying notes out of five. Its N5 file fell f
 
 The A6000 loaded and block-rounded the local weights in 15.16 s. Warm scoring of 40 pairs took a median 3.31 s per task (2.27–4.26 s), 66.04 s total across the 20 calls. Three of 800 pairs hit the 1,024-token limit. The timing covers tokenization and scoring. The replay shared deterministic scans between arms and provides no independent end-to-end candidate latency. Keep this as the stronger replay candidate. The regression cases and paired agent cost and correctness remain open before a port decision.
 
+**Qwen passage budget, 27 November 2026.** Replayed all 20 saved top-40 orders at passage caps of 14,000 and 20,000 bytes. The 14,000-byte controls reproduced every note and byte count. Fully covered notes rose from 40 to 46 of 113 across five tasks, with no note regressing. Three additional missed notes gained a file pointer. Actual passage bytes rose from 254,878 to 330,032 across the calls (29.5 percent). Bookbuilder-T1, Munarium-A1, C2 and N-W1 gained one qualifying passage each, and Munarium-N-A1 gained two. Munarium-T1 stayed at two fully covered notes while passage bytes rose from 13,984 to 19,965. Retain the 14,000-byte default for Aardvark. The larger cap is a candidate for measuring actual model spending and correctness on a task where it changes coverage.
+
 From 27 November 2026 every agent test series is named after an animal or
 insect, each starting with the next letter of the alphabet. The first is
 Aardvark.
