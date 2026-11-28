@@ -1427,3 +1427,10 @@ python -B scripts/arbiter-answer-eval/arbiter_judge_service.py --model $checkpoi
 python -B scripts/arbiter-answer-eval/agent_cost_batch.py run --campaign $campaign --series dose150-sonnet-r1 --model claude-sonnet-5-5 --arms tool --handle $handle --instructions-file $guidance --judge $judgeState --dose 150
 python -B -m unittest discover -s scripts/arbiter-answer-eval -p 'test_gather_context_dose.py'
 ~~~
+
+### Comparing topical ranking experiments
+
+Run `python -B focus_rank_trial.py <campaign> baseline score-only sibling-test project direct-doc direct-passage spread all-locations all-spread short-spread` from this folder.
+The runner reads the two frozen source snapshots, topical maps, recorded first calls and scenario notes under the campaign directory. Redirect stdout to a fresh private JSONL receipt. Each row gives one task and rule, ranks for the located reference files, the first six files, and the focused replay classification for each located essential note. Every condition starts from the same retained language rule. Scores use the same classifier and census treatment as `live_gather.py replay --layout focus`. Multiple conditions share exact term scans within a task, so use separate single-condition runs for timing.
+
+The score-only trial gives extra second-hop terms a weight of 0.15. Sibling-test and project links use 0.15 of the strongest reached source score and introduce no lines. The document trial multiplies a matched document's score by the reciprocal of its usual role weight when an explicit anchor, quote or named identifier matched. Direct-passage uses the number of those terms in a range as its primary sort key. Spread gives each of the first six files one opportunity to supply a passage under the existing byte budget. All-locations presents the original ranked ranges to focus before the full reply trims them. All-spread combines that input with spread. Short-spread then limits each candidate range and merge to the existing 14-line passage size. Run `python -B -m unittest test_focus_rank_trial` for the synthetic controls.

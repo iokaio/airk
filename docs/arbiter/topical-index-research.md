@@ -369,6 +369,27 @@ add their lines to the files that hold them, which steers passage choice;
 `rank_check.py` cannot see that, so every rule must also pass the replay.
 The handoff page names the score-only version to try next.
 
+**Ranking and focused passages, Windows free replay, 27 November 2026.** Each condition used the same first calls on 20 tasks, 168 task/file pairs and 113 located essential notes. The control reproduced all 113 retained note classifications. “At lines” includes a qualifying passage, location or partial overlap under the existing replay classifier. “At file” includes those line hits. Counts describe the recorded first reply. Agent correctness and spending require a separate series.
+
+| Condition | First six | Ranks 7–16 | Unreached | At lines | At file |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Retained language rule | 47 | 25 | 25 | 28 | 43 |
+| Extra hop terms, score only | 46 | 30 | 20 | 29 | 43 |
+| Sibling tests by source name | 47 | 25 | 24 | 28 | 43 |
+| Nearest unique ancestor project | 47 | 25 | 23 | 28 | 43 |
+| Boost documents with a literal request match | 41 | 36 | 25 | 25 | 42 |
+| Prefer direct terms when choosing passages | 47 | 25 | 25 | 28 | 43 |
+| Give each of six files a first turn | 47 | 25 | 25 | 30 | 52 |
+| Offer focus the locations before full-layout trimming | 47 | 25 | 25 | 28 | 44 |
+| Both focus changes | 47 | 25 | 25 | 30 | 53 |
+| Both focus changes with 14-line excerpts | 47 | 25 | 25 | 29 | 53 |
+
+Extra score-only hops found five reference files at ranks 113–283 and exchanged three first-six gains for four losses. Their mean gather time was 9.57 seconds versus the retained run’s 5.3 seconds. Direct document matches moved 12 of 22 document references into the first sixteen, up from two, at the cost of six first-six references overall. File links recovered one sibling test at rank 109 and two project manifests at ranks 87 and 90. None changed an essential note classification.
+
+The most promising condition gives six files a first turn and selects from ranges before the full reply trims them. First-six membership stayed identical on every task. Four notes gained passages and two fell from passage to file, on munarium-C2 and munarium-N-C4. The missed count fell from 70 to 60. Keep this as a replay candidate. Its effect on agent cost and correctness is open. Uniformly shortening excerpts reduced line hits from 30 to 29 and fully qualifying passages from 28 to 26.
+
+On munarium-T1 the retained ranking already places the three files containing all five essential notes at ranks 1, 2 and 6. The full reply reduces 62 candidate locations to ten and excludes every location from the sixth file, `_specs.py`. With both focus changes the reply points to files for all five notes and still covers only two at their lines. Even the entire 62-location pool qualifies only those same two. The next experiment should change how candidate ranges are chosen within files. Use each caller-supplied need to nominate a range, deduplicate overlaps, and compare against the present four ranges per file under the same limits. Check all 20 calls for lost passages. Hold the paid series until authorized.
+
 From 27 November 2026 every agent test series is named after an animal or
 insect, each starting with the next letter of the alphabet. The first is
 Aardvark.

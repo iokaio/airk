@@ -21932,3 +21932,19 @@ baseline remains paused at the Windows review.
 - No-reread instruction measured, 27 November 2026 (`t1-oracle-noreread-r1`, same conditions as `t1-oracle-assure-r1`): median $0.589, 14.6 percent lower, 133 KB own reads; within noise of no line. A traced session still made 12 searches and 12 reads after the call. The 40.8 percent line's effect came from its completeness claim and its instruction not to search further.
 - Completeness line measured, 27 November 2026 (`t1-oracle-complete-r1`, `--oracle-complete`): median $0.529, 23.3 percent lower, 122 KB own reads, within noise of no line; 5 of 5 judged correct (verdicts in the series' `verdicts.json`). Untested part of the 40.8 percent line: the partial-read instruction.
 - Decline served, 27 November 2026 (`decline-sonnet-r1`, `--live-decline`, 5 repeats each): munarium-N-C2 $0.125 against $0.119 unaided (4.4 percent dearer; the prototype reply was 74.8 percent dearer), bookbuilder-N-C4 $0.186 against $0.136 (36.9 percent dearer; prototype 82.9). 10 of 10 judged correct. The refusal's file list was wrong on bookbuilder-N-C4 (it named the Vue views defining the setting flags); after the refusal agents read AGENTS.md and CLAUDE.md, which unaided sessions did not.
+
+
+### 27 November 2026 — free topical ranking and focused-passage replay
+
+On Windows, TYAI\tdotn (SID S-1-5-21-3678370870-3858642417-826968105-1002) ran the frozen first calls from base commit `89c1cdb37dad42a4a5095ad04af2344eb45f3397`. The [round 1 research table](../arbiter/topical-index-research.md#round-1-munarium-t1) gives the paired totals and regressions. The retained baseline reproduced all 113 classifications over 20 tasks. The best aggregate candidate preserves the 47 first-six references, gives 30 line hits and points at files for 53 notes. munarium-T1 has only two essential line hits anywhere in the retained 62-range candidate pool. Next action is a free trial of range nomination per caller-supplied need. Paid cost and correctness evaluation remain pending.
+
+Private receipts under the campaign's `replay/` directory, in trial order (SHA-256):
+- `score-only-hop-015-r1.jsonl` — `c6194fc0ef2c9961847c0330f45c3ac28e8939162788196027daea90a2d8b225`.
+- `independent-rank-rules-r1.jsonl` — `6eb94cbeeeee0bb2898326f178dc6704db2e92c59604bb19111e8ccbc0ec529f`.
+- `focus-spread-r1.jsonl` — `6e7e8abe3ae19526cee2743e67ab741baca0d1090daF85ee142c1f6319d1fe7a`.
+- `focus-before-trim-r1.jsonl` — `d70cd9a02318df5be03c84e5961fbfd5d3ac3d1b95b8c4e5c8ecefe92a93f544`.
+- `focus-short-spread-r1.jsonl` — `f01e62471c4acb437169594c8aba201b56d8ab49c96b1108c3e8d048551476b0`.
+
+Reproduce with `python -B focus_rank_trial.py <campaign> <rules>` from the evaluation harness. Conditions by receipt were `score-only` (original driver selected `--extra-hop-weight 0.15`), `baseline sibling-test project direct-doc direct-passage`, `spread`, `all-locations all-spread`, and `short-spread`. Calls SHA-256 `1ac98ee01e868199af8bb19119cdc234e0d9e7112a530cceda68f6bfe9d2b054`. The Bookbuilder and Munarium map SHA-256 values were `6fbbf78afd16df9831fdd0f937dda64c9c1b1c4e9158610f07ba2bb1b731b528` and `d4f399dadae9dd9a877f183f0ed382b8f632af086c48e0823e155b4e2845c6de`. Self-review and Python validation covered 19 focused tests. Eight initially stopped in fixture setup under the Windows output guard and passed using individually preallocated, audited fixture paths with the tests' native cleanup. The experiments used no model sessions.
+
+Changed-document links, whitespace, instruction equality, self-spawn and I2/I3 checks passed. The repository-wide check stopped at the pre-existing historical link from 'docs/history/airk-feature-review.md' to the removed 'crates/airk-core/src/guidance.rs'. Both conditions were verified at the base commit.

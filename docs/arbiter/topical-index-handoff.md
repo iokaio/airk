@@ -6,6 +6,10 @@ sections of [topical-index-research.md](topical-index-research.md). The
 earlier version of this page (Fable's stop of the same day) is in Git
 history; everything it listed as a loose end is done.
 
+## Subsequent Windows replay
+
+The free trials described below have run. The [round 1 research results](topical-index-research.md#round-1-munarium-t1) record all conditions. Broader second-hop scoring lost a first-six reference. Sibling and project links improved only deep ranks. Giving each file a first passage opportunity before full-layout truncation produced 30 of 113 notes at the lines and 53 at the file, versus 28 and 43, with two passage regressions. On munarium-T1 even the full pre-truncation pool covers only two of five notes at their lines. Resume with need-specific range nomination inside the ranked files. The maintained runner and usage are in [the harness README](../../scripts/arbiter-answer-eval/README.md#comparing-topical-ranking-experiments). Paid work awaits authorization.
+
 ## The one limit on this handoff
 
 **Run free checks only.** A cost series (`series.ps1`, `agent_cost_run.py`,

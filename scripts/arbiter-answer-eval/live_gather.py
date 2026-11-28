@@ -157,7 +157,9 @@ def request_terms(arguments: dict, index: dict) -> tuple[list[dict], list[str]]:
     return list(terms.values()), words
 
 
-def gather(repository: Repository, arguments: dict, trace: dict | None = None) -> dict:
+def gather(repository: Repository, arguments: dict, trace: dict | None = None, *,
+           extra_hop_weight: float = 0, file_rule=None, direct_passages: bool = False,
+           short_passages: bool = False) -> dict:
     """The brief for one call, from the live files. ``trace``, when given, receives the final file
     ranking with scores and each ranked file's matched terms (``rank_check.py``); the brief is the same."""
     started = time.monotonic()
@@ -171,7 +173,7 @@ def gather(repository: Repository, arguments: dict, trace: dict | None = None) -
     files_total = len(repository.texts)
     searched: set[str] = set()
 
-    def count(term: dict) -> None:
+    def count(term: dict, *, score_only: bool = False) -> None:
         """Search for one term everywhere and credit the files that hold it."""
         if term["term"] in searched:
             return
@@ -189,10 +191,16 @@ def gather(repository: Repository, arguments: dict, trace: dict | None = None) -
             return
         weight = math.log(1 + files_total / len(found)) * {"anchor": 2.0, "quoted": 2.0, "named": 2.0, "wiring": 0.9,
                                                            "user": 0.7, "refers": 0.6}.get(term["source"], 1.0)
+        if score_only:
+            weight *= extra_hop_weight
         for path, lines in found.items():
             defines = term["term"] in index["files"].get(path, {}).get("defines", {})
             score[path] = score.get(path, 0.0) + weight * (1.6 if defines else 1.0)
-            held.setdefault(path, {})[term["term"]] = lines
+            matches = held.setdefault(path, {})
+            if not score_only:
+                matches[term["term"]] = lines
+        if score_only:
+            return
         census.append({"term": term["term"], "occurrences": occurrences, "files": len(found), "found": found,
                        **({"via": term["source"]} if hop else {})})
 
@@ -256,8 +264,14 @@ def gather(repository: Repository, arguments: dict, trace: dict | None = None) -
                     key = match.group(1) or match.group(2)
                     hops.setdefault(key, {"term": key, "source": "wiring", "exact": bool(match.group(2))})
     order = {"wiring": 0, "user": 1, "refers": 2}
-    for term in sorted(hops.values(), key=lambda term: (order[term["source"]], term["term"]))[:HOP_TERMS]:
+    ordered_hops = sorted(hops.values(), key=lambda term: (order[term["source"]], term["term"]))
+    for term in ordered_hops[:HOP_TERMS]:
         count(term)
+    if extra_hop_weight:
+        for term in ordered_hops[HOP_TERMS:]:
+            count(term, score_only=True)
+    if file_rule:
+        file_rule(repository, terms, score, held)
     ranked = sorted((path for path in score if path in held), key=lambda path: (-fitted(path), path))
     if trace is not None:
         trace["ranked"] = [(path, round(fitted(path), 3)) for path in ranked]
@@ -265,6 +279,7 @@ def gather(repository: Repository, arguments: dict, trace: dict | None = None) -
         trace["terms"] = [term["term"] for term in terms]
     top = ranked[:TOP_FILES]
     ranges = []
+    direct = {term["term"] for term in terms if term["source"] in ("anchor", "quoted", "named")}
     for path in top:
         record, lines = index["files"].get(path, {}), repository.texts[path]
         starts = sorted({line for numbers in record.get("defines", {}).values() for line in numbers})
@@ -276,16 +291,22 @@ def gather(repository: Repository, arguments: dict, trace: dict | None = None) -
                 first = before[-1] if before and number - before[-1] <= RANGE_LINES else max(1, number - 3)
                 last = min(after[0] - 1 if after else len(lines), first + RANGE_LINES - 1, len(lines))
                 last = max(last, min(number + 2, len(lines)))
+                if short_passages:
+                    first = max(first, number - PASSAGE_LINES // 2)
+                    last = min(last, first + PASSAGE_LINES - 1)
                 spans.append([first, last, {term}])
         spans.sort(key=lambda span: (span[0], span[1]))
+        merge_limit = PASSAGE_LINES if short_passages else RANGE_LINES * 2
         merged: list[list] = []
         for span in spans:
-            if merged and span[0] <= merged[-1][1] + 1 and max(span[1], merged[-1][1]) - merged[-1][0] < RANGE_LINES * 2:
+            if merged and span[0] <= merged[-1][1] + 1 and max(span[1], merged[-1][1]) - merged[-1][0] < merge_limit:
                 merged[-1][1] = max(merged[-1][1], span[1])
                 merged[-1][2] |= span[2]
             else:
                 merged.append(span)
         merged.sort(key=lambda span: (-len(span[2]), span[0]))
+        if direct_passages:
+            merged.sort(key=lambda span: -len(direct.intersection(span[2])))
         for first, last, matched in merged[:RANGES_PER_FILE]:
             head = next((line.strip() for line in lines[first - 1:last] if line.strip()), "")
             ranges.append({"at": f"{path}:{first}-{last}", "why": head[:80] + " | " + ", ".join(sorted(matched))[:80],
@@ -327,6 +348,8 @@ def gather(repository: Repository, arguments: dict, trace: dict | None = None) -
                         "where": [{"at": item["at"], "why": item["why"]} for item in ranges]}],
              "use": gather_context_dose.PASSAGE_ASSURANCE, "passages": passages, "outline": outline,
              "next": {"paths": ranked[TOP_FILES:TOP_FILES + 12] + guidance[:4]}}
+    if trace is not None:
+        trace["all_locations"] = list(brief["needs"][0]["where"])
     while len(json.dumps(brief, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > MAX_BRIEF_BYTES:
         if brief["passages"]:
             brief["passages"].pop()
@@ -355,7 +378,7 @@ FOCUS_TERMS = 12
 FOCUS_USE = gather_context_dose.PASSAGE_ASSURANCE
 
 
-def focus(repository: Repository, brief: dict) -> dict:
+def focus(repository: Repository, brief: dict, *, spread: bool = False) -> dict:
     """The brief narrowed to what the first task's layout experiments favoured: few files, their text, and a line
     saying the text need not be read again.
 
@@ -365,7 +388,19 @@ def focus(repository: Repository, brief: dict) -> dict:
     ``FOCUS_PASSAGE_BYTES``, lists the next few locations without text, and drops the outline, the path list and
     the per-line census."""
     files, kept, passages, rest, spent = [], [], [], [], 0
-    for row in brief["needs"][0]["where"]:
+    locations = brief["needs"][0]["where"]
+    if spread:
+        # Give each of the first six files one opportunity under the shared byte budget.
+        first, remaining, seen = [], [], set()
+        for location in locations:
+            path = location["at"].rpartition(":")[0]
+            if path not in seen and len(seen) < FOCUS_FILES:
+                seen.add(path)
+                first.append(location)
+            else:
+                remaining.append(location)
+        locations = first + remaining
+    for row in locations:
         path, _, lines = row["at"].rpartition(":")
         first, _, last = lines.partition("-")
         if path not in files and len(files) >= FOCUS_FILES:
