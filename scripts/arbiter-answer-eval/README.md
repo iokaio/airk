@@ -1460,3 +1460,7 @@ For the protected-leader replay, run `python -B qwen_leader_replay.py <campaign>
 For the live trial, start `arbiter_judge_service.py --model <local-checkpoint> --bits 8 --state <private-state.json>` in the provisioned CUDA environment. Pass `--live-layout qwen-focus --judge <private-state.json>` through the cost batch or single-session runner. The live MCP backend scores the current request and uses the retained all-spread selector. `qwen_live_parity.py <campaign> <state> <task-id> <private-log-dir>` checks the complete file order and compares the stdio reply with the frozen-score replay, excluding only elapsed time.
 
 On Windows, `--checked-windows` enables the same-human fixture preparation, Edit/Write preflight and post-write hooks, and the pre-diff ownership audit in `checked_cost_fixture.ps1`. The checked runner needs a new session folder beneath an existing verified campaign series directory. The user authorizes external dataset transfer before paid sessions.
+
+## Gather Context skill experiment
+
+The evaluation-only airk-eval plugin contains the portable gather-evidence SKILL.md. Pass --skill-mode explicit or --skill-mode natural to agent_cost_run.py to load it. Explicit mode asks the agent to invoke the skill. Omitting the option preserves the original control. Verify skill discovery, invocation and successful tool results in stream.jsonl. Compare patches on the frozen source with matched controls.

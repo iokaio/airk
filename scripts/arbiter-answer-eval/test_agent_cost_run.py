@@ -52,6 +52,21 @@ class SummaryTest(unittest.TestCase):
         self.assertIn("Bash", plain[plain.index("--disallowedTools") + 1].split(","))
 
 
+    def test_skill_offers_only_the_named_skill_permission_and_keeps_shell_blocked(self):
+        config = Path("c.json")
+        control = runner.command("claude", "m", "live", config, 5)
+        treatment = runner.command("claude", "m", "live", config, 5, skill=True)
+        self.assertIn("--disable-slash-commands", control)
+        self.assertNotIn("--plugin-dir", control)
+        self.assertEqual(set(treatment[treatment.index("--tools") + 1].split(",")),
+                         {"Read", "Grep", "Glob", "Edit", "Write", "Skill", "mcp__airk__gather_context"})
+        allowed = treatment[treatment.index("--allowedTools") + 1].split(",")
+        self.assertIn("Skill(airk-eval:gather-evidence)", allowed)
+        self.assertNotIn("Skill", allowed)
+        denied = treatment[treatment.index("--disallowedTools") + 1].split(",")
+        self.assertTrue({"Bash", "PowerShell", "Agent", "WebFetch"}.issubset(denied))
+
+
 class ChangesTest(unittest.TestCase):
     def test_changed_added_and_removed_files_are_reported_with_snapshot_lines(self):
         with tempfile.TemporaryDirectory() as folder:

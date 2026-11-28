@@ -131,11 +131,17 @@ def changes(snapshot: Path, work: Path) -> tuple[str, list[dict]]:
     return "".join(line if line.endswith("\n") else line + "\n" for line in patch), rows
 
 
-def command(claude: str, model: str, arm: str, mcp_config: Path, max_round_trips: int) -> list[str]:
+def command(claude: str, model: str, arm: str, mcp_config: Path, max_round_trips: int, skill: bool = False) -> list[str]:
     allowed = list(FILE_TOOLS) + ([f"mcp__{SERVER}__{PUBLIC_TOOL}"] if arm in ("tool", "oracle", "live") else [])
+    permissions = allowed + (["Skill(airk-eval:gather-evidence)"] if skill else [])
+    offered = allowed + (["Skill"] if skill else [])
+    denied = [name for name in DENIED if not (skill and name == "Skill")]
+    if skill:
+        denied.extend(["Skill(doctor)", "Skill(plugin-authoring)"])
+    discovery = ["--plugin-dir", str(HERE / "airk-eval")] if skill else ["--disable-slash-commands"]
     return [claude, "-p", "--model", model, "--setting-sources", "", "--strict-mcp-config",
-            "--mcp-config", str(mcp_config), "--tools", ",".join(allowed), "--allowedTools", ",".join(allowed),
-            "--disallowedTools", ",".join(DENIED), "--permission-mode", "dontAsk", "--disable-slash-commands",
+            "--mcp-config", str(mcp_config), "--tools", ",".join(offered), "--allowedTools", ",".join(permissions),
+            "--disallowedTools", ",".join(denied), "--permission-mode", "dontAsk", *discovery,
             "--no-session-persistence", "--system-prompt", SYSTEM_PROMPT, "--max-turns", str(max_round_trips),
             "--output-format", "stream-json", "--verbose"]
 
@@ -177,6 +183,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-round-trips", type=int, default=80)
     parser.add_argument("--timeout", type=float, default=2400.0)
     parser.add_argument("--checked-windows", action="store_true", help="preflight and audit Windows session outputs")
+    parser.add_argument("--skill-mode", choices=("explicit", "natural"))
     args = parser.parse_args(argv)
     if (args.dose > 0 or (args.arm == "live" and args.live_layout == "qwen-focus")) and args.judge is None:
         parser.error("model scoring needs --judge")
@@ -226,21 +233,33 @@ def main(argv: list[str] | None = None) -> int:
         servers[SERVER] = {"command": server[0], "args": server[1:]}
     mcp_config = args.output / "mcp-config.json"
     mcp_config.write_text(json.dumps({"mcpServers": servers}, indent=2) + "\n", encoding="utf-8", newline="\n")
-    argv_out = command(common.find_claude(), args.model, args.arm, mcp_config, args.max_round_trips)
+    argv_out = command(common.find_claude(), args.model, args.arm, mcp_config, args.max_round_trips, bool(args.skill_mode))
     env = common.clean_child_env()
+    settings = {}
+    if args.skill_mode:
+        settings["enabledPlugins"] = {"cc-plugin-plugin-authoring@builtin": False}
+        settings["skillOverrides"] = {"doctor": "off", "plugin-authoring": "off"}
+        env["DISABLE_DOCTOR_COMMAND"] = "1"
     if args.checked_windows:
         hooks = {}
         for event, mode in (("PreToolUse", "BeforeTool"), ("PostToolUse", "AfterTool")):
             cmd = subprocess.list2cmdline(["pwsh", "-NoProfile", "-File", guard.as_posix(), "-Mode", mode, "-Session", args.output.resolve().as_posix()])
             hooks[event] = [{"matcher": "Edit|Write", "hooks": [{"type": "command", "command": cmd}]}]
-        argv_out.extend(["--settings", json.dumps({"hooks": hooks})])
+        settings["hooks"] = hooks
         env.update({name: str(args.output / "tmp") for name in ("TEMP", "TMP", "TMPDIR", "CLAUDE_CODE_TMPDIR")})
+    if settings:
+        argv_out.extend(["--settings", json.dumps(settings)])
+    prompt = task["instruction"]
+    if args.skill_mode:
+        env["CLAUDE_CODE_DISABLE_BUNDLED_SKILLS"] = "1"
+        if args.skill_mode == "explicit":
+            prompt = "Invoke the airk-eval:gather-evidence skill for this task.\n\n" + prompt
     started, timed_out = time.monotonic(), False
     with (args.output / "stream.jsonl").open("wb") as stream, (args.output / "stderr.log").open("wb") as errors:
         process = subprocess.Popen(argv_out, cwd=work, stdin=subprocess.PIPE, stdout=stream, stderr=errors,
                                    env=env, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         try:
-            process.communicate(task["instruction"].encode("utf-8"), timeout=args.timeout)
+            process.communicate(prompt.encode("utf-8"), timeout=args.timeout)
         except subprocess.TimeoutExpired:
             timed_out = True
             common.kill_tree(process.pid)
@@ -271,6 +290,9 @@ def main(argv: list[str] | None = None) -> int:
                                                                                tool["description"].encode("utf-8")),
                                                                            "guidance": args.instructions_file.name if args.instructions_file else None}},
                "changed_files": changed}
+    if args.skill_mode:
+        session["skill"] = {"mode": args.skill_mode, "sha256": common.sha256_file(
+            HERE / "airk-eval" / "skills" / "gather-evidence" / "SKILL.md")}
     with (args.output / "session.json").open("x", encoding="utf-8", newline="\n") as file:
         file.write(json.dumps(session, indent=2, sort_keys=True) + "\n")
     print(f"{task.get('repository')}-{task.get('slot')} {args.arm} {args.model} completed={session['completed']} "
