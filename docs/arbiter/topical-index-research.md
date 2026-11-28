@@ -443,12 +443,28 @@ The A6000 loaded and block-rounded the local weights in 15.16 s. Warm scoring of
 
 Of the five passages lost to plain Qwen, Bookbuilder-N-C2 N2 fell outside the six focused files and Munarium-N-W1 N6 fell outside the sixteen-file range pool. Relaxing only the byte cap restored the other three (Munarium-N-A1 N11 and Munarium-N-W1 N4 and N5). The leader rule restored N4 fully and N5 only partially. The 20,000-byte experiment above remains separate.
 
-A real loopback Qwen scorer and stdio MCP tool reproduced the 40-file order, exact source text, ranges, and full reply except elapsed time on Munarium-T1 (7 passages, 13,984 bytes), Bookbuilder-N-C3 (11, 9,739) and Munarium-N-C2 (18, 12,050). The first paid Aardvark launch was rejected by automatic approval review before a session started because it requires explicit authorization for the private task and source evidence sent to Anthropic. No Sonnet usage or agent correctness result exists for Aardvark.
+A real loopback Qwen scorer and stdio MCP tool reproduced the 40-file order, exact source text, ranges, and full reply except elapsed time on Munarium-T1 (7 passages, 13,984 bytes), Bookbuilder-N-C3 (11, 9,739) and Munarium-N-C2 (18, 12,050). The first paid Aardvark launch was rejected by automatic approval review before a session started because it requires explicit authorization for the private task and source evidence sent to Anthropic. The user subsequently authorized this transfer for Aardvark.
 
 From 27 November 2026 every agent test series is named after an animal or
 insect, each starting with the next letter of the alphabet. The first is
 Aardvark.
-### Resume point (27 November 2026)
+### Aardvark Sonnet results
+
+On 27 November 2026 the user authorized the private evidence transfer for this series. All 22 sessions completed on Windows with Claude Code 2.1.330 and `claude-sonnet-5-5`. The live arm offered Gather Context with local Qwen3-Reranker-4B, a 40-file rerank and a 14,000-byte passage cap. The change in cache-write lifetime triggered contemporaneous unaided controls. The 22 session receipts reported $2.4532 in total. The common-price fit reproduced their costs and valued all cache writes at $4 per million tokens.
+
+| Task (repeats per arm) | Median cost unaided → offered | Range unaided / offered | Median trips | Median Read calls | Median entering tokens | Correct unaided → offered | Called when offered |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Munarium-T1 (5) | $0.1900 → $0.1866 | $0.167–0.212 / $0.179–0.225 | 8 → 7 | 5 → 5 | 25,399 → 26,614 | 1/5 → 0/5 | 5/5 |
+| Bookbuilder-N-C3 (3) | $0.1026 → $0.0958 | $0.081–0.122 / $0.082–0.109 | 7 → 8 | 3 → 4 | 13,573 → 10,777 | 3/3 → 3/3 | 0/3 |
+| Munarium-N-C2 (3) | $0.0875 → $0.0853 | $0.085–0.096 / $0.085–0.088 | 7 → 6 | 5 → 3 | 11,251 → 11,237 | 3/3 → 3/3 | 0/3 |
+
+Munarium-T1 saved 1.8% at the median, inside the observed spread. Its historical $0.689 unaided median would overstate the saving. The median live reply was 22,221 bytes including metadata. Own-tool reads fell from 46,209 to 27,689 bytes. The five agents still made 21 Read calls after Gather, including 12 to files already excerpted. These counts include reads of other ranges in those files. On their actual queries, deterministic replay supplied eight fully covered passages across 25 essential-note opportunities and Qwen supplied ten. Every Qwen reply omitted the retry-class spec definition and lacked a qualifying passage for the retryability and delivery predicates.
+
+Direct review and offline pytest against the frozen client found four assisted patches and four controls reused HTTPX responses across sync and async cases. The fifth assisted patch expected an untyped HTTP 500 to be retried. The successful control passed all 68 cases. Every timeseries patch passed its six tests. All six Bookbuilder edits covered the shortcut on both tab states in source review, compiled both changed Vue scripts and templates, and passed the modified shortcut test assertions. Browser behavior was not exercised. Both spot tasks went unaided even when the tool was offered. Their results measure tool adoption only with respect to Qwen.
+
+Hold the Rust port. Before further paid ranking or budget comparisons, use the successful control and the failed patches to identify which repository passages could support a working offline test. Check their availability on the five saved queries. A fresh oracle comparison with executable correctness grading would establish how much benefit the current agent can realize from ideal evidence.
+
+### Historical resume point before Aardvark (27 November 2026)
 
 Work can be picked up from here by another session.
 
