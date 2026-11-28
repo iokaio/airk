@@ -360,6 +360,14 @@ later, 25 unreached; no truth file fell to a worse group. Focused replay
 pointed at the file (was 42). The language table moved from
 `gather_decline.py` to `live_gather.py`, which both now use. Next ranking
 targets: the 25 files no request term reaches, and documents.
+A second rule was tried and rejected: searching every second-hop term
+(not 24 cut alphabetically) at 0.15 weight. Files improved (47 in the
+first six, 29 more in the first sixteen, 20 unreached) but the focused
+replay (`replay/live-focus-hop-r1`) fell to 9 of 113 notes at the lines
+and 28 pointed at the file, at twice the time per call. Hop terms also
+add their lines to the files that hold them, which steers passage choice;
+`rank_check.py` cannot see that, so every rule must also pass the replay.
+The handoff page names the score-only version to try next.
 
 From 27 November 2026 every agent test series is named after an animal or
 insect, each starting with the next letter of the alphabet. The first is
