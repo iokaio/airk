@@ -1466,3 +1466,17 @@ On Windows, `--checked-windows` enables the same-human fixture preparation, Edit
 The evaluation-only airk-eval plugin contains the portable gather-evidence SKILL.md. Pass --skill-mode explicit or --skill-mode natural to agent_cost_run.py to load it. Explicit mode asks the agent to invoke the skill. Omitting the option preserves the original control. Verify skill discovery, invocation and successful tool results in stream.jsonl. Compare patches on the frozen source with matched controls.
 
 Run `python -B skill_session_evidence.py <series-directory>` to measure located essential notes shown by Gather and numbered Read results before the first edit. The report also counts subsequent Read calls and successful skill results. The all_notes measure also includes numbered matching and context lines from Grep. File listings and unnumbered snippets provide no line-coverage credit.
+## Testing the shipping AIRK skill
+
+Use `agent_cost_run.py --product-tools --skill-mode natural` with the normal task,
+snapshot, repository, output and live fixture handle arguments. Use `--arm tool`
+for native Gather Context, `live` for the retrieval prototype or `oracle` for
+source selected by the evaluator. Omit `--skill-mode` for the matched control.
+On Windows use `--checked-windows`. The handle must index the supplied snapshot
+and advertise the current seven public names. The harness copies the shipping
+`crates/airkctl/skills/airk-tools/SKILL.md` into a session-local Claude plugin
+outside the working checkout, then verifies its bytes. It uses the unified Rust MCP initialization guidance and leaves the task prompt
+alone. Inspect `session.json` for client-visible tools, skill digest, actual
+calls and completion, then grade the patch independently. The synthetic CLI
+double in `product_skill_smoke_cli.py` supports a wiring check only. It returns
+one canned definition and cannot measure retrieval quality or patch correctness.

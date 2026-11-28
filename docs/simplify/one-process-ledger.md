@@ -22006,3 +22006,26 @@ Private agent-cost/Badger/verdicts.json SHA-256 45fdf2d8289f8041fba8652e71e416cf
 Windows account and default owner TYAI\tdotn (SID S-1-5-21-3678370870-3858642417-826968105-1002), base ebe14c2b. The [proposed user-level skill](../../crates/airkctl/skills/airk-tools/SKILL.md) retains the Badger evidence-gathering workflow and adds selection guidance for the six other public tools. Self-review compared all seven names with the emitted Rust catalog and checked each tool description, connection scope and publication semantics against native source. The bundled skill validator passed. The frozen Badger instructions are unchanged. The draft has not been installed or tested in a production client.
 
 The CLI owns agent configuration writes. Explorer Connect invokes it; browser Admin currently presents a CLI command and inert manual text. Automatic CLI installation and client-side discovery verification remain pending. Exposing readiness to Admin requires a separate contract decision. Preserve manual recovery, client policies and existing user-authored files.
+### 27 November 2026 — Caribou production skill wiring
+
+Verified the Windows human TYAI\tdotn against the logged-in Explorer account.
+Two synthetic Sonnet sessions used the shipping skill bytes (SHA-256
+ee0100d4e84fafcbd5c116068e377a2f63c932850e61093877679af3958f8a18) and
+the seven Rust catalog names through the evaluation adapter. Both client
+initialization checks passed. The named-file question used Glob and Read,
+answered twelve and took three round trips. The indexed declaration used
+find_definition, answered catalog/parcel.py:3 and took two. Neither invoked
+the skill or Gather Context. Receipts are under agent-cost/Caribou-smoke in
+the private campaign root. This exercises natural discovery and routing
+against a synthetic CLI double. Native fixture and paired patch outcomes
+remain open. The frozen Munarium test_max_tokens.py lines 79–101 supply a
+real sync/async response factory for a hand-selected evidence comparison.
+Four fresh guided sessions paired each synthetic task with skill present and
+absent. All four completed with valid client catalogs and correct answers.
+Both named-file sessions used Glob and Read in three round trips. Both
+declaration sessions used find_definition in two. Neither treatment invoked
+the skill. Receipts are in the guided-* leaves of Caribou-smoke. The local
+oracle-only T1 task preserves the prompt and original notes and adds two
+source ranges. Its compact reply is 13,300 bytes and includes all seven
+essential passages. Grade any patches against the original T1 scenario.
+Validation passed 10 focused harness tests and git diff --check. The repository check stopped on the existing historical link to crates/airk-core/src/guidance.rs.

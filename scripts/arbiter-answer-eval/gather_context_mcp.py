@@ -197,6 +197,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--live-decline", action="store_true")
     parser.add_argument("--judge", type=Path, help="state file of a running arbiter_judge_service.py")
     parser.add_argument("--dose", type=int, default=0, help="judgments a call the model spends choosing passages")
+    parser.add_argument("--product-tools", action="store_true")
     args = parser.parse_args(argv)
     score = None
     if args.dose > 0 or args.live_layout.startswith("qwen-"):
@@ -214,6 +215,16 @@ def main(argv: list[str] | None = None) -> int:
                              if args.oracle_task else live_backend(args.live_source, args.live_map, args.live_layout, args.live_decline, score) if args.live_source
                              else fixture_backend(handle, args.call_timeout)), max_calls=args.max_calls,
                     score=score, dose=args.dose)
+    if args.product_tools:
+        import product_skill
+        common.require(handle is not None, "the product tool surface needs a native fixture")
+        def native_call(name, arguments):
+            outcome = common.call_tool(handle, name, args.repo, arguments, args.call_timeout,
+                                       strip_env=common.AGENT_STRIPPED_ENV)
+            if outcome.envelope is None:
+                return mcp_wrapper.Wrapper._reply(outcome)
+            return {**outcome.envelope, **({} if outcome.ok else {"isError": True})}
+        server = product_skill.ProductServer(server, product_skill.catalog(handle), native_call)
     mcp_wrapper.serve(server, sys.stdin.buffer, sys.stdout.buffer)
     return 0
 

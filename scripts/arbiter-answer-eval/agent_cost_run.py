@@ -42,6 +42,7 @@ if str(HERE) not in sys.path:
 
 import common  # noqa: E402
 import tool_names  # noqa: E402
+import product_skill  # noqa: E402
 
 SCHEMA = "airk.private.agent-cost-session/1"
 SERVER = "airk"
@@ -131,14 +132,20 @@ def changes(snapshot: Path, work: Path) -> tuple[str, list[dict]]:
     return "".join(line if line.endswith("\n") else line + "\n" for line in patch), rows
 
 
-def command(claude: str, model: str, arm: str, mcp_config: Path, max_round_trips: int, skill: bool = False) -> list[str]:
+def command(claude: str, model: str, arm: str, mcp_config: Path, max_round_trips: int, skill: bool = False,
+            product: bool = False) -> list[str]:
     allowed = list(FILE_TOOLS) + ([f"mcp__{SERVER}__{PUBLIC_TOOL}"] if arm in ("tool", "oracle", "live") else [])
-    permissions = allowed + (["Skill(airk-eval:gather-evidence)"] if skill else [])
+    skill_name = "airk-eval:gather-evidence"
+    plugin = HERE / "airk-eval"
+    if product:
+        allowed = list(FILE_TOOLS) + [f"mcp__{SERVER}__{name}" for name in tool_names.mcp_tools()]
+        skill_name, plugin = product_skill.QUALIFIED_NAME, mcp_config.parent / "airkctl"
+    permissions = allowed + ([f"Skill({skill_name})"] if skill else [])
     offered = allowed + (["Skill"] if skill else [])
     denied = [name for name in DENIED if not (skill and name == "Skill")]
     if skill:
         denied.extend(["Skill(doctor)", "Skill(plugin-authoring)"])
-    discovery = ["--plugin-dir", str(HERE / "airk-eval")] if skill else ["--disable-slash-commands"]
+    discovery = ["--plugin-dir", str(plugin)] if skill else ["--disable-slash-commands"]
     return [claude, "-p", "--model", model, "--setting-sources", "", "--strict-mcp-config",
             "--mcp-config", str(mcp_config), "--tools", ",".join(offered), "--allowedTools", ",".join(permissions),
             "--disallowedTools", ",".join(denied), "--permission-mode", "dontAsk", *discovery,
@@ -184,11 +191,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--timeout", type=float, default=2400.0)
     parser.add_argument("--checked-windows", action="store_true", help="preflight and audit Windows session outputs")
     parser.add_argument("--skill-mode", choices=("explicit", "natural"))
+    parser.add_argument("--product-tools", action="store_true", help="offer the native seven-tool catalog and use the shipping skill source")
     args = parser.parse_args(argv)
+    if args.product_tools and (args.arm not in ("tool", "oracle", "live") or not args.handle or args.skill_mode == "explicit"):
+        parser.error("--product-tools requires a scoped fixture and a tool arm, with natural discovery or no skill")
     if (args.dose > 0 or (args.arm == "live" and args.live_layout == "qwen-focus")) and args.judge is None:
         parser.error("model scoring needs --judge")
     task = json.loads(args.task.read_text(encoding="utf-8"))
     snapshot = args.snapshot.resolve(strict=True)
+    if args.product_tools:
+        handle = common.load_handle(args.handle.resolve(strict=True))
+        index = handle.index_id(args.repo)
+        records = common.read_json(handle.path)["indexes"]
+        roots = {Path(row["root"]).resolve(strict=True) for row in records.values() if row["index_id"] == index}
+        common.require(roots == {snapshot}, "native fixture index and working snapshot differ")
+        common.require(args.tool_file is None and args.description_file is None and args.instructions_file is None, "product tools use the fixture catalog")
+        product_catalog = product_skill.catalog(handle)
+        product_instructions = product_skill.guidance()
     work = args.output / "work"
     guard = HERE / "checked_cost_fixture.ps1"
     if args.checked_windows:
@@ -197,12 +216,24 @@ def main(argv: list[str] | None = None) -> int:
     else:
         args.output.mkdir(parents=True)
         shutil.copytree(snapshot, work)
+    if args.product_tools and args.skill_mode:
+        copy = args.output / "airkctl" / "skills" / "airk-tools" / "SKILL.md"
+        if args.checked_windows:
+            subprocess.run(["pwsh", "-NoProfile", "-File", str(guard), "-Mode", "StageSkill",
+                            "-Session", str(args.output), "-Snapshot", str(product_skill.SKILL)], check=True)
+        else:
+            copy.parent.mkdir(parents=True)
+            shutil.copyfile(product_skill.SKILL, copy)
+        common.require(common.sha256_file(copy) == common.sha256_file(product_skill.SKILL), "skill bytes differ")
     servers: dict = {}
     tool = None
     if args.arm in ("tool", "oracle", "live"):
         common.require(bool(args.repo) and (args.handle is not None or (args.tool_file is not None and args.arm != "tool")),
                        "the tool arm needs --handle and --repo; the oracle and live arms need --repo and --handle or --tool-file")
-        if args.tool_file is not None:
+        if args.product_tools:
+            tool = dict(next(tool for tool in product_catalog if tool["name"] == PUBLIC_TOOL))
+            tool.update(listed_name=PUBLIC_TOOL, description_source="build")
+        elif args.tool_file is not None:
             # A saved listing: the oracle and live arms then need no running fixture.
             tool = json.loads(args.tool_file.read_text(encoding="utf-8"))
             tool["description_source"] = args.tool_file.name
@@ -219,6 +250,9 @@ def main(argv: list[str] | None = None) -> int:
                   "--repo", args.repo, "--tool-file", str(tool_file), "--log-dir", str(args.output / "gather")]
         if args.handle is not None:
             server += ["--handle", str(args.handle.resolve())]
+        if args.product_tools:
+            args.instructions_file = args.output / "unified-guidance.txt"
+            args.instructions_file.write_text(product_instructions, encoding="utf-8")
         if args.instructions_file:
             server += ["--instructions-file", str(args.instructions_file.resolve(strict=True))]
         if args.dose > 0 or (args.arm == "live" and args.live_layout.startswith("qwen-")):
@@ -230,10 +264,12 @@ def main(argv: list[str] | None = None) -> int:
         if args.arm == "live":
             server += ["--live-source", str(snapshot), "--live-map", str(args.live_map.resolve(strict=True)),
                        "--live-layout", args.live_layout] + (["--live-decline"] if args.live_decline else [])
+        if args.product_tools:
+            server.append("--product-tools")
         servers[SERVER] = {"command": server[0], "args": server[1:]}
     mcp_config = args.output / "mcp-config.json"
     mcp_config.write_text(json.dumps({"mcpServers": servers}, indent=2) + "\n", encoding="utf-8", newline="\n")
-    argv_out = command(common.find_claude(), args.model, args.arm, mcp_config, args.max_round_trips, bool(args.skill_mode))
+    argv_out = command(common.find_claude(), args.model, args.arm, mcp_config, args.max_round_trips, bool(args.skill_mode), args.product_tools)
     env = common.clean_child_env()
     settings = {}
     if args.skill_mode:
@@ -292,13 +328,20 @@ def main(argv: list[str] | None = None) -> int:
                "changed_files": changed}
     if args.skill_mode:
         session["skill"] = {"mode": args.skill_mode, "sha256": common.sha256_file(
-            HERE / "airk-eval" / "skills" / "gather-evidence" / "SKILL.md")}
+            copy if args.product_tools else HERE / "airk-eval" / "skills" / "gather-evidence" / "SKILL.md")}
+    if args.product_tools:
+        expected = {f"mcp__{SERVER}__{name}" for name in tool_names.mcp_tools()}
+        offered = {name for name in session["tools_offered"] or [] if name.startswith("mcp__")}
+        events = common.read_jsonl(args.output / "stream.jsonl")
+        init = next((e for e in events if e.get("subtype") == "init"), {})
+        session["product_surface_valid"] = (expected == offered and set(init.get("skills") or []) ==
+                                            ({product_skill.QUALIFIED_NAME} if args.skill_mode else set()))
     with (args.output / "session.json").open("x", encoding="utf-8", newline="\n") as file:
         file.write(json.dumps(session, indent=2, sort_keys=True) + "\n")
     print(f"{task.get('repository')}-{task.get('slot')} {args.arm} {args.model} completed={session['completed']} "
           f"round_trips={session['round_trips']} cost=${session['cost_usd']} gather_calls={len(calls)} "
           f"changed={len(changed)} wall={wall}s", flush=True)
-    return 0
+    return 1 if args.product_tools and not (session["product_surface_valid"] and session["completed"] and session["exit_code"] == 0) else 0
 
 
 if __name__ == "__main__":
