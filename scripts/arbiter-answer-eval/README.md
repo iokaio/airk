@@ -1495,3 +1495,73 @@ and retains pytest output, exit status and hashes. Review the resulting test
 coverage against the task independently. If a test depends on the repository
 layout or changes files outside the supported test tree, verify it in a full
 copy of the same snapshot before assigning a verdict.
+
+### Verifying generated tests and attributing failures
+
+Grade the original generated patch in a fresh checkout with the frozen
+dependencies. Run the full changed test module with its sibling cases. Record
+collection errors, selected counts, failures and the patch digest. A passing
+single case is useful diagnostic evidence. The full-module result determines
+the execution verdict. Review what the tests assert separately from whether
+they run.
+
+For tests that exercise multiple clients or modes, share immutable scenario
+data. Construct resources that a consumer can mutate, bind or exhaust inside
+the case or handler that owns them. For example, a mock HTTP transport can
+store status codes and construct a response for each request:
+
+```python
+def scripted_transport(status_codes):
+    remaining = iter(status_codes)
+
+    def respond(request):
+        return httpx.Response(next(remaining))
+
+    return httpx.MockTransport(respond)
+```
+
+Create a new scripted transport for each test case. The same principle applies
+to iterators, readers, streams and other consumable test inputs. If a case
+passes alone and fails with another case, run each separately and run the pair
+in both orders. The checked Munarium grader accepts `-ProbeA` and `-ProbeB`
+with exact pytest node IDs from changed modules. Each probe records the actual
+nodes, order and exit status alongside the primary full-module result.
+Preserve both traces and investigate which object survives
+between cases. Re-run the full module after a repair.
+
+For a retrieval comparison, retain the first-pass patch and independent
+correctness score even when the failure is in a generated test. Record the
+failure mechanism separately from tool exposure. Check which passages the
+solver actually saw before editing and whether relevant evidence was missing,
+misapplied, or never requested. Use an independently working reference patch
+and a known failing patch when validating a new grader.
+
+For a repair experiment, give both arms the same verification opportunity.
+Send the failing test IDs and traceback, keep the task and assertions fixed,
+and allow one repair turn. Run the entire changed module again and check the
+behavioral assertions. Report first-pass and repaired outcomes, additional
+round trips and cost separately. A first-pass-only benchmark remains a
+first-pass measurement; an offline hand repair establishes a cause, not a
+model's ability to fix it.
+
+The checked paired repair workflow uses one archived patch per case and two
+fresh sessions. Freeze the case IDs and original session, patch and pytest log
+digests in the series design. Run `prepare_repair_case.ps1 -Mode Stage` on
+each case and `-Mode Verify` to compare its complete snapshot with the frozen
+source manifest. Run the original changed modules with
+`check_munarium_patch.ps1 -TraceFirstFailure` to capture the first failing
+short traceback without changing test order. Use the preparation script's
+`-Mode Prompts` with that diagnostic log. The generated `blind.json` and
+`feedback.json` share the original task and neutral repair instructions.
+
+Run `agent_cost_run.py --arm plain --checked-windows` with each task file and
+its case snapshot. Grade each result with `check_munarium_patch.ps1`, passing
+the original frozen snapshot and the archived `-ParentSession` alongside the
+new session and a fresh output directory. The grader applies both deltas in
+sequence and records the combined patch, a test inventory before repair,
+changed assertions or parametrizations, and the full pytest result.
+Independently review changed expectations or coverage before declaring a
+repair correct. An empty repair delta leaves the first-pass patch in place.
+After final verification, `prepare_repair_case.ps1 -Mode Cleanup` removes the
+case's disposable source copy and retains the design, digests, prompts and
+results.

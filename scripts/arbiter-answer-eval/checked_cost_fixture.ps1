@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Same-human fixture admission and Edit/Write ownership checks for a Windows cost session.
-param([ValidateSet('Prepare','Audit','BeforeTool','AfterTool','StageSkill')][string]$Mode,
+param([ValidateSet('Prepare','Audit','BeforeTool','AfterTool','StageSkill','CopySnapshot')][string]$Mode,
       [Parameter(Mandatory)][string]$Session, [string]$Snapshot)
 $ErrorActionPreference = 'Stop'
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
@@ -53,10 +53,6 @@ if ($Mode -eq 'Audit') {
     foreach ($item in Get-ChildItem -LiteralPath $sessionPath -Recurse -Force) { Owned $item.FullName }
     exit 0
 }
-NewDirectory $sessionPath
-NewDirectory $work
-NewDirectory (Join-Path $sessionPath 'gather')
-NewDirectory (Join-Path $sessionPath 'tmp')
 $source = [IO.Path]::GetFullPath($Snapshot)
 function CopyChecked($from,$to) {
     Assert-AirkCurrentToken $identity
@@ -69,6 +65,15 @@ function CopyChecked($from,$to) {
         else { [IO.File]::Copy($item.FullName,$dest); Owned $dest }
     }
 }
+if ($Mode -eq 'CopySnapshot') {
+    NewDirectory $sessionPath
+    CopyChecked $source $sessionPath
+    exit 0
+}
+NewDirectory $sessionPath
+NewDirectory $work
+NewDirectory (Join-Path $sessionPath 'gather')
+NewDirectory (Join-Path $sessionPath 'tmp')
 CopyChecked $source $work
 foreach ($name in 'tool.json','native-surface.json','unified-guidance.txt','mcp-config.json','stream.jsonl','stderr.log','answer.md','changes.patch','session.json') {
     Parent (Join-Path $sessionPath $name)
