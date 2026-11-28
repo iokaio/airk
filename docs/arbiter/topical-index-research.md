@@ -390,6 +390,23 @@ The most promising condition gives six files a first turn and selects from range
 
 On munarium-T1 the retained ranking already places the three files containing all five essential notes at ranks 1, 2 and 6. The full reply reduces 62 candidate locations to ten and excludes every location from the sixth file, `_specs.py`. With both focus changes the reply points to files for all five notes and still covers only two at their lines. Even the entire 62-location pool qualifies only those same two. The next experiment should change how candidate ranges are chosen within files. Use each caller-supplied need to nominate a range, deduplicate overlaps, and compare against the present four ranges per file under the same limits. Check all 20 calls for lost passages. Hold the paid series until authorized.
 
+**Stage trace and file-nomination trial, 27 November 2026.** The 20 control calls reproduced all 113 note classifications for both the original focus layout and the retained all-spread candidate. Search terms hit a reference interval for 89 notes. Accepted terms hit 83. The complete merged ranges of the sixteen selected files overlapped 61 notes (55 meeting the coverage threshold and six partial). The four-range cut retained overlap for 49. In the first six ranked files the corresponding figures were 46 and 38. The focused all-spread reply reached 30 at the lines. A nearby term can expand into a reference interval, so raw hits and range overlap measure different things.
+
+On munarium-T1, N1 and N6 reached the reply as passages. N2 in `rest.py` had an accepted hit and a partial overlap before the cut. N4 in the same file had an accepted hit and a fully qualifying range. Both lost their ranges at the four-per-file cut. N5 in `_specs.py` had no search hit in its reference interval and no overlapping range.
+
+Across the working set, 23 notes with accepted hits had primary files ranked below sixteen and no overlapping range in the selected files. The trial targeted this larger loss first. Each caller-supplied need nominated one file using rarity-weighted word matches against file paths and accepted terms. The trial alternated original file leaders with distinct nominees before selecting sixteen files. It kept the existing range selector, six-file focus layout and passage budget.
+
+| Measure | Retained all-spread | File nomination |
+| --- | ---: | ---: |
+| Reference files in first six / 168 | 47 | 41 |
+| Reference files in first sixteen / 168 | 72 | 72 |
+| Essential notes overlapping a merged range / 113 | 61 | 61 |
+| Notes at their lines in focused reply / 113 | 30 | 26 |
+| Notes qualifying as passages / 113 | 28 | 24 |
+| Notes pointed to at least at file level / 113 | 53 | 48 |
+
+Reject file nomination. It added four first-six references and displaced ten. Two of the 23 excluded notes gained a qualifying range, and only Bookbuilder T1 N5 reached the reply as a passage. Munarium T1 remained at two passages and N5 lost its file pointer. The next free trial should keep file order fixed and let the needs nominate **ranges within each file** before the four-range cut. Score N2 as partial unless the nominated passage meets the existing coverage rule. N5 needs a separate search or expansion hypothesis. For the planned local Qwen 4B file-reranker comparison, 15 of the 23 excluded notes across ten tasks have their primary files at ranks 17–40. Eight lie outside its proposed 40-file window. This is candidate availability only.
+
 From 27 November 2026 every agent test series is named after an animal or
 insect, each starting with the next letter of the alphabet. The first is
 Aardvark.

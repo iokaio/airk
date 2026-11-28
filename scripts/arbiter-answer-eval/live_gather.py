@@ -159,7 +159,7 @@ def request_terms(arguments: dict, index: dict) -> tuple[list[dict], list[str]]:
 
 def gather(repository: Repository, arguments: dict, trace: dict | None = None, *,
            extra_hop_weight: float = 0, file_rule=None, direct_passages: bool = False,
-           short_passages: bool = False) -> dict:
+           short_passages: bool = False, stage_trace: dict | None = None, rank_rule=None) -> dict:
     """The brief for one call, from the live files. ``trace``, when given, receives the final file
     ranking with scores and each ranked file's matched terms (``rank_check.py``); the brief is the same."""
     started = time.monotonic()
@@ -180,6 +180,9 @@ def gather(repository: Repository, arguments: dict, trace: dict | None = None, *
         searched.add(term["term"])
         hop = term["source"] in ("user", "refers", "wiring")
         found = repository.search(term["term"], term["exact"])
+        if stage_trace is not None:
+            for path, numbers in found.items():
+                stage_trace["raw"].setdefault(path, set()).update(numbers)
         occurrences = sum(len(lines) for lines in found.values())
         if not found:
             if not hop:
@@ -273,10 +276,15 @@ def gather(repository: Repository, arguments: dict, trace: dict | None = None, *
     if file_rule:
         file_rule(repository, terms, score, held)
     ranked = sorted((path for path in score if path in held), key=lambda path: (-fitted(path), path))
+    if rank_rule is not None and ranked:
+        ranked = rank_rule(ranked, held, index, arguments.get("needs") or [])
     if trace is not None:
         trace["ranked"] = [(path, round(fitted(path), 3)) for path in ranked]
         trace["held"] = {path: sorted(held[path]) for path in ranked}
         trace["terms"] = [term["term"] for term in terms]
+    if stage_trace is not None:
+        stage_trace["accepted"] = {p: {n for term, hits in terms_here.items() if term != "named in the request" for n in hits}
+                                   for p, terms_here in held.items()}
     top = ranked[:TOP_FILES]
     ranges = []
     direct = {term["term"] for term in terms if term["source"] in ("anchor", "quoted", "named")}
@@ -295,6 +303,8 @@ def gather(repository: Repository, arguments: dict, trace: dict | None = None, *
                     first = max(first, number - PASSAGE_LINES // 2)
                     last = min(last, first + PASSAGE_LINES - 1)
                 spans.append([first, last, {term}])
+        if stage_trace is not None:
+            stage_trace["expanded"][path] = sorted({(a, b) for a, b, _ in spans})
         spans.sort(key=lambda span: (span[0], span[1]))
         merge_limit = PASSAGE_LINES if short_passages else RANGE_LINES * 2
         merged: list[list] = []
@@ -307,6 +317,8 @@ def gather(repository: Repository, arguments: dict, trace: dict | None = None, *
         merged.sort(key=lambda span: (-len(span[2]), span[0]))
         if direct_passages:
             merged.sort(key=lambda span: -len(direct.intersection(span[2])))
+        if stage_trace is not None:
+            stage_trace["merged"][path] = [(a, b) for a, b, _ in merged]
         for first, last, matched in merged[:RANGES_PER_FILE]:
             head = next((line.strip() for line in lines[first - 1:last] if line.strip()), "")
             ranges.append({"at": f"{path}:{first}-{last}", "why": head[:80] + " | " + ", ".join(sorted(matched))[:80],
