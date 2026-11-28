@@ -7,6 +7,48 @@ of the gates below.
 
 [Governing strategy](retrieval-strategy-combined.md#strategy-from-27-november-2026) · [Ledger](../simplify/one-process-ledger.md) · [Evaluation tooling](../../scripts/arbiter-answer-eval/README.md)
 
+## Proposed amendment for review on 28 November 2026
+
+**Decision requested.** Approve a local prototype comparison of how Arbiter ranks evidence for individual needs and how AIRK allocates passage bytes. Review the local results before choosing an end-to-end candidate. Funding additional agent sessions, changing the public contract and authorizing a Rust port are separate decisions.
+
+**State at review.** The superseded native fixture closed and its service lease was reacquired. Fourteen historical Sonnet sessions cost $1.0075331. None of the four candidate research sessions called Gather, and the native arm enrolled superseded weights. They cannot establish current Arbiter performance. Keep the ordinary-tools results under their original input identities. The single-Arbiter local replay started under the preceding instruction and stopped at the review request after two complete Bookbuilder tasks (A1 and C3) of twenty. Both passed the independent prompt and delivered-source audit. The partial JSONL SHA-256 is e884a62d497f6a520667cd2ca33a481a99b0ace0caeac2e8cc29864382ceed36. The selector has three passing synthetic tests. No comparative adaptive-budget replay has run. These pilot results establish harness operation only.
+
+### 1. Establish the model and input identities
+
+Use one inference stage, Arbiter, with the pinned Qwen3-Reranker-4B revision, 8-bit block-rounded weights expanded at load for FP16 computation on CUDA. Deterministic code finds candidates and assembles replies. Sonnet is the external calling agent in a later end-to-end trial. Keep the seven-tool shipping skill naturally available in the AIRK conditions.
+
+Before scoring, verify checkpoint shard and tokenizer hashes, actual loaded model class, precision, device, quantization census, yes/no tokens and the publisher's system prefix and assistant suffix. Reject a mock, CPU fallback or superseded model. In end-to-end work, record the model behind every routed tool, including ordinary search, and distinguish offered tools, actual invocations, model judgments, failures and evidence delivered to the caller. An unknown submission retains its original error and replay status.
+
+Freeze caller inputs, source revisions, exclusions, candidate paths, tie order, budgets and independent grading inputs. Exclude denied paths before any source read or map build. All arms use the same 40 eligible file identities per task. Retain raw sanitized extraction differences separately. Removing two denied Bookbuilder files shifted two C3 pool positions and a deep reference rank from 853 to 851. Pinning allowed file identities isolates the scoring experiment; report any remaining divergence from historical rankings or evidence. Grading notes never enter candidate selection or a model input.
+
+### 2. Test the scoring question at a fixed output budget
+
+On the 20 development tasks, compare the existing bundled task/needs/anchors file query against one need per judgment with task context and the same cards. Preserve the trained wrapper. Give each need a turn to nominate a file and deduplicate the result. This tests scoring and the aggregation needed to turn multiple scores into one reply. Run both a full 40 files per need and a fixed 40 total judgments per call. The latter uses a reproducible allocation by pool position for this experiment; its result is specific to that allocation. Report actual GPU invocations separately from identical pairs reused from cache. Retain standalone timing checks for both preselected A1 tasks.
+
+At the fixed pair count, compare labeled task/need/anchor fields, removal of anchors from reranking while preserving retrieval anchors, a direct-evidence instruction that admits useful partial evidence, and line-complete excerpts with a verified declaration or heading when available. Keep the full task for the first comparison. Consider shortening it only if measured token allocation or clipping warrants it. The trial uses 1,024 input tokens and caps each scoring excerpt at 480 characters. A prior reconstructed input used 586 tokens and fit. A later evidence-kind prompt or score threshold needs its own justification and held-out calibration.
+
+Separate the short range Arbiter scores from the full source range AIRK returns. Record the need, both ranges, publication/source identity, rendered input digest, score and returned text digest. Preserve a decoded model input per condition. File nominations and passage links are distinct. Declare unsatisfied needs explicitly and never equate a positive score with proof that a need was answered. Keep six files and 14,000 UTF-8 **passage** bytes constant during prompt comparison. Returning only the scoring excerpt made a whole reference structurally unreachable for 35 of 86 scorable needs in the design audit.
+
+### 3. Test passage allocation without further inference
+
+Replay identical scored nominations against fixed 14,000 and 20,000 passage-byte ceilings, a 20,000-byte control with need-first ordering, and the proposed adaptive selector with the same upper bound. Use the need-first control to distinguish the effect of ordering from the effect of stopping. Give an unrepresented need first opportunity for a complete range that adds a new nonblank line. For additional ranges, initially require at least half of the nonblank lines to be new by source location and normalized text. Treat that fraction as a frozen test hypothesis. Preserve original source ranges, deduplicate, enforce file and byte limits, and report omissions and reasons. Matching text at distinct locations can be meaningful, particularly for callers; inspect losses on such cases.
+
+The product hard limit is the caller's budget for the **whole serialized MCP reply**, including metadata and citations. The offline ceilings above measure source text alone. Before proposing a product default, reserve envelope space, serialize and verify the complete reply against the request, and test small caller limits and multibyte text. This allocation requires no second inference stage. The earlier 20-task cap increase recovered six additional reference notes at 29.5% more passage bytes, while some tasks spent more and gained nothing.
+
+### 4. Judge delivered evidence and decide
+
+An independent checker reconstructs scorer inputs and verifies the bytes actually returned at their cited paths and ranges. Report full and partial reference delivery, per-need coverage, omissions, unsupported coverage claims, file-only pointers, pair counts, clipping, GPU time and bytes. Count eligible needs separately: of 98 caller needs, 86 have positive located references, 11 lack a positive mapping and one has only absence evidence. Report these limitations and per-task gains and losses, including broad and narrow strata. A location or a range that was merely proposed receives no delivered-text credit.
+
+Prefer the least expensive variant that maintains evidence quality. Advance a change that adds verified evidence at a justified cost, or holds quality while reducing work. Review consequential per-task regressions explicitly. If a larger cap or a new prompt only adds bytes or GPU work, keep the simpler control. These are development results. Preserve the sealed checkpoint for independent confirmation and bring the paired evidence to the user before spending on agent sessions.
+
+### 5. Validate the agent workflow before a Rust decision
+
+After review, compare ordinary tools with the selected single-Arbiter prototype on matched tasks. If comparing two Gather implementations, require both to serve the approved single-stage model, or label them explicitly as two prototype implementations. A qualifying native 4B implementation is currently unavailable. Reuse historical controls only when inputs, environment, pricing and grading remain comparable. Any fresh evaluation should use unseen tasks for its generalization claim.
+
+Use the same acting model, permissions, test access and stopping rules. Use genuine indexed editable workspaces for changes, verify publication after edits, and let the agent run tests, inspect failures and repair in the same session. Run independent final checks. Preserve bypass and typed failures as observations. Primary outcomes are independently verified final correctness and total caller spend through completion. Report first-pass results, cache pricing, round trips, local GPU time and startup costs separately. The existing aspiration is about 30% lower average caller cost with correctness held. A Rust port decision follows review of those results, including source isolation, freshness, budgets and error semantics.
+
+**Resume after approval.** Verify the partial receipt and exact source, harness, scorer and grading identities. Continue missing tasks into a fresh receipt and require unique coverage. If an input or behavior changed, rerun the affected cases under a new identity and explain why. Then run the budget replay and bring the paired report to review. The saved pilot is never silently counted twice.
+
 ## Correction of 27 November 2026: the cost figures below were wrong
 
 Every cost comparison in this document made before this section was
