@@ -407,6 +407,20 @@ Across the working set, 23 notes with accepted hits had primary files ranked bel
 
 Reject file nomination. It added four first-six references and displaced ten. Two of the 23 excluded notes gained a qualifying range, and only Bookbuilder T1 N5 reached the reply as a passage. Munarium T1 remained at two passages and N5 lost its file pointer. The next free trial should keep file order fixed and let the needs nominate **ranges within each file** before the four-range cut. Score N2 as partial unless the nominated passage meets the existing coverage rule. N5 needs a separate search or expansion hypothesis. For the planned local Qwen 4B file-reranker comparison, 15 of the 23 excluded notes across ten tasks have their primary files at ranks 17–40. Eight lie outside its proposed 40-file window. This is candidate availability only.
 
+**Budget-constrained passage oracle, 27 November 2026.** Each feasible selection could contain at most six files, four exact ranges per file and 14,000 UTF-8 passage bytes. The following ceilings use independent optimizations for fully qualifying passages and for any overlap. The offline solver sees the frozen references, and the replay classifier checked the selected ranges and their byte counts.
+
+| Candidate pool | Fully qualifying notes | At least partial overlap |
+| --- | ---: | ---: |
+| Retained all-spread replies | 28 | 30 |
+| First six files, current four range candidates per file | 36 | 38 |
+| First six files, any merged range | 42 | 46 |
+| First 40 files, current four range candidates per file | 60 | 65 |
+| First 40 files, any merged range | 70 | 77 |
+
+The first six files supplied 14 of 42 recoverable fully qualifying notes (33.3 percent), below the predeclared majority trigger for a deterministic passage-diversity trial. Including partial overlaps gave 16 of 47 (34.0 percent). The wider pool raised the fully qualifying ceiling on 15 of 20 tasks. The 60-note ceiling with the existing four range candidates per file assumes perfect passage packing as well as file selection. Qwen remains unmeasured.
+
+Munarium-T1 is an exception to the aggregate result. The retained reply fully covers two of five notes. Both pools top out at three fully qualifying notes (N1, N4, N6), or four counting partial overlap (adds N2). Expanding the pool to 40 added no attainable coverage on this task. The study measures the first recorded replies and provides no new agent cost or correctness evidence.
+
 From 27 November 2026 every agent test series is named after an animal or
 insect, each starting with the next letter of the alphabet. The first is
 Aardvark.
