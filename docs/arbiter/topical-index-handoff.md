@@ -1,6 +1,6 @@
 # Handoff: topical index research, ranking work, 27 November 2026
 
-**Current review stop, 28 November 2026.** The [proposed plan amendment](topical-index-research.md#proposed-amendment-for-review-on-28-november-2026) holds the present state, evidence limits and exact resume step. The local CUDA worker was stopped with two of twenty tasks complete. No adaptive campaign comparison ran. The user subsequently accepted the amendment. Resume under the current assignment through a Rust port decision.
+**Current finalist, 28 November 2026.** The [development comparison](topical-index-research.md#selected-prototype-for-independent-evaluation) is complete. The frozen candidate uses up to 40 bundled file judgments from one local Arbiter stage. It preserves the initial passages and fills spare reply space with adjacent source lines. All 800 development prompt hashes, 20 selected source sets and 20 final frames reproduced through the live policy callable. Independent transfer and agent outcomes govern the Rust decision.
 
 For Codex, picking up from Claude Code while the user is short of Claude
 credits. Read this page, then the "Experiment protocol" and "Round 1"

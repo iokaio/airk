@@ -201,7 +201,7 @@ def request_terms(arguments: dict, index: dict) -> tuple[list[dict], list[str]]:
 
 def gather(repository: Repository, arguments: dict, trace: dict | None = None, *,
            extra_hop_weight: float = 0, file_rule=None, direct_passages: bool = False,
-           short_passages: bool = False, stage_trace: dict | None = None, rank_rule=None) -> dict:
+           short_passages: bool = False, stage_trace: dict | None = None, rank_rule=None, top_files=None) -> dict:
     """The brief for one call, from the live files. ``trace``, when given, receives the final file
     ranking with scores and each ranked file's matched terms (``rank_check.py``); the brief is the same."""
     started = time.monotonic()
@@ -327,7 +327,8 @@ def gather(repository: Repository, arguments: dict, trace: dict | None = None, *
     if stage_trace is not None:
         stage_trace["accepted"] = {p: {n for term, hits in terms_here.items() if term != "named in the request" for n in hits}
                                    for p, terms_here in held.items()}
-    top = ranked[:TOP_FILES]
+    width = TOP_FILES if top_files is None else top_files
+    top = ranked[:width]
     ranges = []
     direct = {term["term"] for term in terms if term["source"] in ("anchor", "quoted", "named")}
     for path in top:
@@ -401,7 +402,7 @@ def gather(repository: Repository, arguments: dict, trace: dict | None = None, *
              "needs": [{"need": 1, "text": "everything this task needs", "origin": "caller", "status": "covered",
                         "where": [{"at": item["at"], "why": item["why"]} for item in ranges]}],
              "use": gather_context_dose.PASSAGE_ASSURANCE, "passages": passages, "outline": outline,
-             "next": {"paths": ranked[TOP_FILES:TOP_FILES + 12] + guidance[:4]}}
+             "next": {"paths": ranked[width:width + 12] + guidance[:4]}}
     if trace is not None:
         trace["all_locations"] = list(brief["needs"][0]["where"])
     while len(json.dumps(brief, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > MAX_BRIEF_BYTES:
