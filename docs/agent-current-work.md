@@ -4,7 +4,7 @@ These instructions are mandatory for the active assignment. Standing rules remai
 
 All unlinked filesystem paths below are repository-relative unless absolute or prefixed with `~/`.
 
-**28 November 2026 — Gather Context amendment accepted.** The user authorized the [single-Arbiter campaign](arbiter/topical-index-research.md#proposed-amendment-for-review-on-28-november-2026) through a Rust port decision. The 20-task replay and budget comparison selected bundled file scoring with protected source expansion. The [Rust decision](arbiter/topical-index-research.md#rust-decision-on-28-november-2026) holds the port following the prospective and live checks. The outstanding agent comparison requires scoped authorization for the remaining private sessions.
+**28 November 2026 — Gather Context amendment accepted.** The user authorized the [single-Arbiter campaign](arbiter/topical-index-research.md#proposed-amendment-for-review-on-28-november-2026) through a Rust port decision. The 20-task replay and budget comparison selected bundled file scoring with protected source expansion. The [completed agent cost comparison](arbiter/topical-index-research.md#completed-agent-cost-comparison-and-rust-decision) recommends against porting this candidate. Both arms finished 4/4 tasks correctly. The finalist cost 37.36% more at common prices across the four matched pairs.
 
 **Resume here.** The work stopped on 27 November 2026 for handoff to a new session: [topical-index-handoff.md](arbiter/topical-index-handoff.md) gives the state, the loose end, the next actions and how to run things.
 

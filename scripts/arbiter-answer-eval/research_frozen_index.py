@@ -27,9 +27,18 @@ def admit(task_path, task, repo, manifest):
         for folder in ("solver", "grading"):
             rel = f"{folder}/{name}"
             common.require(common.sha256_file(design / rel).lower() == digests[rel].lower(), "research input changed")
-        expected = design.parent / "E2E-single-r1/native-state/frozen-eligible-serving.json"
-        common.require(manifest.resolve(strict=True) == expected.resolve(strict=True), "unexpected native receipt")
-        return selected[0]
+        native_state = design.parent / "E2E-single-r1/native-state"
+        common.require(manifest.resolve(strict=True).parent == native_state.resolve(strict=True) and
+                       manifest.name in ("frozen-eligible-serving.json", "frozen-eligible-paid.json"),
+                       "unexpected native receipt")
+        # The prospective freeze pins the original commit, while the authenticated fixture
+        # design pins the native registration for that same repository and commit.
+        prior = design.parent / "E2E-design-r1" / "freeze.json"
+        common.require(common.sha256_file(prior).lower() == FREEZE, "original source registration freeze changed")
+        ids = {r["index_id"] for r in common.read_json(prior)["tasks"]
+               if r["repository"] == repo and r["source_commit"] == selected[0]["source_commit"]}
+        common.require(len(ids) == 1, "expected one original frozen index for this source revision")
+        return {**selected[0], "index_id": ids.pop()}
     common.require(freeze_hash == FREEZE, "unrecognized research design freeze")
     rows = [row for row in common.read_json(freeze)["tasks"] if row["kind"] == "research"]
     selected = [row for row in rows if row["id"] == task["id"] and row["repository"] == repo]

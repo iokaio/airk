@@ -84,6 +84,21 @@ A joint policy added 40 need-specific judgments after allocating the same origin
 
 Freeze the 40-file bundled policy with spare-only expansion as the primary candidate. Keep the unchanged bundled and deterministic controls for the prospective transfer and range80 with expansion as an offline challenger. The primary reply identifies its passages as shared task evidence. Its per-need status explicitly says the need was not individually scored. Test the same selection through the actor's normal route before making a Rust decision.
 
+### Completed agent cost comparison and Rust decision
+
+**Do not port this Gather prototype to Rust.** All four tasks finished correctly in both conditions. Offering the finalist cost the caller 37.36% more in pooled dollars at common pricing. With the prescribed fourfold narrow-task weight, the pooled increase was 57.73% and the weighted mean of individual task percentage changes was +61.62%. The unweighted mean of the four individual changes was +42.02%. These are four matched Sonnet pairs, one observation per condition per task. They support the decision for this candidate and leave the effect on other agents and workloads open.
+
+| Task | Ordinary invoice | AIRK invoice | Ordinary at common price | AIRK at common price | Cost change | Turns, ordinary → AIRK | Gather calls |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Munarium broad coding | $0.1467445 | $0.1933421 | $0.1742950 | $0.2205311 | +26.53% | 8 → 8 | 0 |
+| Munarium narrow research | $0.0610238 | $0.1149471 | $0.0729803 | $0.1252866 | +71.67% | 4 → 4 | 0 |
+| Bookbuilder broad research | $0.0848685 | $0.0778720 | $0.1081170 | $0.0996580 | −7.82% | 5 → 3 | 1 |
+| Bookbuilder narrow coding | $0.0866530 | $0.1679949 | $0.1058080 | $0.1880229 | +77.70% | 5 → 9 | 0 |
+
+The eight invoices totaled $0.9334459, comprising $0.3792898 ordinary and $0.5541561 with AIRK available. At common prices they were $0.4612003 and $0.6334986. The calculation uses rates per million tokens of $2 input, $10 output, $0.10 cache read and $4 cache write across both conditions. Total caller turns were 22 and 24, or 49 and 63 under the narrow weighting. The natural skill and multiple Gather calls were available throughout each candidate session. The one user of Gather called it on the first turn, made three ordinary reads in parallel on the second and answered on the third. That Gather delivered 21,664 wire bytes from 40 verified Qwen judgments. The three bypasses stay in the totals. Their cost differences cannot be attributed to Qwen scoring. No actor made a second Gather call, so the potential savings of repeated use remain unmeasured.
+
+Both arms passed 4/4 final grades. Ordinary tools passed 3/4 first grades and AIRK passed 4/4. The one first-grade difference occurred on a task where the actor bypassed AIRK. The blind reviewer graded 16 first/final endpoints across ten unique artifacts before arm identities were joined. The research answers met their source-citation rubrics and coding changes passed independent regressions. All eight inputs and outputs, tool sequences, grades and token categories were joined from frozen receipts. The older hold below records the intermediate state before the user reaffirmed transfer consent. The complete paired receipt SHA-256 is e8969e5e54a4087369b7279c5485183c1982b9b40f3c850ca52e05f491296eac and the blind grade seal is 08204e75fb682c84af51fb15c4e1856c1d4b3ac21d9d475964cc9450ea25debb.
+
 ### Rust decision on 28 November 2026
 
 **Hold the Rust port.** Keep the frozen single-stage bundled prototype and its test fixtures. Two independent datasets support using Qwen to choose files. Evidence that offering the finalist helps an agent finish a task correctly at lower total cost is still missing. Further prompt or budget tuning on these same examples cannot answer that question.

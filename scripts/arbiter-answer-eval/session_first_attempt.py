@@ -57,12 +57,15 @@ def reconstruct(folder):
             if tool == "Write":
                 state[name] = result["content"]
             else:
-                common.require(not result.get("userModified") and result["originalFile"] == previous,
+                crlf = "\r\n" in previous and "\n" not in previous.replace("\r\n", "")
+                observed = previous.replace("\r\n", "\n") if crlf else previous
+                common.require(not result.get("userModified") and result["originalFile"] == observed,
                                f"Original file differs in successful edit receipt: {name}")
                 old, new = result["oldString"], result["newString"]
-                common.require(old and old in previous and (result["replaceAll"] or previous.count(old) == 1),
+                common.require(old and old in observed and (result["replaceAll"] or observed.count(old) == 1),
                                "Ambiguous edit cannot establish first-attempt bytes")
-                state[name] = previous.replace(old, new, -1 if result["replaceAll"] else 1)
+                updated = observed.replace(old, new, -1 if result["replaceAll"] else 1)
+                state[name] = updated.replace("\n", "\r\n") if crlf else updated
     final = diff(baseline, state)
     common.require(final.encode() == (folder / "changes.patch").read_bytes(), "Edits do not reproduce the final archived patch")
     basis = "first_post_edit_verification" if first is not None else "final_no_post_edit_verification"
