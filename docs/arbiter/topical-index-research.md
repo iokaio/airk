@@ -49,6 +49,41 @@ Use the same acting model, permissions, test access and stopping rules. Use genu
 
 **Resume after approval.** Verify the partial receipt and exact source, harness, scorer and grading identities. Continue missing tasks into a fresh receipt and require unique coverage. If an input or behavior changed, rerun the affected cases under a new identity and explain why. Then run the budget replay and bring the paired report to review. The saved pilot is never silently counted twice.
 
+## Single-Arbiter development results on 28 November 2026
+
+The completed replay contains 20 unique tasks and preserves the two original pilot rows byte for byte. The authenticated Qwen3-Reranker-4B model reproduced all 800 original bundled control scores exactly on CUDA. The independent grader verified the scored prompt hashes and the delivered text against source. The development set contains 98 caller needs, of which 86 have an independently mapped positive reference. A need with a complete reference received at least one whole acceptable source range. It may still require additional facts to answer. The stricter full-range metric differs from the historical five-line overlap measure.
+
+| Task/need and file treatment at 14,000 passage bytes | Judgments requested | Needs receiving a whole reference / 86 |
+|---|---:|---:|
+| Deterministic control | 0 | 22 |
+| Bundled query, 40 file cards | 800 | 29 |
+| One need per file, full matrix | 3,920 | 29 |
+| One need per file, 40 pairs allocated by rank position | 800 | 26 |
+| Same fixed allocation with query labels | 800 | 29 |
+| Labels and direct evidence wording | 800 | 25 |
+| Labels, direct wording and a short line-complete range card | 800 | 19 |
+| Same fixed allocation with anchors omitted from reranking | 800 | 27 |
+| Need-aware nominations from existing ranges, 40 pairs per call | 800 | 27 |
+| Same range policy, 80 pairs per call | 1,600 | 30 |
+
+The bundled control used 68.73 seconds of local scoring. The full matrix used 262.89 seconds and changed four tasks for the better and four for the worse. Only 29 of 86 needs had a reference file assigned to their own fixed-position set, although 79 had one in the 40-file pool. This explains why fixed-position allocation is a weak test of the reranker's ability to judge individual needs. The independently nominated range80 policy attributed whole enclosing references to 27 needs, yet reached only 43 needs under the five-line criterion versus 48 for the bundled control. Prompt shortening has little opportunity here. Range80 had zero clipped inputs.
+
+Of the bundled control's 57 misses, seven lacked a mapped reference file, 32 had the file but lacked a complete reference in the nominated ranges, and 18 had a complete available reference that the reply omitted. A source-only diagnostic indicated that expanding nominated locations by 16 lines each way could reach 17 of the 32 before packing. This motivated tests of new source windows and of expanding only after protecting the original reply.
+
+Increasing fixed passage allowances and discarding repeated syntax produced task-level regressions. A 3,775-byte OpenAPI range had 120 new source locations but only 14 new normalized lines, so the novelty rule omitted evidence despite ample space. The separate [adaptive passage-budget report](answer-evaluation/adaptive-passage-budget.md) gives the complete original four-way comparison. For the bundled file control, expanding into spare capacity while preserving the original returned ranges increased whole-reference needs from 29 to 35 at a 14,000-byte passage limit. Under the 14,000-byte complete replay frame, the same treatment raised coverage from 25 to 33 and added an average of 693 frame bytes per task. None of those previously covered needs was lost. Additional rendered provenance may change these figures on the live transport.
+
+The seven-arm paired receipt SHA-256 is d3121a27a1f5981ddb185119829e04884b7512f3b9bbe3b5725aa8f935628180. The range-choice receipt SHA-256 is 00564563e2d238b24bd55a4b53a060d2b3385126abcf2e2ad9a89e7e1d032777. The inputs and outcomes remain private. These experiments measure retrieval under frozen caller inputs. Natural tool use, final patch quality and caller spending require separate end-to-end evidence.
+
+### Selected prototype for independent evaluation
+
+At the default 131,072-byte complete-frame cap, protecting the bundled reply and using spare capacity to add at most 16 adjacent source lines on either side raised complete-reference coverage from 29 to 35 of 86 needs. The reply grew by an average of 1,187 bytes. The 14,000-byte source ceiling still applied. Across 800 matched comparisons, the fitter preserved all original source lines and their scored links. It stops at file boundaries, the caller's serialized frame budget, the passage ceiling or the expansion limit.
+
+At the same default, need-aware range scoring with 80 judgments and expansion reached 36 needs, including 29 with a complete reference correctly linked to the need. It gained eight needs and lost seven against the widened bundled control. At a tight 14,000-byte complete-frame cap with full provenance, the widened bundled, range40 and range80 policies reached 27, 30 and 26 needs respectively. These figures supersede the compact-envelope sensitivity above for estimating transport behavior. None of these comparisons measures final patch quality.
+
+A joint policy added 40 need-specific judgments after allocating the same original candidate pool for independent file and range scoring. Across 20 tasks it added no new cited range at any tested frame cap. At the actual default it attached 57 links, of which 36 had no overlap with a mapped reference. All policies in that comparison reached the same 35 complete-reference needs.
+
+Freeze the 40-file bundled policy with spare-only expansion as the primary candidate. Keep the unchanged bundled and deterministic controls for the prospective transfer and range80 with expansion as an offline challenger. The primary reply identifies its passages as shared task evidence. Its per-need status explicitly says the need was not individually scored. Test the same selection through the actor's normal route before making a Rust decision.
+
 ## Correction of 27 November 2026: the cost figures below were wrong
 
 Every cost comparison in this document made before this section was
