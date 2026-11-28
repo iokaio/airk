@@ -95,6 +95,9 @@ impl RemoteTools for OpenBackend {
     fn catalog(&self) -> Vec<Tool> {
         airk_mcp::open::local_catalog()
     }
+    fn guidance(&self) -> &'static str {
+        airk_mcp::unified::GUIDANCE
+    }
     /// U110: the local agent session's reads and list take `workspace`,
     /// which the bridge may fill from the client's MCP roots.
     fn fills_workspace(&self, tool: &str) -> bool {
@@ -212,6 +215,14 @@ mod tests {
         assert!(!backend.uses_response_mode("list_scopes"));
         assert!(backend.uses_response_mode("search_passages"));
         assert!(!backend.uses_response_mode("query_scope"));
+        Ok(())
+    }
+
+    #[test]
+    fn capacity_wrapped_open_session_gives_public_tool_guidance() -> anyhow::Result<()> {
+        let factory = open_factory(hooks(Seen::default(), ControlResponse::Stopping));
+        let backend = crate::http_backend::with_query_capacity(factory, Arc::new(|| 8))()?;
+        assert_eq!(backend.guidance(), airk_mcp::unified::GUIDANCE);
         Ok(())
     }
 

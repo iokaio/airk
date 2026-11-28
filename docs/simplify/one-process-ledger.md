@@ -22029,3 +22029,20 @@ oracle-only T1 task preserves the prompt and original notes and adds two
 source ranges. Its compact reply is 13,300 bytes and includes all seven
 essential passages. Grade any patches against the original T1 scenario.
 Validation passed 10 focused harness tests and git diff --check. The repository check stopped on the existing historical link to crates/airk-core/src/guidance.rs.
+
+### 27 November 2026 — Correct the native HTTP MCP initialization guidance
+
+Verified TYAI\tdotn, SID S-1-5-21-3678370870-3858642417-826968105-1002. The
+open HTTP backend inherited the remote backend's prefixed instructions and
+advertised seven public tool names. It now returns the existing unified
+public guidance. Native HTTP initialize was captured on both builds. The
+corrected response equals the public guidance, and the seven complete tool
+definitions match the pilot in order. On Windows CUDA the format check and
+scoped airk-https Clippy passed. Five selected native regressions passed,
+372 filtered. The corrected service SHA-256 is
+1fb6c96955c4026750cf63e98d1a86af1c39a7378daf59bfcb3693713457d99c.
+The private receipts under passes/caribou-native-r2 include build timings,
+validation scope and http-after.json. Manual self-review checked the open
+backend and its capacity wrapper. The user excluded the original two pilot
+sessions before grading and authorized ten fresh pairs on the corrected
+fixture, retaining the skill, index scope, publication and task prompt.
