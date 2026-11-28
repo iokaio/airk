@@ -12,6 +12,8 @@ The free trials described below have run. The [round 1 research results](topical
 
 The [Badger skill comparison](topical-index-research.md#badger-skill-results) is complete. Explicit invocation raised Gather use from zero of five to five of five on Munarium-T1, while fully passing patches fell from four to two. Stop this skill variant before natural activation or cross-client replication.
 
+The ten [Caribou matched pairs and HTTPX failure reproduction](topical-index-research.md#caribou-paired-evidence-results) are complete. The proposed next comparison is one repair turn with full-module test feedback. The native fixture and local scorer are closed.
+
 ## Authorization at the original handoff
 
 **Run free checks only.** A cost series (`series.ps1`, `agent_cost_run.py`,

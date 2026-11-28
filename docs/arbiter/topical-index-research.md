@@ -483,6 +483,25 @@ All five explicit sessions successfully loaded the intended skill, requested Gat
 
 Direct patch review and offline execution against the frozen Python client found that all four partial patches failed async tests after reusing HTTPX response instances. The control patches passed completely in repeats 1, 3, 4 and 5, and the explicit-skill patches in repeats 3 and 5. The skill increased MCP adoption and lowered median normalized cost by 2.6%, inside the observed spread. The correctness result ends this skill trial before natural activation, cross-client replication or default installation. The next useful comparison remains ideal evidence versus contemporaneous controls, graded by executing the patches.
 
+### Caribou paired evidence results
+
+Ten matched pairs repeated the frozen Munarium-T1 retry task on Windows with Sonnet 5.5, local file tools and natural discovery of the AIRK skill. All sessions saw the same corrected native HTTP MCP guidance and seven complete tool definitions. The six companion tools queried the frozen Munarium publication. Gather supplied either the live Qwen-ranked packet or hand-selected source passages. Each agent received the same task prompt and could choose its own tools. Patch verification used the frozen client and an independent review of both transports, request counts, command key reuse, gateway errors and plain writes. A two-session pilot with outdated native tool names was excluded before grading. The user replaced the skill after pair 3 and requested separate reporting.
+
+| Skill offered | Evidence arm | Fully correct patches | Gather used | Fresh-response example from Gather | Median round trips | Median reported cost |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Original, pairs 1–3 | Qwen | 2/3 | 3/3 | 0/3 | 9 | $0.1650 |
+| Original, pairs 1–3 | Hand-selected | 3/3 | 3/3 | 3/3 | 7 | $0.1159 |
+| Revised, pairs 4–10 | Qwen | 1/7 | 4/7 | 0/7 | 8 | $0.1501 |
+| Revised, pairs 4–10 | Hand-selected | 2/7 | 6/7 | 6/7 | 7 | $0.1338 |
+
+All 20 sessions completed in 6–10 of 80 permitted round trips. No transcript shows a Skill invocation or a direct Read of SKILL.md. The descriptions were discoverable. The chronological cohorts cannot estimate the effect of changing the skill text. This is one task repeated across sessions. In the original cohort both arms passed pairs 1 and 2. Only the hand-selected arm passed pair 3, where the live patch had a pytest collection error. In the revised cohort both arms passed pair 5. Only the hand-selected arm passed pair 10, where it bypassed Gather. The other five pairs failed in both arms.
+
+**Cause and repair.** All eleven failing revised patches hit the HTTPX async stream assertion. In pair 4 the live patch shared ready-made responses in pytest parameters. The hand-selected patch created fresh failures but shared success responses as module constants. Both patterns let a real sync or async client bind the response stream before the other client receives the same object. The hand-selected packet included two legitimate repository examples: a sync-only retry responder that returns a scripted response and a responder used by both modes that constructs a new response per call. Five of the six revised hand-selected sessions that received the latter example before editing still failed.
+
+Each reproduced async case passed alone. Running both modes in either order failed on the second mode. Reconstructing a fresh buffered response inside the test responder changed the full live module from 54/58 to 58/58 and the hand-selected module from 40/52 to 52/52. Assertions and client code remained identical. The original patches retain their original verdicts.
+
+**Campaign decision.** Keep the retrieval budget and weights fixed for the next comparison. The acting prompt explicitly forbids running tests and gives the agent no shell. A useful next comparison gives a solver the full changed-module pytest result and one repair turn, then independently regrades the module and coverage. This could test whether executable feedback improves completion. The current results establish the fixture repair and do not measure the benefit of a different prompt or specialized model weights.
+
 ### Historical resume point before Aardvark (27 November 2026)
 
 Work can be picked up from here by another session.
