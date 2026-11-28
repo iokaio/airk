@@ -1,6 +1,6 @@
 # Handoff: topical index research, ranking work, 27 November 2026
 
-**Current finalist, 28 November 2026.** The [development comparison](topical-index-research.md#selected-prototype-for-independent-evaluation) is complete. The frozen candidate uses up to 40 bundled file judgments from one local Arbiter stage. It preserves the initial passages and fills spare reply space with adjacent source lines. All 800 development prompt hashes, 20 selected source sets and 20 final frames reproduced through the live policy callable. Independent transfer and agent outcomes govern the Rust decision.
+**Current finalist, 28 November 2026.** The [development comparison](topical-index-research.md#selected-prototype-for-independent-evaluation) is complete. The frozen candidate uses up to 40 bundled file judgments from one local Arbiter stage. It preserves the initial passages and fills spare reply space with adjacent source lines. All 800 development prompt hashes, 20 selected source sets and 20 final frames reproduced through the live policy callable. The [28 November decision](topical-index-research.md#rust-decision-on-28-november-2026) holds the Rust port. Independent transfer and live freshness checks are complete. The matched agent panel has one completed ordinary-tools control and awaits consent for the other seven sessions.
 
 For Codex, picking up from Claude Code while the user is short of Claude
 credits. Read this page, then the "Experiment protocol" and "Round 1"
