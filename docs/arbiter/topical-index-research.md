@@ -464,6 +464,25 @@ Direct review and offline pytest against the frozen client found four assisted p
 
 Hold the Rust port. Before further paid ranking or budget comparisons, use the successful control and the failed patches to identify which repository passages could support a working offline test. Check their availability on the five saved queries. A fresh oracle comparison with executable correctness grading would establish how much benefit the current agent can realize from ideal evidence.
 
+### Badger skill results
+
+On 27 November 2026, five interleaved pairs used the frozen Munarium-T1 task, Sonnet 5.5, the same Qwen-backed Gather Context tool and the 14,000-byte passage limit. The control offered MCP alone. The treatment enabled the AIRK skill and explicitly asked Sonnet to invoke it. The private checkout held identical source in both conditions. The launcher supplied the skill from the AIRK evaluation plugin. All ten sessions completed with zero permission denials and tool errors. Their reported cost totaled $1.61885, excluding the earlier synthetic smoke tests.
+
+| Metric | MCP offered | MCP offered with explicit skill |
+| --- | --- | --- |
+| Fully correct patches | 4/5 | 2/5 |
+| Sessions calling Gather Context | 0/5 | 5/5 |
+| Median cost at one cache-write price | $0.19175 | $0.18671 |
+| Cost range | $0.17235–0.26474 | $0.18550–0.21832 |
+| Median round trips | 8 | 9 |
+| Median Read calls | 5 | 6 |
+| Median input plus cache-write tokens | 28,366 | 24,907 |
+| Essential notes shown before first edit, out of 25 opportunities | 23 | 20 |
+
+All five explicit sessions successfully loaded the intended skill, requested Gather once and received qualifying passages for the same two notes. They followed up with 3–8 Read calls (median six). Numbered source text from Gather, Read and Grep supplied four of five essential notes before the first edit in every explicit run. The retry-class definition remained missing under the campaign's line-coverage measure. The controls used ordinary file tools and reached all five notes in three runs. Evidence coverage measures source shown to the agent and does not establish the cause of a test failure.
+
+Direct patch review and offline execution against the frozen Python client found that all four partial patches failed async tests after reusing HTTPX response instances. The control patches passed completely in repeats 1, 3, 4 and 5, and the explicit-skill patches in repeats 3 and 5. The skill increased MCP adoption and lowered median normalized cost by 2.6%, inside the observed spread. The correctness result ends this skill trial before natural activation, cross-client replication or default installation. The next useful comparison remains ideal evidence versus contemporaneous controls, graded by executing the patches.
+
 ### Historical resume point before Aardvark (27 November 2026)
 
 Work can be picked up from here by another session.

@@ -1464,3 +1464,5 @@ On Windows, `--checked-windows` enables the same-human fixture preparation, Edit
 ## Gather Context skill experiment
 
 The evaluation-only airk-eval plugin contains the portable gather-evidence SKILL.md. Pass --skill-mode explicit or --skill-mode natural to agent_cost_run.py to load it. Explicit mode asks the agent to invoke the skill. Omitting the option preserves the original control. Verify skill discovery, invocation and successful tool results in stream.jsonl. Compare patches on the frozen source with matched controls.
+
+Run `python -B skill_session_evidence.py <series-directory>` to measure located essential notes shown by Gather and numbered Read results before the first edit. The report also counts subsequent Read calls and successful skill results. The all_notes measure also includes numbered matching and context lines from Grep. File listings and unnumbered snippets provide no line-coverage credit.
