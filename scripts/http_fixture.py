@@ -387,6 +387,9 @@ class McpClient:
         self.pending = {}
         self.unsolicited = []
 
+    def connection_headers(self):
+        return {"X-AIRK-Response-Mode": "full"}
+
     def _request(self, method, value=None, path="/mcp"):
         encoded = None if value is None else json.dumps(value, separators=(",", ":")).encode()
         if encoded is not None and len(encoded) > 65_536:
@@ -394,7 +397,7 @@ class McpClient:
         # U110: never Authorization; the gateway would strip it anyway.
         headers = {"Accept": "application/json, text/event-stream",
                    "Content-Type": "application/json",
-                   "X-AIRK-Response-Mode": "full"}
+                   **self.connection_headers()}
         protocol = request_protocol(value, self.initialized, self.protocol)
         if path == "/mcp":
             headers.update(standard_headers(value, protocol))

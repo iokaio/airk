@@ -1480,3 +1480,18 @@ alone. Inspect `session.json` for client-visible tools, skill digest, actual
 calls and completion, then grade the patch independently. The synthetic CLI
 double in `product_skill_smoke_cli.py` supports a wiring check only. It returns
 one canned definition and cannot measure retrieval quality or patch correctness.
+
+For matched live versus oracle sessions, add `--product-http` to both commands.
+The adapter obtains initialization guidance and all seven tool definitions from
+the running fixture's scoped loopback MCP endpoint. Each session records the
+catalog digest, fixture handle digest and selected index. Six tools forward
+their calls to that endpoint. Gather Context uses the selected experimental
+backend. Keep the same snapshot, agent model and skill mode in both arms.
+
+For a reviewed Munarium test-only patch, run `check_munarium_patch.ps1` with
+`-Session`, `-Snapshot`, `-Python` (the frozen client's pytest environment)
+and a fresh `-Output` directory. It applies the patch to isolated test files
+and retains pytest output, exit status and hashes. Review the resulting test
+coverage against the task independently. If a test depends on the repository
+layout or changes files outside the supported test tree, verify it in a full
+copy of the same snapshot before assigning a verdict.

@@ -70,7 +70,7 @@ function CopyChecked($from,$to) {
     }
 }
 CopyChecked $source $work
-foreach ($name in 'tool.json','unified-guidance.txt','mcp-config.json','stream.jsonl','stderr.log','answer.md','changes.patch','session.json') {
+foreach ($name in 'tool.json','native-surface.json','unified-guidance.txt','mcp-config.json','stream.jsonl','stderr.log','answer.md','changes.patch','session.json') {
     Parent (Join-Path $sessionPath $name)
 }
 $logs = Join-Path $sessionPath 'gather'

@@ -192,7 +192,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--checked-windows", action="store_true", help="preflight and audit Windows session outputs")
     parser.add_argument("--skill-mode", choices=("explicit", "natural"))
     parser.add_argument("--product-tools", action="store_true", help="offer the native seven-tool catalog and use the shipping skill source")
+    parser.add_argument("--product-http", action="store_true", help="use the fixture MCP endpoint for both discovery and native calls")
     args = parser.parse_args(argv)
+    if args.product_http and (not args.product_tools or args.arm not in ("live", "oracle")):
+        parser.error("--product-http needs --product-tools and a live or oracle Gather arm")
     if args.product_tools and (args.arm not in ("tool", "oracle", "live") or not args.handle or args.skill_mode == "explicit"):
         parser.error("--product-tools requires a scoped fixture and a tool arm, with natural discovery or no skill")
     if (args.dose > 0 or (args.arm == "live" and args.live_layout == "qwen-focus")) and args.judge is None:
@@ -206,8 +209,13 @@ def main(argv: list[str] | None = None) -> int:
         roots = {Path(row["root"]).resolve(strict=True) for row in records.values() if row["index_id"] == index}
         common.require(roots == {snapshot}, "native fixture index and working snapshot differ")
         common.require(args.tool_file is None and args.description_file is None and args.instructions_file is None, "product tools use the fixture catalog")
-        product_catalog = product_skill.catalog(handle)
-        product_instructions = product_skill.guidance()
+        if args.product_http:
+            import product_skill_http
+            surface = product_skill_http.read_surface(handle, args.repo)
+            product_catalog, product_instructions = surface["tools"], surface["instructions"]
+        else:
+            product_catalog = product_skill.catalog(handle)
+            product_instructions = product_skill.guidance()
     work = args.output / "work"
     guard = HERE / "checked_cost_fixture.ps1"
     if args.checked_windows:
@@ -264,7 +272,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.arm == "live":
             server += ["--live-source", str(snapshot), "--live-map", str(args.live_map.resolve(strict=True)),
                        "--live-layout", args.live_layout] + (["--live-decline"] if args.live_decline else [])
-        if args.product_tools:
+        if args.product_http:
+            surface_file = args.output / "native-surface.json"
+            surface_file.write_text(json.dumps(surface, sort_keys=True), encoding="utf-8")
+            server += ["--native-surface", str(surface_file)]
+        elif args.product_tools:
             server.append("--product-tools")
         servers[SERVER] = {"command": server[0], "args": server[1:]}
     mcp_config = args.output / "mcp-config.json"
@@ -329,6 +341,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.skill_mode:
         session["skill"] = {"mode": args.skill_mode, "sha256": common.sha256_file(
             copy if args.product_tools else HERE / "airk-eval" / "skills" / "gather-evidence" / "SKILL.md")}
+    if args.product_http:
+        session["native_mcp"] = {"surface_sha256": common.sha256_file(surface_file), "index": index,
+                                 "fixture": str(handle.path), "handle_sha256": handle.sha256}
     if args.product_tools:
         expected = {f"mcp__{SERVER}__{name}" for name in tool_names.mcp_tools()}
         offered = {name for name in session["tools_offered"] or [] if name.startswith("mcp__")}
