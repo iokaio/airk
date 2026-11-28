@@ -218,17 +218,25 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--live-source", type=Path, help="answer from these live files and --live-map instead of the service")
     parser.add_argument("--live-map", type=Path)
     parser.add_argument("--workspace-map", action="store_true", help="read the current checkout and rebuild its map for every Gather")
-    parser.add_argument("--live-layout", choices=("full", "focus", "qwen-focus"), default="full")
+    parser.add_argument("--live-layout", choices=("full", "focus", "qwen-focus", "qwen-finalist"), default="full")
     parser.add_argument("--live-decline", action="store_true")
     parser.add_argument("--judge", type=Path, help="state file of a running arbiter_judge_service.py")
     parser.add_argument("--dose", type=int, default=0, help="judgments a call the model spends choosing passages")
     parser.add_argument("--product-tools", action="store_true")
     parser.add_argument("--native-surface", type=Path, help="exact HTTP initialization guidance and tools/list preflight")
+    parser.add_argument("--finalist-freeze", type=Path)
     args = parser.parse_args(argv)
     if args.live_source and bool(args.live_map) == args.workspace_map:
         parser.error("choose --live-map or --workspace-map when using --live-source")
     score = None
-    if args.dose > 0 or args.live_layout.startswith("qwen-"):
+    finalist = args.live_layout == "qwen-finalist"
+    if finalist:
+        if not (args.workspace_map and args.live_source and args.native_surface and args.handle and args.judge and args.finalist_freeze) or args.live_decline or args.dose or args.oracle_task:
+            parser.error("finalist requires the scoped HTTP surface, current workspace and verified scorer")
+        import finalist_route
+        finalist_route.check_policy(args.finalist_freeze)
+        score = arbiter_judge_service.verified_client(args.judge)
+    elif args.dose > 0 or args.live_layout.startswith("qwen-"):
         common.require(args.judge is not None, "model scoring needs --judge")
         address = json.loads(args.judge.read_text(encoding="utf-8"))["address"]
         score = lambda instruction, pairs: arbiter_judge_service.score(address, instruction, pairs)  # noqa: E731
@@ -250,6 +258,11 @@ def main(argv: list[str] | None = None) -> int:
         surface = common.read_json(args.native_surface)
         with closing(product_skill_http.ScopedClient(handle, args.repo)) as client:
             experimental = server if args.oracle_task or args.live_source else None
+            if finalist:
+                from finalist_route import Gather
+                from range_choice_live import propose
+                experimental = Gather(handle, args.repo, args.live_source, args.log_dir, score, propose, args.max_calls)
+
             def record_native(arguments, reply, seconds):
                 server.calls += 1
                 raw = json.dumps(reply, ensure_ascii=False).encode("utf-8")
@@ -259,8 +272,21 @@ def main(argv: list[str] | None = None) -> int:
                     "call": server.calls, "at": common.now_iso(), "arguments": arguments, "seconds": seconds,
                     "reply_bytes": len(common.envelope_text(result).encode("utf-8")),
                     "is_error": "error" in reply or bool(result.get("isError"))})
-            bridge = product_skill_http.Bridge(client, experimental, surface, record_native)
-            mcp_wrapper.serve(bridge, sys.stdin.buffer, sys.stdout.buffer)
+            def record_companion(name, arguments, reply, seconds):
+                import hashlib
+                result = reply.get("result", {})
+                structured = result.get("structuredContent") or {}
+                raw = json.dumps(reply, ensure_ascii=False, separators=(",", ":")).encode()
+                common.append_jsonl(args.log_dir / "companion-calls.jsonl", {
+                    "tool": name, "arguments": arguments, "at": common.now_iso(), "seconds": seconds,
+                    "native_index": client.index, "reply_sha256": hashlib.sha256(raw).hexdigest(),
+                    "reply_bytes": len(raw), "is_error": "error" in reply or bool(result.get("isError")),
+                    "execution": structured.get("execution"), "publication": structured.get("publication"),
+                    "read_scope": structured.get("read_scope"), "source_verification": structured.get("source_verification"),
+                    "error": structured.get("error") or reply.get("error")})
+            bridge = product_skill_http.Bridge(client, experimental, surface, record_native,
+                                               record_companion if finalist else None)
+            mcp_wrapper.serve(bridge, sys.stdin.buffer, sys.stdout.buffer, framed_calls=finalist)
         return 0
     if args.product_tools:
         import product_skill

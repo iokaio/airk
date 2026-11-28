@@ -321,7 +321,11 @@ def write_message(stream: BinaryIO, message: dict, framing: str) -> None:
     stream.flush()
 
 
-def serve(wrapper: Wrapper, stdin: BinaryIO, stdout: BinaryIO) -> None:
+class UnframeableReply(ValueError):
+    """Close the transport when the request ID alone precludes any valid reply."""
+
+
+def serve(wrapper: Wrapper, stdin: BinaryIO, stdout: BinaryIO, *, framed_calls=False) -> None:
     while True:
         read = read_message(stdin)
         if read is None:
@@ -331,13 +335,19 @@ def serve(wrapper: Wrapper, stdin: BinaryIO, stdout: BinaryIO) -> None:
             write_message(stdout, _error(None, -32700, "parse error"), framing)
             continue
         if isinstance(message, list):  # JSON-RPC batch
+            if framed_calls and any(isinstance(m, dict) and isinstance(m.get("params"), dict) and m["params"].get("name") == "gather_context" for m in message):
+                write_message(stdout, _error(None, -32600, "Use individual requests for byte-budgeted Gather calls"), framing)
+                continue
             replies = [r for r in (wrapper.handle_message(m) for m in message) if r is not None]
             if replies:
                 data = json.dumps(replies, ensure_ascii=False).encode("utf-8")
                 stdout.write(data + b"\n")
                 stdout.flush()
             continue
-        reply = wrapper.handle_message(message)
+        try:
+            reply = wrapper.handle_message(message, framing) if framed_calls else wrapper.handle_message(message)
+        except UnframeableReply:
+            return
         if reply is not None:
             write_message(stdout, reply, framing)
 

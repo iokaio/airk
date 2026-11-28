@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Admission and before/after evidence for the four final-text frozen-index research tasks."""
+"""Admission and before/after evidence for authenticated final-text frozen-index research tasks."""
 
 import hashlib
 import stat
@@ -14,7 +14,23 @@ FREEZE = "f7eb577e2b66501573f1b3e7754aebff64fdaa5b7f06bd190bb146b3c749f11e"
 def admit(task_path, task, repo, manifest):
     design = task_path.resolve(strict=True).parent.parent
     freeze = design / "freeze.json"
-    common.require(common.sha256_file(freeze).lower() == FREEZE, "unrecognized research design freeze")
+    freeze_hash = common.sha256_file(freeze).lower()
+    if freeze_hash == "d3a7430c3167371830bbd3304f9430e2a7328cfcff4c53b4e5e30a00232c5a30":
+        digests = common.read_json(freeze)
+        desc = design / "design.json"
+        common.require(common.sha256_file(desc).lower() == digests["design.json"].lower(), "research design changed")
+        selected = [r for r in common.read_json(desc)["tasks"] if r["id"] == task["id"] and
+                    r["repository"] == repo and r["kind"] == task["kind"] == "research"]
+        common.require(len(selected) == 1, "expected one authenticated final-text research task")
+        name = selected[0]["id"] + ".json"
+        common.require(task_path.resolve() == design / "solver" / name, "unexpected solver input path")
+        for folder in ("solver", "grading"):
+            rel = f"{folder}/{name}"
+            common.require(common.sha256_file(design / rel).lower() == digests[rel].lower(), "research input changed")
+        expected = design.parent / "E2E-single-r1/native-state/frozen-eligible-serving.json"
+        common.require(manifest.resolve(strict=True) == expected.resolve(strict=True), "unexpected native receipt")
+        return selected[0]
+    common.require(freeze_hash == FREEZE, "unrecognized research design freeze")
     rows = [row for row in common.read_json(freeze)["tasks"] if row["kind"] == "research"]
     selected = [row for row in rows if row["id"] == task["id"] and row["repository"] == repo]
     common.require(len(rows) == 4 and len(selected) == 1 and task["kind"] == "research",

@@ -50,6 +50,17 @@ class ScopeTest(unittest.TestCase):
         self.assertEqual(workspace_scope.published_paths(client, "index", metrics, cache), {"c.py", "d.py"})
         self.assertEqual(workspace_scope.published_paths(client, "index", metrics, cache), {"e.py"})
 
+    def test_failed_continuation_preserves_page_publication_and_native_error(self):
+        client = Mock()
+        rejection = {"result": {"isError": True, "structuredContent": {"error": {
+            "code": "continuation_stale", "retryable": False, "query_replay_safe": False}}}}
+        client.exchange.side_effect = [page(["a.py"], truncated=True, cursor="next"), rejection]
+        with self.assertRaises(workspace_scope.InventoryUnavailable) as error:
+            workspace_scope.published_paths(client, "index")
+        self.assertEqual(error.exception.page, 2)
+        self.assertIsNotNone(error.exception.publication)
+        self.assertEqual(error.exception.reply, rejection)
+
     def test_incomplete_mixed_or_wrong_scope_is_never_used(self):
         first = page(["a.py"], truncated=True, cursor="next")
         for replies in ([page([], truncated=True)], [first, page(["b.py"], token="r2")],

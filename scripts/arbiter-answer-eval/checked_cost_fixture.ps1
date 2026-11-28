@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Same-human fixture admission and Edit/Write ownership checks for a Windows cost session.
-param([ValidateSet('Prepare','Audit','BeforeTool','AfterTool','StageSkill','CopySnapshot','PrepareVerification','BeforeVerification','AfterVerification')][string]$Mode,
+param([ValidateSet('Prepare','Audit','BeforeTool','AfterTool','StageSkill','CopySnapshot','PrepareGatherReceipts','PrepareVerification','BeforeVerification','AfterVerification')][string]$Mode,
       [Parameter(Mandatory)][string]$Session, [string]$Snapshot, [int]$Call, [string[]]$ExcludeExact = @())
 $ErrorActionPreference = 'Stop'
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
@@ -16,6 +16,18 @@ function Owned($p) {
     if ((Get-Acl -LiteralPath $p).GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $sid) { throw "Foreign output $p" }
 }
 function NewDirectory($p) { Parent $p; $null = New-Item -ItemType Directory -Path $p; Owned $p }
+if ($Mode -eq 'PrepareGatherReceipts') {
+    $logs = Join-Path $sessionPath 'gather'
+    Owned $logs
+    Parent (Join-Path $logs 'companion-calls.jsonl')
+    Parent (Join-Path $logs 'calls.jsonl')
+    foreach ($i in 1..64) {
+        foreach ($suffix in 'reply.json','wire','scores.json') {
+            Parent (Join-Path $logs ('call-{0:d3}.{1}' -f $i,$suffix))
+        }
+    }
+    exit 0
+}
 if ($Mode -in 'PrepareVerification','BeforeVerification','AfterVerification') {
     $logRoot = Join-Path $sessionPath 'verification'
     if ($Mode -eq 'PrepareVerification') {
@@ -113,4 +125,8 @@ foreach ($name in 'tool.json','native-surface.json','unified-guidance.txt','mcp-
 }
 $logs = Join-Path $sessionPath 'gather'
 Parent (Join-Path $logs 'calls.jsonl')
-foreach ($i in 1..64) { Parent (Join-Path $logs ('call-{0:d3}.reply.json' -f $i)) }
+foreach ($i in 1..64) {
+    foreach ($suffix in 'reply.json','wire','scores.json') {
+        Parent (Join-Path $logs ('call-{0:d3}.{1}' -f $i,$suffix))
+    }
+}

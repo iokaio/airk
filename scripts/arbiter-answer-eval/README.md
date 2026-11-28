@@ -1477,6 +1477,14 @@ To continue the two-task pilot, run `python -B qwen_need_resume.py <campaign> <c
 
 Each task row records the actual file pool, card and source digests, per-pair scores and wrapped-input digests, a decoded model input per arm, scoring time, pair and token-clipping counts, delivered citations and historical reference-note classifications. Model time for a cached arm covers its actual incremental work. `prompt_need_audit.py` independently grades the normalized, delivered lines using its frozen mapping. Run `python -B qwen_need_costs.py <raw-jsonl> --output <fresh-summary-json>` to total logical pairs, actual scorer executions, clipping, wall and model times, historical drift and both independent timing controls. After scoring, `python -B qwen_need_opportunity.py <campaign> <frozen-need-references> <paired-jsonl> --output <fresh-json>` compares reference availability across the full pool, modulo-assigned files, nominated ranges, model-visible short excerpts and delivered need links. All development calls are retrospective.
 
+### Expanding source ranges without displacing original evidence
+
+Run `python -B bundled_range_extension.py CAMPAIGN SCORED_JSONL REFERENCES FREEZE FRESH_OUTCOMES` to compare exact bundled delivery, zero-padding merge-only, eagerly merged ±8/±16 source lines, and spare-only expansion. Run `python -B bundled_range_report.py OUTCOMES FRESH_SUMMARY` for exact gained and lost need/note IDs by task, byte limit and stratum. Both read the original frozen development sources. The preliminary wire comparison uses its historical thin envelope. The postselection development sensitivity `python -B bundled_postselection_headroom.py CAMPAIGN FRESH_OUTPUT` authenticates the selected 14k bundled-plus-spare reply under each full-frame cap, retains its complete passage list, then tries whole skipped ranges in scored file order under a 20k passage allowance. It excludes transfer data and records source ranges, paired reference gains, bytes and original/final frame hashes.
+
+For the provenance-bearing finalist envelope use `python -B finalist_envelope_replay.py CAMPAIGN FROZEN_STUDY_DIRECTORY FRESH_OUTCOMES`. The two admitted manifests select the preregistered explicit caps or the genuine no-override default. The runner rebuilds the 14,000/20,000-byte pre-wire candidate lists from the preserved scores, authenticates the 14,000-byte rows against original citations, and fits each through the same Gather transport renderer. It reuses earlier repository-bound grant metadata for offline frame measurement. Each outcome records complete-wire SHA, passage SHA, actual support links, full-source reference coverage, bytes and render time.
+
+`finalist_spare_context.render` is the opt-in normal-path wrapper. It keeps all originally delivered ranges and all prior model-supported need links, then tries one neighboring complete line on each side in original order for up to sixteen rounds. It accounts for both JSON escaping layers, Unicode, line-number digit changes, per-need citation copies and stdio framing. A second pass through the authoritative renderer verifies the final size and original passage count. Run `python -B -m unittest test_finalist_spare_context test_finalist_gather_contract test_finalist_route` from this folder.
+
 For the protected-leader replay, run `python -B qwen_leader_replay.py <campaign>`. It reuses the 800 saved scores, verifies the plain-Qwen controls and reports the range-cut and unrestricted-byte classifications for the five lost notes. The protected leader was rejected in Round 1.
 
 For the live trial, start `arbiter_judge_service.py --model <local-checkpoint> --bits 8 --state <private-state.json>` in the provisioned CUDA environment. Pass `--live-layout qwen-focus --judge <private-state.json>` through the cost batch or single-session runner. The live MCP backend scores the current request and uses the retained all-spread selector. `qwen_live_parity.py <campaign> <state> <task-id> <private-log-dir>` checks the complete file order and compares the stdio reply with the frozen-score replay, excluding only elapsed time.
@@ -1696,6 +1704,8 @@ For each need, the selector ranks ranges by shared identifier and natural-langua
 
 The private JSONL records the actual 80-pair batch time, model identities, both delivery conditions, score and input hashes, a decoded example, omitted range reasons and exact scored/returned intervals. The 40-pair result reuses the first 40 scores; this run provides no independent latency measurement for that condition. Independent source and reference grading is separate.
 
+To test generation beyond the existing nominated ranges, add `--generate-ranges` and use a fresh output. This arm checks up to 4,096 seed lines per file at evenly spaced positions, using five-line neighborhoods to rank need-specific matches outside original ranges. At most two nonoverlapping source units per file per need proceed to ranking. Each unit follows declaration or heading boundaries when available, with a 60-line window for longer units. Old and generated ranges take turns in each need's roster; the scorer, number of judgments, evidence budget and assembler remain matched. The receipt records all generated unit and seed locations, including units never scored, for separate candidate-availability and delivered-evidence grading.
+
 ### Finalist Gather request and reply checks
 
 The live finalist adapter in `finalist_gather_contract.py` accepts a task, caller
@@ -1717,3 +1727,46 @@ describes delivered candidate evidence, and the omission count includes the
 ranges dropped during selection and framing. If even a bounded refusal cannot
 fit, the adapter returns no frame. Exercise the two codecs locally with
 `python -B -m unittest test_finalist_gather_contract test_passage_reply_budget`.
+
+### Single-stage companion qualification
+
+Run `python -B single_stage_companion_probe.py HANDLE PRIVATE_OUTPUT.json` in the checked Windows evaluation shell with a ready model-free companion service. It exercises all six native companion tools on a development Munarium file, leaves the Gather route unused, and saves complete local replies plus the dispatch and warm observer counts before and after. Inspect the default search reply's `execution.served_mode` and record the search/embedding resources separately from the Arbiter model. Cross-check service identity, disabled model policies and lease with the fixture's admission receipt. Use a fresh output path for each invocation.
+
+### Blinded CLI regression matrix
+
+`blind_json_command_cases.ps1 -Work <checked-fixture> -Plan <private-json>
+-Python <verified-python.exe> -Output <fresh-receipt>` runs a frozen input matrix
+against a reviewed Python command in an isolated copy. The checked artifact
+directory must contain a `.blind-cli-disposable` marker. The plan identifies
+the relative entry point, JSON data path, baseline data SHA-256 and an array
+of case names, input records and expected exits. The runner restores and
+hashes the original data in a finally block and retains actual output,
+tracebacks, exit codes and executable identity. Grade diagnostic content
+against the predeclared rubric. Keep actor identity and condition outside the
+grading packet, and use the same frozen case matrix for every submission.
+
+### Combined file and need scoring
+
+`joint_evidence_replay.py CAMPAIGN PAIRED RANGE_SCORES WIRE_BASELINE OUTPUT` replays the bundled 40 file judgments and the original 40 need-and-range judgments. Use `paired-complete.jsonl`, `range-choice-v1.jsonl`, and `finalist-range-envelope-r1/outcomes.json` from the same frozen working set. For the native no-override sensitivity, use the matching `finalist-range-default-r1/outcomes.json` baseline and pass `--native-default`. The output path must be new. This study uses cached Qwen scores from two independently constructed input batches. It measures no new inference latency.
+
+At whole-reply caps of 8,192, 14,000, and 20,000 bytes, the replay checks the byte identity of the bundled reply with up to 16 lines of spare context. It then tests attaching at most one individually scored lead per need. The strict policy protects every widened incumbent range. The reserve policy protects the initial incumbent ranges and subsequently widens into remaining space. Both try an existing range containing the scored excerpt first, then a distinct source range for an unrepresented need. A yes-token preference above one half merely makes a candidate eligible. Each JSONL row retains the exact wire frame and positive scored links for independent grading. Run `python -B -m unittest test_finalist_joint_evidence` from this directory for the protection, budgeting and link checks.
+
+`session_first_attempt.py SESSION NEW_PATCH` reconstructs the first saved patch submitted to public verification after edits. Successful Edit/Write receipts must reproduce the final archived diff exactly. It returns first-attempt token counts only when streamed per-message usage reconciles to the final invoice. Preserve the per-session invoice and common-price recalculation separately.
+
+### Frozen bundled finalist
+
+`range_choice_live.propose(repository, arguments, score)` runs the deterministic pool and scores at most 40 file cards in one batch. It nominates complete ranges from the first 16 ranked files, fits a six-file, 14,000-byte passage budget, and returns candidates for `finalist_spare_context.render`. That renderer fits the complete reply to the caller's actual limit before using spare bytes for up to 16 neighboring lines on each side. All caller needs remain individually unscored. The source ranges and scores for each card are retained in the private audit.
+
+`verify_bundled_finalist.py CAMPAIGN PAIRED DEFAULT_ENVELOPE OUTPUT` checks every original prompt digest, selected range and default whole-frame digest using the original deterministic candidate lists. `python -B -m unittest test_range_choice_live` separately exercises real extraction with a 250-file in-memory repository.
+
+### Prospective single-Arbiter session
+
+Use a fresh, checked `SESSION/work` copied from the authenticated baseline. For coding it must be the actual native registration root and published before launch. The local preflight binds the companion service instance, disabled Focus and Context stages, empty native model observers, and a verified Qwen3-Reranker-4B scorer instance. The selected policy runs one bundled query over up to 40 eligible file cards, preserves separate task-level evidence attribution, and widens retained passages by up to 16 neighbor lines per side under the real frame cap and 14,000 passage-text bytes.
+
+```text
+python -B agent_cost_run.py --arm live --model claude-sonnet-5-5 --max-round-trips 80 --checked-windows --prepared-work --skill-mode natural --product-tools --product-http --live-layout qwen-finalist --finalist-freeze POLICY_FREEZE.json --judge VERIFIED_SCORER.json --companion-admission COMPANION_ADMISSION.json --handle SESSION_HANDLE.json --repo REPOSITORY --task FROZEN_SOLVER.json --snapshot IMMUTABLE_BASELINE --output SESSION
+```
+
+For coding append `--verification FROZEN_PUBLIC_PROFILE.json` on both matched arms. For read-only research append `--research-frozen-index ELIGIBLE_RECEIPT.json` on the AIRK arm; an authenticated before/after scope, unchanged checked tree and no edits are required. The matched ordinary arm uses `--arm plain` with the same actor, limits, working copy and task-specific verifier. Independent graders receive anonymous patches and source-cited answers. The private release record lists exact scenario and profile hashes, eligibility, source snapshots, service and scorer identities.
+
+`single_stage_live_probe.py --handle SESSION_HANDLE.json --freeze POLICY_FREEZE.json --judge VERIFIED_SCORER.json --admission COMPANION_ADMISSION.json --work DISPOSABLE_MUNARIUM_CANDIDATE/work --baseline IMMUTABLE_BASELINE --output CHECKED_NEW_PROBE_DIR` runs the model-bearing local stdio path without Sonnet. Prepare an empty checked output directory and `gather` subdirectory, preflight the output files and dispose of the controlled source change only after verifying restoration and native publication. The probe uses a previously exercised development symbol, validates typed unsupported and malformed calls, saves exact wire frames and measures source freshness across the edit.

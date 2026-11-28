@@ -181,7 +181,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="oracle: the tool answers with the task's truth (gather_context_oracle.py); "
                              "live: it answers from the live files and --live-map (live_gather.py)")
     parser.add_argument("--live-map", type=Path, help="topical map of the snapshot, for the live arm")
-    parser.add_argument("--live-layout", choices=("full", "focus", "qwen-focus"), default="full")
+    parser.add_argument("--live-layout", choices=("full", "focus", "qwen-focus", "qwen-finalist"), default="full")
     parser.add_argument("--live-decline", action="store_true", help="live arm: apply the decline rule first")
     parser.add_argument("--oracle-layout", default="passages", help="oracle arm: passages or ranges")
     parser.add_argument("--oracle-trust", action="store_true", help="oracle arm: add the line saying what need not be read again")
@@ -204,7 +204,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--verification", type=Path, help="public checked test profile, identical across comparison arms")
     parser.add_argument("--prepared-work", action="store_true", help="adopt a fresh checked session/work, retaining it for index teardown")
     parser.add_argument("--research-frozen-index", type=Path, help="eligible-source receipt for four frozen final-text tasks")
+    parser.add_argument("--finalist-freeze", type=Path, help="selected policy source and prompt/frame parity freeze")
+    parser.add_argument("--companion-admission", type=Path, help="lifetime and native dispatch proof for the finalist")
     args = parser.parse_args(argv)
+    if args.live_layout == "qwen-finalist" and not (args.arm == "live" and args.product_http and args.product_tools and args.prepared_work and args.skill_mode == "natural" and args.companion_admission and args.finalist_freeze and not args.live_decline and args.dose == 0):
+        parser.error("finalist requires natural shipping skill, live prepared work and pure scoped HTTP companion surface")
     if args.research_frozen_index and not (args.checked_windows and args.prepared_work and args.product_http and
                                            args.product_tools and args.skill_mode == "natural" and
                                            args.arm in ("tool", "live")):
@@ -217,7 +221,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--product-http needs --product-tools and a tool, live or oracle Gather arm")
     if args.product_tools and (args.arm not in ("tool", "oracle", "live") or not args.handle or args.skill_mode == "explicit"):
         parser.error("--product-tools requires a scoped fixture and a tool arm, with natural discovery or no skill")
-    if (args.dose > 0 or (args.arm == "live" and args.live_layout == "qwen-focus")) and args.judge is None:
+    if (args.dose > 0 or (args.arm == "live" and args.live_layout.startswith("qwen-"))) and args.judge is None:
         parser.error("model scoring needs --judge")
     task = json.loads(args.task.read_text(encoding="utf-8"))
     snapshot = args.snapshot.resolve(strict=True)
@@ -229,6 +233,16 @@ def main(argv: list[str] | None = None) -> int:
     test_profile = session_verify.profile(args.verification.resolve(strict=True)) if args.verification else None
     if args.product_tools:
         handle = common.load_handle(args.handle.resolve(strict=True))
+        if args.live_layout == "qwen-finalist":
+            import arbiter_judge_service
+            import companion_admission
+            import finalist_route
+            finalist_route.check_policy(args.finalist_freeze.resolve(strict=True))
+            scorer_path = args.judge.resolve(strict=True)
+            arbiter_judge_service.verified_client(scorer_path)
+            scorer_hash = common.sha256_file(scorer_path)
+            scorer_record = common.read_json(scorer_path)
+            companion_before = companion_admission.observe(handle, args.companion_admission.resolve(strict=True))
         index = handle.index_id(args.repo)
         records = common.read_json(handle.path)["indexes"]
         selected = [row for row in records.values() if row["index_id"] == index]
@@ -253,6 +267,9 @@ def main(argv: list[str] | None = None) -> int:
             product_catalog = product_skill.catalog(handle)
             product_instructions = product_skill.guidance()
     guard = HERE / "checked_cost_fixture.ps1"
+    if args.live_layout == "qwen-finalist":
+        subprocess.run(["pwsh", "-NoProfile", "-File", str(guard), "-Mode", "PrepareGatherReceipts",
+                        "-Session", str(args.output)], check=True)
     if args.prepared_work:
         common.require(not any((args.output / name).exists() for name in ("stream.jsonl", "mcp-config.json", "session.json")),
                        "prepared session already contains a model run")
@@ -313,6 +330,8 @@ def main(argv: list[str] | None = None) -> int:
             map_args = ["--workspace-map"] if args.prepared_work else ["--live-map", str(args.live_map.resolve(strict=True))]
             server += ["--live-source", str(work if args.prepared_work else snapshot), *map_args,
                        "--live-layout", args.live_layout] + (["--live-decline"] if args.live_decline else [])
+        if args.live_layout == "qwen-finalist":
+            server += ["--finalist-freeze", str(args.finalist_freeze.resolve(strict=True))]
         if args.product_http:
             surface_file = args.output / "native-surface.json"
             surface_file.write_text(json.dumps(surface, sort_keys=True), encoding="utf-8")
@@ -410,8 +429,23 @@ def main(argv: list[str] | None = None) -> int:
         init = next((e for e in events if e.get("subtype") == "init"), {})
         session["product_surface_valid"] = (expected_mcp == offered_mcp and set(init.get("skills") or []) ==
                                             ({product_skill.QUALIFIED_NAME} if args.skill_mode else set()))
+    if args.live_layout == "qwen-finalist":
+        session["single_arbiter"] = {"instance": scorer_record["instance"], "state_sha256": scorer_hash,
+                                     "verified_model": scorer_record["verified_model"]}
+        proof = {"valid": False, "before": companion_before}
+        session["companion_admission"] = proof
+        try:
+            proof["policy_sha256"] = finalist_route.check_policy(args.finalist_freeze.resolve(strict=True))
+            proof["after"] = companion_admission.observe(handle, args.companion_admission.resolve(strict=True))
+            proof["valid"] = proof["before"] == proof["after"] and scorer_hash == common.sha256_file(scorer_path)
+            arbiter_judge_service.verified_client(scorer_path)
+        except (OSError, ValueError, RuntimeError, KeyError, subprocess.SubprocessError) as error:
+            proof["valid"] = False
+            proof["failure"] = str(error)
+        reports = args.output / "gather" / "companion-calls.jsonl"
+        session["companion_calls"] = common.read_jsonl(reports) if reports.is_file() else []
     if args.research_frozen_index:
-        proof = {"valid": False, "before": before, "design_sha256": frozen.FREEZE, "task": frozen_task["id"]}
+        proof = {"valid": False, "before": before, "design_sha256": common.sha256_file(args.task.parent.parent / "freeze.json"), "task": frozen_task["id"]}
         session["research_frozen_index"] = proof
         try:
             frozen.admit(args.task, task, args.repo, args.research_frozen_index)
@@ -426,6 +460,8 @@ def main(argv: list[str] | None = None) -> int:
           f"changed={len(changed)} wall={wall}s", flush=True)
     if args.product_tools or test_profile or args.prepared_work:
         valid = offered_mcp == expected_mcp and session.get("product_surface_valid", True)
+        if args.live_layout == "qwen-finalist":
+            valid = valid and session["companion_admission"]["valid"]
         if args.research_frozen_index:
             valid = valid and session["research_frozen_index"]["valid"]
         return int(not (valid and session["completed"] and session["exit_code"] == 0))

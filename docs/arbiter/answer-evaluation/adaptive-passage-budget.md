@@ -99,3 +99,24 @@ The follow-up rebuilt the fixed-14k and fixed-20k wire controls at each cap. All
 Compared with fixed 20k at the same wire cap, the protected arm preserved Munarium C2's test fixture (need 4) at all three caps. At 8,192 and 14,000 it omitted the Python async facade on Munarium N-C2 that fixed 20k supplied; another reference already covered that need. At 20,000 it also preserved the Munarium C2 datastore horizon note. These are differences already present in the original fixed-14k control. Protecting baseline output solved the displacement problem, but the additional nominations supplied no independently verified reason to change that baseline.
 
 The selector was frozen before execution at SHA-256 `e86b4e5d0a67eeb729c94e8498a0b7c1f1af0002b978c33054196c8157b25cab`; the private receipt `protected.json` is `0d5d36f5be6c76d2c77ec071be9b1350c918cf8c9c8cafc9d99b5cdce8c450df`. Reproduce from the evaluation script directory with `python -B protected_passage_budget.py CAMPAIGN PAIRED_RECEIPT WIRE REFERENCE OUTPUT`. The two focused correction tests cover repeated text at a distinct location and a nominally fitting excerpt whose citation metadata would exceed the caller's frame cap.
+
+## Postselection sensitivity for the bundled finalist
+
+The selected finalist scores 40 files, admits up to 14,000 passage bytes, and uses spare bytes to extend the returned ranges by up to 16 lines on each side. This diagnostic authenticated its full framed response for each of the 20 development tasks. It kept all selected ranges and examined the original skipped candidates in their existing order. A complete range could be added if it supplied at least one previously unseen source line, fit the six-file limit and kept both the 20,000-byte passage ceiling and the caller's complete frame cap. It required zero additional model judgments.
+
+| Caller frame cap | Needs with a whole reference / 86, before → after | Whole positive notes / 239 | Whole essential notes | Mean full reply bytes, before → after |
+| --- | ---: | ---: | ---: | ---: |
+| Default, 131,072 | 35 → 38 | 40 → 47 | 26 → 30 | 20,339 → 24,926 |
+| 8,192 | 21 → 21 | 21 → 21 | 15 → 15 | 8,186 → 8,186 |
+| 14,000 | 27 → 27 | 30 → 30 | 19 → 19 | 13,996 → 13,996 |
+| 20,000 | 33 → 33 | 38 → 38 | 25 → 25 | 19,557 → 19,772 |
+
+At the default frame cap, 52 additional ranges fit across 13 tasks. They added **72,013 passage bytes and 91,733 complete reply bytes across the panel**, or 3,601 and 4,587 bytes per task on average. The mean frame grew 22.6%. Three needs gained their first whole mapped reference:
+
+- Munarium N-A1, need 1, asks where the reports API parses and validates the time-window parameter.
+- Munarium N-W1, need 1, asks for the clients' tokens-and-reports guide that mentions seven reports.
+- Munarium N-W1, need 2, asks for the evidence and matrix report handlers, including routes, access, query parameters and response shape.
+
+Each gain means at least one mapped reference range was delivered in full. All three gains occurred on narrow tasks. All 80 paired responses retained their original passages and whole reference coverage. The 20,000-byte frame admitted six extra ranges on four tasks without gaining a whole mapped reference.
+
+**This postselection observation has no independent validation.** It used only the development panel. The recorded finalist and transfer comparison retain the 14,000-byte passage budget. The reproduction command is `python -B bundled_postselection_headroom.py CAMPAIGN FRESH_OUTPUT` from the evaluation script directory. The private receipt `replay/bundled-postselection-headroom-r1/outcomes.json` has SHA-256 `5ea83f6bbeef9d31c03a00b0b0c1fa9b61c1d28e3f4622882d44914b67166acc`.

@@ -46,12 +46,12 @@ def read_surface(handle, repo):
 
 
 class Bridge:
-    def __init__(self, client, gather, surface, record_native=None):
-        self.record_native = record_native
+    def __init__(self, client, gather, surface, record_native=None, record_companion=None):
+        self.record_native, self.record_companion = record_native, record_companion
         self.client, self.gather, self.surface = client, gather, surface
         self.schemas = {t["name"]: t["inputSchema"] for t in surface["tools"]}
 
-    def handle_message(self, message):
+    def handle_message(self, message, framing=None):
         if not isinstance(message, dict) or message.get("jsonrpc") != "2.0":
             return mcp_wrapper._error(None, -32600, "Invalid request")
         method, msg_id = message.get("method"), message.get("id")
@@ -67,6 +67,8 @@ class Bridge:
             if set(args).difference(self.schemas[name].get("properties", {})):
                 return mcp_wrapper._error(msg_id, -32602, "Unknown tool argument")
             if name == "gather_context" and self.gather is not None:
+                if framing is not None:
+                    return self.gather.handle_message(message, framing)
                 return self.gather.handle_message(message)
         elif method == "initialize":
             # Scope comes from the configured connection. The bridge has no client-root callback.
@@ -84,6 +86,8 @@ class Bridge:
                 reply["error"]["data"] = {"status": error.status, "body": error.body, "submission": error.submission}
             if method != "tools/call":
                 return reply
+        if method == "tools/call" and name != "gather_context" and self.record_companion:
+            self.record_companion(name, args, reply, round(time.monotonic() - started, 3))
         if method == "tools/call" and name == "gather_context" and self.record_native:
             self.record_native(args, reply, round(time.monotonic() - started, 3))
         if method == "initialize":

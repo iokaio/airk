@@ -8,6 +8,17 @@ import common
 import product_skill_http
 
 
+class InventoryUnavailable(ValueError):
+    def __init__(self, page, identity, reply):
+        self.page = page
+        self.publication = identity[0] if identity else None
+        self.reply = reply
+        result = reply.get("result", {})
+        native = (result.get("structuredContent") or {}).get("error") or reply.get("error") or {}
+        self.code = native.get("code")
+        super().__init__(f"Native workspace path inventory failed at page {page}: {self.code or 'untyped error'}")
+
+
 class InventoryCache:
     """Retain a complete eligible set across calls to the same bound session."""
 
@@ -29,7 +40,7 @@ def published_paths(client, index, metrics=None, cache=None, observation=None):
                                  "params": {"name": "list_indexed_files", "arguments": dict(args)}})
         envelope = reply.get("result") or {}
         if reply.get("error") or envelope.get("isError") or not envelope:
-            raise ValueError("Native workspace path inventory failed")
+            raise InventoryUnavailable(page, identity, reply)
         body = common.envelope_body(envelope)
         if not isinstance(body, dict) or (body.get("read_scope") or {}).get("index_ids") != [index]:
             raise ValueError("Native workspace path inventory returned a different scope")
