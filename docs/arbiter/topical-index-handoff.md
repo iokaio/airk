@@ -1,6 +1,6 @@
 # Handoff: topical index research, ranking work, 27 November 2026
 
-**Current review stop, 28 November 2026.** The [proposed plan amendment](topical-index-research.md#proposed-amendment-for-review-on-28-november-2026) holds the present state, evidence limits and exact resume step. The local CUDA worker was stopped with two of twenty tasks complete. No adaptive campaign comparison ran. Resume only after user review.
+**Current review stop, 28 November 2026.** The [proposed plan amendment](topical-index-research.md#proposed-amendment-for-review-on-28-november-2026) holds the present state, evidence limits and exact resume step. The local CUDA worker was stopped with two of twenty tasks complete. No adaptive campaign comparison ran. The user subsequently accepted the amendment. Resume under the current assignment through a Rust port decision.
 
 For Codex, picking up from Claude Code while the user is short of Claude
 credits. Read this page, then the "Experiment protocol" and "Round 1"

@@ -3,6 +3,9 @@
 
 from __future__ import annotations
 
+import json
+import pathlib
+import tempfile
 import threading
 import unittest
 import urllib.error
@@ -39,6 +42,31 @@ class JudgeServiceTest(unittest.TestCase):
         self.assertEqual(service.score(self.address, "judge", []), [])
         got = service.stats(self.address)
         self.assertEqual((got["judgments"], got["peak_gpu_bytes"]), (2, 123))
+
+    def test_stale_process_is_rejected_before_scoring(self):
+        identity = {"instance": "current", "verified_model": {"revision": "fixture"}}
+        guarded = service.serve(self.judge, 0, identity=identity)
+        address = f"http://127.0.0.1:{guarded.server_address[1]}"
+        thread = threading.Thread(target=guarded.serve_forever, daemon=True)
+        thread.start()
+        try:
+            self.assertEqual(service.stats(address)["instance"], "current")
+            with self.assertRaises(urllib.error.HTTPError) as raised:
+                service.score(address, "judge", [("need", "text")], instance="stale")
+            self.assertEqual(raised.exception.code, 409)
+            self.assertEqual(self.judge.pairs, 0)
+            self.assertEqual(service.score(address, "judge", [("need", "text")], instance="current"), [4.0])
+        finally:
+            guarded.shutdown()
+            guarded.server_close()
+            thread.join(timeout=10)
+
+    def test_stand_in_cannot_be_admitted_as_verified(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = pathlib.Path(tmp) / "state.json"
+            state.write_text(json.dumps({"address": self.address, "cheap": True}))
+            with self.assertRaisesRegex(ValueError, "qualified single-Arbiter"):
+                service.verified_client(state)
 
     def test_refuses_a_malformed_request(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as raised:

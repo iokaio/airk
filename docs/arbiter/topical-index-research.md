@@ -9,7 +9,7 @@ of the gates below.
 
 ## Proposed amendment for review on 28 November 2026
 
-**Decision requested.** Approve a local prototype comparison of how Arbiter ranks evidence for individual needs and how AIRK allocates passage bytes. Review the local results before choosing an end-to-end candidate. Funding additional agent sessions, changing the public contract and authorizing a Rust port are separate decisions.
+**Accepted 28 November 2026.** The user authorized implementation of this plan through a decision about taking the solution into the Rust kernel, including further improvements supported by evidence. Review local results before selecting an end-to-end candidate. Keep the public contract and Rust port as separate product decisions.
 
 **State at review.** The superseded native fixture closed and its service lease was reacquired. Fourteen historical Sonnet sessions cost $1.0075331. None of the four candidate research sessions called Gather, and the native arm enrolled superseded weights. They cannot establish current Arbiter performance. Keep the ordinary-tools results under their original input identities. The single-Arbiter local replay started under the preceding instruction and stopped at the review request after two complete Bookbuilder tasks (A1 and C3) of twenty. Both passed the independent prompt and delivered-source audit. The partial JSONL SHA-256 is e884a62d497f6a520667cd2ca33a481a99b0ace0caeac2e8cc29864382ceed36. The selector has three passing synthetic tests. No comparative adaptive-budget replay has run. These pilot results establish harness operation only.
 

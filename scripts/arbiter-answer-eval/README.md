@@ -1463,6 +1463,20 @@ The model sees the recorded task, needs and anchors. Its file input contains the
 
 For a passage-budget comparison, run `python -B qwen_budget_replay.py <campaign> <candidate-bytes>`. The script reuses the file scores in `replay/qwen-file-top40-r1.jsonl`, verifies the original file pool and 14,000-byte control on every call, then reuses the same candidate ranges at the requested cap. Stdout contains per-task note changes, actual passage bytes at each cap and aggregate classifications. No model is loaded.
 
+### Paired per-need prompt and citation replay
+
+Run `python -B qwen_need_trial.py <campaign> <local-checkpoint> --output <fresh-private-jsonl>` for the 20 historical development requests. The replay pins each request's 40 original file IDs and the 6-file, 14,000-byte passage budget. Bookbuilder uses the sanitized snapshot, rejects the two excluded file paths before loading source and verifies that every eligible pooled file matches the original bytes. Raw sanitized deterministic ordering and historical differences are included alongside the paired control. `qwen_replay_conformance.py` authenticates 11 checkpoint files, the CUDA FP16 model with 252 block-32 rounded layers, and the tokenizer and prompt wrappers. The runner records historical score and order differences alongside the current joined control.
+
+To continue the two-task pilot, run `python -B qwen_need_resume.py <campaign> <checkpoint> --resume <original-paired-jsonl> --preflight-only`. Replace the last option with `--output <fresh-merged-jsonl>` for the actual continuation. The runner verifies the pinned hash and identities of the two original rows, the original launcher source hashes, both frozen input receipts, all twenty scenario and map digests, the pilot model inputs, and the model receipt after loading. It copies the original bytes into a fresh output before scoring the remaining eighteen tasks.
+
+- `control` uses the original joined query, file instruction and 480-character range excerpts.
+- `per-need` scores the same 40 files for each need. Stable descending score orders feed a round-robin selector. Each need nominates its highest-ranked remaining file in every round.
+- `fixed40` assigns original file position modulo need count and keeps one real judgment per file. Exact input matches reuse previously computed model scores. Fresh independent timing controls on Bookbuilder A1 and Munarium A1 report score and order agreement.
+- `labeled` adds Task, Need and Exact strings labels to the fixed allocation. `direct-wording` changes only the instruction to ask about direct or partial evidence. `direct` changes the document to one short, line-complete source excerpt with path, lines and an indexed declaration if its name is present on the indexed line. Its response links each need only to delivered original ranges enclosing the scored excerpts. Other full-file nominations carry no per-need passage claim.
+- `no-anchors` removes the explicit anchors from the ordinary fixed-allocation file query. Two of the twenty frozen calls supply no anchors.
+
+Each task row records the actual file pool, card and source digests, per-pair scores and wrapped-input digests, a decoded model input per arm, scoring time, pair and token-clipping counts, delivered citations and historical reference-note classifications. Model time for a cached arm covers its actual incremental work. `prompt_need_audit.py` independently grades the normalized, delivered lines using its frozen mapping. Run `python -B qwen_need_costs.py <raw-jsonl> --output <fresh-summary-json>` to total logical pairs, actual scorer executions, clipping, wall and model times, historical drift and both independent timing controls. After scoring, `python -B qwen_need_opportunity.py <campaign> <frozen-need-references> <paired-jsonl> --output <fresh-json>` compares reference availability across the full pool, modulo-assigned files, nominated ranges, model-visible short excerpts and delivered need links. All development calls are retrospective.
+
 For the protected-leader replay, run `python -B qwen_leader_replay.py <campaign>`. It reuses the 800 saved scores, verifies the plain-Qwen controls and reports the range-cut and unrestricted-byte classifications for the five lost notes. The protected leader was rejected in Round 1.
 
 For the live trial, start `arbiter_judge_service.py --model <local-checkpoint> --bits 8 --state <private-state.json>` in the provisioned CUDA environment. Pass `--live-layout qwen-focus --judge <private-state.json>` through the cost batch or single-session runner. The live MCP backend scores the current request and uses the retained all-spread selector. `qwen_live_parity.py <campaign> <state> <task-id> <private-log-dir>` checks the complete file order and compares the stdio reply with the frozen-score replay, excluding only elapsed time.
@@ -1673,3 +1687,33 @@ Stage each editable case from the authenticated diff base with the checked Windo
 Run `native_workspace_handle.py --handle <live-parent-handle> --setup <case-setup.jsonl> --work <session/work> --frozen <eligible-manifest.json> --repo <repo-alias> --output <new-case-handle.json>` in the checked environment. It reads the actual native registration, watch, source policy and semantic discovery state. It hashes every eligible working file through a complete scoped path inventory and requires its manifest to match the immutable benchmark. A hybrid or vector probe must use that same publication. The output contains only the case registration and records the qualification observations. Keep this handle and its source trees in private campaign artifacts.
 
 For a CUDA lifetime that also hosts registered writable worktrees, pass `--reuse-settled --mutable-workspaces <roster.json> --mutable-workspaces-sha256 <digest>`. Each roster entry pins the setup receipt for its distinct editable checkout. The native catalog must identify that checkout and its separate data directory. The fixture records the startup job identities and permits subsequent indexing only for those registrations. Native retirement must be acknowledged before earlier job receipts for an owned workspace may disappear. A frozen-only lifetime continues to require an unchanged source-job history.
+
+### Need-specific range nominations
+
+Run the local GPU evaluation with `python -B qwen_range_choice_trial.py CAMPAIGN CHECKPOINT --paired MERGED_JSONL --output NEW_JSONL`. The driver requires a complete, unique twenty-task paired receipt, the original caller freeze, eligible source bytes and the authenticated Qwen3-Reranker-4B checkpoint. It reuses the frozen forty-file pool and its source ranges.
+
+For each need, the selector ranks ranges by shared identifier and natural-language terms weighted by inverse document frequency. Reciprocal-rank fusion combines this ranking with the original file rank. One range per file gets a first nomination before additional ranges from the same file. Need rosters take turns offering a range. The 40-judgment condition is a prefix of the 80-judgment condition. A scorer card contains a line-complete excerpt of up to 480 characters chosen for its lexical evidence, while the caller receives its full original range when the six-file and 14,000-passage-byte limits permit. Each returned range cites its source and preserves every need that nominated it. A nomination is candidate evidence. It does not certify that the need is answered.
+
+The private JSONL records the actual 80-pair batch time, model identities, both delivery conditions, score and input hashes, a decoded example, omitted range reasons and exact scored/returned intervals. The 40-pair result reuses the first 40 scores; this run provides no independent latency measurement for that condition. Independent source and reference grading is separate.
+
+### Finalist Gather request and reply checks
+
+The live finalist adapter in `finalist_gather_contract.py` accepts a task, caller
+needs, anchors and deliverable. Call `reply_cap(arguments)` before map refresh or
+scoring. It uses Core's emitted Answer fixtures to admit the default budget or a
+complete budget with a different `max_bytes`. An unsupported job control,
+verification override, projection or work-limit override raises
+`UnsupportedRequest` for the experimental bridge to report as a tool error.
+The other six tools continue to use their native routes.
+
+Pass the selected complete ranges, their scored subranges, caller need numbers,
+actual native path-inventory publication and scope fingerprint, the current
+workspace repository, JSON-RPC request ID and stdio framing to `render`. Its
+whole-frame limit is the smaller of the caller's byte limit and 131,072 bytes.
+Every returned citation identifies the current file's raw hash and its displayed
+LF-normalized passage hash. The publication identifies path eligibility. Native
+indexed-blob verification requires a separate native observation. Need status
+describes delivered candidate evidence, and the omission count includes the
+ranges dropped during selection and framing. If even a bounded refusal cannot
+fit, the adapter returns no frame. Exercise the two codecs locally with
+`python -B -m unittest test_finalist_gather_contract test_passage_reply_budget`.

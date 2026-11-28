@@ -1,6 +1,6 @@
 # Answer loop and FP16 completion plan
 
-**Gather Context review, 28 November 2026.** The [proposed single-Arbiter amendment](topical-index-research.md#proposed-amendment-for-review-on-28-november-2026) is awaiting user review. It proposes the local evidence and end-to-end checks required before a Gather Context Rust port. The broader Windows results review remains in force.
+**Gather Context review, 28 November 2026.** The [proposed single-Arbiter amendment](topical-index-research.md#proposed-amendment-for-review-on-28-november-2026) was accepted for execution through a Rust port decision. It specifies the local evidence and end-to-end checks required before a Gather Context Rust port. The broader Windows results review remains in force.
 
 The [combined Gather Context strategy and implementation runbook](retrieval-strategy-combined.md#implementation) is ready for Windows review. The product goal is to gather useful, cited context for whatever task an agent brings to `gather_context`, including unfamiliar tasks in other repositories. Use the 20 investigations as worked examples and regressions. Test whether the same code chooses useful reads on independently written tasks.
 

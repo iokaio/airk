@@ -3163,7 +3163,7 @@ First get a sufficient result on a real task with a trace showing exactly how it
 
 This section governs Gather Context work from this date. Where it differs from the sections around it, this one applies. The earlier sections stay as the record of what was planned and why. The user directed this strategy on 27 November 2026 after reviewing the prototype and first kernel results. Claude carries out the work (user direction, 26 November 2026). [Results record](../simplify/one-process-ledger.md) · [The loop as prototyped](gather-context-loop.md)
 
-**28 November 2026 review proposal.** The [single-Arbiter scoring and passage-budget amendment](topical-index-research.md#proposed-amendment-for-review-on-28-november-2026) consolidates the proposed local trials, caller-workflow comparison and port decision. The approved model remains Qwen3-Reranker-4B with 8-bit weights and FP16 compute. Review is pending; keep the experiment paused.
+**28 November 2026 review proposal.** The [single-Arbiter scoring and passage-budget amendment](topical-index-research.md#proposed-amendment-for-review-on-28-november-2026) consolidates the proposed local trials, caller-workflow comparison and port decision. The approved model remains Qwen3-Reranker-4B with 8-bit weights and FP16 compute. The user accepted the amendment and authorized the campaign through the Rust port decision.
 
 **What the work so far established.**
 
